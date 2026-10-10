@@ -254,6 +254,10 @@ class ConfigurationValues(BaseModel):
     # Certificate authorities you trust for forwarded calls (inbound/trust.py; STIR/SHAKEN STI-CAs): a JSON list of
     # {"pem", "source", "added_on"}. A forwarding is verified only when its signing certificate chains to one.
     stir_trust_anchors: str = Field('', validation_alias='STIR_TRUST_ANCHORS', max_length=1_000_000)
+    # Registered senders for received faxes (inbound/caller_check.py, N25): caller numbers a received fax's stamp
+    # checks, comma-separated E.164. Not the sending side's registered-sender pins (routing/sender_pins.py).
+    received_registered_senders: str = Field('', validation_alias='RECEIVED_REGISTERED_SENDERS',
+                                             pattern=r'^[+0-9,]{0,9000}$')
     # Installation country (ISO 3166 alpha-2, such as US or GB) for fax numbers
     # entered without a country code; every stored number is E.164.
     fax_default_country: str = Field('US', validation_alias='FAX_DEFAULT_COUNTRY')

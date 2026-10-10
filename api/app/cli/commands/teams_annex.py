@@ -83,3 +83,37 @@ def copiers(copier: str = typer.Argument(None, metavar='[COPIER]', help='Show on
     rows = [[item['id'], item['label'], 'Yes' if item['sip_t38'] else 'Not found'] for item in items]
     state.out().result({'copiers': items}, lambda out: out.table(['Copier', 'Name', 'SIP fax with T.38'], rows,
                                                                   empty='No copiers.'))
+
+
+caller_check = typer.Typer(help='The caller-verification stamp on received faxes: what the network asserted about '
+                                'who called, and your registered senders.', no_args_is_help=True)
+
+
+@caller_check.command('show')
+def caller_check_show():
+    """Show your registered senders for received faxes."""
+    view = state.api().get('/caller-check/registered')
+
+    def human(out):
+        out.line(view['sentence'])
+        for number in view['numbers']:
+            out.line(f'- {number}')
+    state.out().result(view, human)
+
+
+@caller_check.command('set')
+def caller_check_set(numbers: list[str] = typer.Argument(None, metavar='[NUMBER]...',
+                                                         help='Every registered sender, such as +13035550150; '
+                                                              'none clears the list.')):
+    """Replace your registered senders for received faxes: caller numbers a received fax's stamp checks."""
+    view = state.api().put('/caller-check/registered', json={'numbers': list(numbers or [])})
+    state.out().result(view, lambda out: out.line(view['saved']))
+
+
+@caller_check.command('fax')
+def caller_check_fax(fax_id: str = typer.Argument(..., help='Received fax ID.')):
+    """Show what the network asserted about who called for one received fax."""
+    from ..client import segment
+    view = state.api().get('/caller-check/faxes/' + segment(fax_id))
+    stamp = view.get('stamp') or {}
+    state.out().result(view, lambda out: out.line(stamp.get('sentence') or 'No caller check was kept for this fax.'))

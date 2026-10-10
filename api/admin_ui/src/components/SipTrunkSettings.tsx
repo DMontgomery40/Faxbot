@@ -52,6 +52,7 @@ import { formatServerTime } from '../api/time';
 import { TrunkPicker } from './ProviderAccountsTrunks';
 import AnalogLinePanel from './AnalogLinePanel';
 import CopiersPanel from './CopiersPanel';
+import { ReceivedRegisteredSenders } from './CallerCheck';
 import { rulesApiFor } from './ProviderRulesApi';
 import TrunkAccountPanel from './TrunkAccountPanel';
 import SendOnlyNumbers from './SendOnlyNumbers';
@@ -949,6 +950,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       )}
       {showCalls && <SendOnlyNumbers call={call} />}
       {showCalls && <CopiersPanel call={call} />}
+      {showCalls && <ReceivedRegisteredSenders call={call} />}
     </Stack>
   );
 }

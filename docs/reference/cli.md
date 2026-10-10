@@ -5162,6 +5162,7 @@ $ faxbot providers trunk [OPTIONS] COMMAND [ARGS]...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
 * `analog-line`: An analog phone line through a gateway:...
+* `caller-check`: The caller-verification stamp on received...
 
 #### `faxbot providers trunk status`
 
@@ -5806,6 +5807,76 @@ $ faxbot providers trunk analog-line import [OPTIONS] {FILE}
 * `--monthly-fee AMOUNT`: The line&#x27;s monthly fee, shown with its prices.
 * `--increment <int range>`: The billing step for calls outside the local area, in seconds.  [default: 60; 1&lt;=x&lt;=3600]
 * `--source URL`: The address of the page the list came from.
+* `--help`: Show this message and exit.
+
+#### `faxbot providers trunk caller-check`
+
+The caller-verification stamp on received faxes: what the network asserted about who called, and your registered senders.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk caller-check [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show your registered senders for received...
+* `set`: Replace your registered senders for...
+* `fax`: Show what the network asserted about who...
+
+##### `faxbot providers trunk caller-check show`
+
+Show your registered senders for received faxes.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk caller-check show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk caller-check set`
+
+Replace your registered senders for received faxes: caller numbers a received fax&#x27;s stamp checks.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk caller-check set [OPTIONS] [NUMBER]...
+```
+
+**Arguments**:
+
+* `[NUMBER]...`: Every registered sender, such as +13035550150; none clears the list.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot providers trunk caller-check fax`
+
+Show what the network asserted about who called for one received fax.
+
+**Usage**:
+
+```console
+$ faxbot providers trunk caller-check fax [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Received fax ID.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ### `faxbot providers accounts`
