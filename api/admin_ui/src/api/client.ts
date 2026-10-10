@@ -204,6 +204,8 @@ export function plainRefusal(error: unknown): string | null {
 
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
+// The fax may or may not have been accepted: Send keeps the number and document and links Sent.
+export class FaxUnconfirmedError extends Error {}
 
 // The server's fixed refusal for plugin routes while provider plugins are turned off.
 const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
@@ -998,12 +1000,12 @@ class AdminAPIClient {
       if (res.status === 503 && typeof detail === 'string') {
         // Refused before acceptance because the fax engine is not connected; nothing was sent.
         if (FAX_ENGINE_SENTENCES.has(detail)) throw new FaxRefusedError(detail);
-        const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
-        if (uncertain) {
-          throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);
+        if (/^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.test(detail)) {
+          throw new FaxUnconfirmedError("Faxbot isn't sure it accepted the fax; it may already be in Faxes → Sent.");
         }
       }
-      throw new Error(`Fax acceptance was not confirmed (HTTP ${res.status}). Check Jobs before starting another request.`);
+      // No status code: the sentence says what happened and where to look (Send links Sent).
+      throw new FaxUnconfirmedError("Faxbot didn't confirm it accepted the fax; it may already be in Faxes → Sent.");
     }
 
     return res.json();

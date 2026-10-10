@@ -149,7 +149,10 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [file, setFile] = useState<File | null>(null);
   const [uploadPickerVersion, setUploadPickerVersion] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string } | null>(null);
+  // sentLink: the answer was lost or unconfirmed, so the fax may already be in Sent; the form keeps the number and
+  // document, so sending again is one click and reuses the same send (never a second fax).
+  const [result, setResult] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string; jobId?: string;
+    sentLink?: boolean } | null>(null);
   const intentRef = useRef<SubmissionIntent | null>(null);
   const [resuming, setResuming] = useState(false);
   const submittingRef = useRef(false);
@@ -381,6 +384,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         type: 'error',
         message: `${err instanceof TypeError ? "Couldn't reach the server, so the fax may or may not have been submitted."
           : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
+        sentLink: true,
       });
     } finally {
       submittingRef.current = false;
@@ -648,6 +652,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                 ) : (
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>See it in Sent.</Typography>
                 ))}
+                {result.sentLink && !result.jobId && (
+                  // Faxes → Sent's address (navigation.tsx: faxes/sent); the console follows the address.
+                  <Button size="small" sx={{ mt: 1, px: 0 }} href="#/faxes/sent" data-testid="send-open-sent">
+                    Open Faxes → Sent
+                  </Button>
+                )}
               </Box>
             </Alert>
           </Grow>
@@ -658,7 +668,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
           <Box sx={{ mt: 4 }}>
             <ResponsiveFormSection
               title="Quick Tips"
-              subtitle="Prepare the document and track its job status"
+              subtitle="Prepare the document and follow it in Faxes → Sent"
             >
               <Stack spacing={2}>
                 <Box>

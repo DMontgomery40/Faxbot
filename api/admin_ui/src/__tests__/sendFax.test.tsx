@@ -271,6 +271,25 @@ describe('Send follows the installation country', () => {
     expect(opened).toHaveBeenCalledWith(id);
   });
 
+  it('on an unconfirmed answer keeps the number and document, links Sent and names no status code', async () => {
+    const keys = faxServer(['accepted']);
+    server.use(http.post('/fax', () => HttpResponse.json({ detail: 'Access service is temporarily unavailable.' },
+      { status: 503 }), { once: true }));
+    openFor(us);
+    const picked = document();
+    await send('2015550123', picked);
+    const message = await screen.findByText(/^Faxbot didn't confirm it accepted the fax; it may already be in Faxes → Sent\. To retry without creating a duplicate, send the same document to the same number again, even after reloading this page\.$/);
+    expect(message.textContent).not.toMatch(/HTTP|503|Jobs/);
+    expect(screen.getByTestId('send-open-sent').getAttribute('href')).toBe('#/faxes/sent');
+    // The number and the document stay, so retrying is one click, with the same send identity.
+    expect((screen.getByRole('textbox', { name: /Destination Number/ }) as HTMLInputElement).value).toBe('2015550123');
+    expect(screen.getByText('referral.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Send Fax' }));
+    expect(await screen.findByText(/^Fax queued/)).toBeTruthy();
+    expect(keys).toHaveLength(1);
+    expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
+  });
+
   it('says why a fax was refused when Faxbot cannot sign in to its fax engine', async () => {
     const detail = "Faxbot can't sign in to its fax engine. Check that the Asterisk manager password matches.";
     server.use(http.post('/fax', () => HttpResponse.json({ detail }, { status: 503 })));
