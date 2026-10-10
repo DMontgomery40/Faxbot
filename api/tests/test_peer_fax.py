@@ -491,8 +491,10 @@ def test_statements_about_fax_images_are_checked_and_an_older_one_never_wins(pee
                               'capabilities': capabilities(fax_images=fax_images, peer_calls=False, said_at=said_at)})
     now = datetime.utcnow().replace(microsecond=0)
     newer, older = statement(True, timestamp(now)), statement(False, timestamp(now - timedelta(minutes=5)))
-    assert a.note(newer['statement'], newer['signature']) == (200, {'recorded': True})
-    assert a.note(older['statement'], older['signature']) == (200, {'recorded': True})
+    # The answer also carries A's own signed statement (payload_layouts, test_partner_layouts.py).
+    for told in (newer, older):
+        status, body = a.note(told['statement'], told['signature'])
+        assert (status, body['recorded'], set(body)) == (200, True, {'recorded', 'statement'})
     assert a.store.get_peer(b_on_a['id'])['partner_receives_fax_images'] == 1
     elsewhere = statement(False, timestamp(now + timedelta(minutes=1)), recipient=b_key.signing_key)
     stale = statement(False, timestamp(now - timedelta(days=2)))
