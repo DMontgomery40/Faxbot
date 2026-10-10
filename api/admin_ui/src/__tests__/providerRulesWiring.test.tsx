@@ -103,13 +103,15 @@ describe('Faxes → Sent: held faxes', () => {
 });
 
 describe('Overview: faxes waiting for you', () => {
-  it('shows the held faxes and opens Sent', async () => {
+  it('counts the held faxes in Needs attention and opens only them in Sent', async () => {
     server.use(http.get('/routing/holds', () => HttpResponse.json({ holds: [hold] })));
     const navigate = vi.fn();
     render(<Dashboard client={keyClient()} onNavigate={navigate} />);
-    expect(await screen.findByText('1 fax is waiting for you')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Sent' }));
-    expect(navigate).toHaveBeenCalledWith('faxes/sent');
+    const item = await screen.findByTestId('attention-held');
+    expect(item.textContent).toContain('Faxes your rules are holding');
+    expect(item.textContent).toContain('1 waiting for approval. Nothing has been sent for them.');
+    fireEvent.click(item);
+    expect(navigate).toHaveBeenCalledWith('faxes/sent?show=held');
   });
 });
 

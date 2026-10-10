@@ -28,6 +28,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 
 * `send`: Send a fax.
 * `status`: Show where a sent fax is now.
+* `overview`: Show what needs attention now, as on the...
 * `received`: Received faxes: list and open them, give...
 * `sent`: Sent faxes: list them, open one, download...
 * `forms`: Registered forms: import a fillable PDF or...
@@ -86,6 +87,20 @@ $ faxbot status [OPTIONS] {fax_id}
 **Arguments**:
 
 * `fax_id`: Fax ID shown when the fax was sent.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `faxbot overview`
+
+Show what needs attention now, as on the console&#x27;s Overview: held faxes, uncertain and failed sends, received faxes without an owner, email delivery failures and overdue expected faxes, each with the command that lists them.
+
+**Usage**:
+
+```console
+$ faxbot overview [OPTIONS]
+```
 
 **Options**:
 
