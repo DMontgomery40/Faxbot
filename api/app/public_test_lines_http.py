@@ -1,4 +1,4 @@
-"""Public test lines over HTTP (``test_lines.py``): Administration → System health → Public test lines.
+"""Public test lines over HTTP (``public_test_lines.py``): Administration → System health → Public test lines.
 
 - ``GET /diagnostics/test-lines``: the lines with their sources, what the dialing guard says about each, whether a
   reply would reach this Faxbot, and the recent test faxes with their results.
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 from .access.route_policy import require_permission
 from .config_runtime import run_lifecycle_step
-from . import test_lines
+from . import public_test_lines
 
 
 router = APIRouter(prefix='/diagnostics/test-lines', tags=['Diagnostics'])
@@ -47,7 +47,7 @@ def _actor(engine, identity):
 def _refused(call):
     try:
         return call()
-    except test_lines.TestLineError as error:
+    except public_test_lines.TestLineError as error:
         raise HTTPException(400, detail=str(error)) from None
 
 
@@ -55,13 +55,13 @@ def _refused(call):
 async def get_test_lines(request: Request):
     engine, _ = _engine(request)
     values = request.scope['faxbot.configuration'].active.values
-    return await run_lifecycle_step(lambda: test_lines.view(engine, values))
+    return await run_lifecycle_step(lambda: public_test_lines.view(engine, values))
 
 
 @router.get('/replies', dependencies=[Depends(require_permission('settings:read'))])
 async def get_replies(request: Request):
     engine, _ = _engine(request)
-    return {'replies': await run_lifecycle_step(lambda: test_lines.replies(engine))}
+    return {'replies': await run_lifecycle_step(lambda: public_test_lines.replies(engine))}
 
 
 @router.post('/{line_id}/send')
@@ -73,7 +73,7 @@ async def send_test_fax(line_id: str, request: Request, identity=Depends(require
     engine, runtime = _engine(request)
     revision = request.scope['faxbot.configuration'].active
     values = revision.values
-    line = _refused(lambda: test_lines.line_for(line_id))
+    line = _refused(lambda: public_test_lines.line_for(line_id))
     if revision.profile_id('outbound') is None:
         raise HTTPException(409, detail='Sending is turned off in this configuration, so no test fax can go.')
     access = access_runtime(request)
@@ -82,25 +82,25 @@ async def send_test_fax(line_id: str, request: Request, identity=Depends(require
         now = datetime.utcnow()
         home = getattr(values, 'fax_default_country', 'US') or 'US'
         with engine.begin() as connection:
-            guard_view = test_lines.guard_state(connection, line, home, now)
+            guard_view = public_test_lines.guard_state(connection, line, home, now)
         if not guard_view['allowed']:
             # Nothing is sent: the guard's own sentence, and the class you may allow (never bypassed).
             return {'sent': False, 'needs_allow': guard_view, 'sentence': guard_view['sentence']}
-        reply = test_lines.reply_check(values, engine)
+        reply = public_test_lines.reply_check(values, engine)
         actor, name = _actor(engine, identity)
         holder = []
-        document = test_lines.test_page(line, test_lines._when(now) or '')
+        document = public_test_lines.test_page(line, public_test_lines._when(now) or '')
         try:
             accept_generated_fax(runtime, access, identity.actor, revision, to_number=line.number, document=document,
                                  file_name=f'test-line-{line.id}.pdf', pages=1,
-                                 after=test_lines.record_step(line, reply_number=reply['caller_id'],
+                                 after=public_test_lines.record_step(line, reply_number=reply['caller_id'],
                                                               actor_principal_id=actor, actor_name=name,
                                                               holder=holder))
         except GeneratedFaxBusy as error:
             raise HTTPException(409, detail=str(error)) from None
         except RuntimeError as error:
             raise HTTPException(409, detail=str(error)) from None
-        result = test_lines.one_view(engine, holder[0]) if holder else None
+        result = public_test_lines.one_view(engine, holder[0]) if holder else None
         sentence = f'The test fax to {line.operator} is on its way. Its result shows here when the call ends.'
         if result and result['fax_state'] == 'held':
             sentence = result['fax_sentence']
@@ -111,7 +111,7 @@ async def send_test_fax(line_id: str, request: Request, identity=Depends(require
 @router.get('/sends/{send_id}', dependencies=[Depends(require_permission('settings:read'))])
 async def get_send(send_id: str, request: Request):
     engine, _ = _engine(request)
-    return await run_lifecycle_step(lambda: _refused(lambda: test_lines.one_view(engine, send_id)))
+    return await run_lifecycle_step(lambda: _refused(lambda: public_test_lines.one_view(engine, send_id)))
 
 
 @router.get('/sends/{send_id}/receipt', dependencies=[Depends(require_permission('settings:read'))])
@@ -120,13 +120,13 @@ async def get_receipt(send_id: str, request: Request):
     engine, _ = _engine(request)
 
     def look():
-        row = _refused(lambda: test_lines.send_row(engine, send_id))
-        line = test_lines.BY_ID.get(row['line_id'])
+        row = _refused(lambda: public_test_lines.send_row(engine, send_id))
+        line = public_test_lines.BY_ID.get(row['line_id'])
         if line is None or line.receipt != 'faxbeep':
             raise HTTPException(400, detail='Only Faxbeep lists each fax it receives in a way Faxbot can look up.')
         with engine.connect() as connection:
-            ended = test_lines.call_ended_at(connection, row['job_id'])
-        return test_lines.faxbeep_receipt(row, ended_at=ended)
+            ended = public_test_lines.call_ended_at(connection, row['job_id'])
+        return public_test_lines.faxbeep_receipt(row, ended_at=ended)
     return await run_lifecycle_step(look)
 
 
@@ -142,7 +142,7 @@ async def mark_reply(send_id: str, payload: ReplyIn, request: Request,
 
     def mark():
         actor, name = _actor(engine, identity)
-        return test_lines.confirm_reply(engine, send_id, payload.inbound_id, actor_principal_id=actor,
+        return public_test_lines.confirm_reply(engine, send_id, payload.inbound_id, actor_principal_id=actor,
                                         actor_name=name)
     result = await run_lifecycle_step(lambda: _refused(mark))
     from .audit import audit_event

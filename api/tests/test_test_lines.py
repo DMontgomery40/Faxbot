@@ -1,4 +1,4 @@
-"""Public test lines from Diagnostics (research N10, test_lines.py).
+"""Public test lines from Diagnostics (research N10, public_test_lines.py).
 
 The real POST /diagnostics/test-lines/{line}/send path runs on an installation with a SIP trunk and sending turned
 off, so a test fax is accepted (sending rules, dialing guard, the acceptance transaction) but never dialed. The
@@ -15,7 +15,7 @@ import phonenumbers
 import pytest
 import sqlalchemy as sa
 
-from app import test_lines
+from app import public_test_lines as test_lines
 from api.tests.test_reply_number import DID_A, DID_B, client  # noqa: F401 - fixture
 
 

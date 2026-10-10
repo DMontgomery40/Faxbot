@@ -9,7 +9,7 @@ records and the real certainty feed with the Work item's real checks:
 - ``T0Capped=1``: the cap ended the call. It reads as ``no_fax_answer`` (like spandsp's own T0 with the line open:
   not a person who hung up), so another route may still take it and no Work item opens; Sent details say Faxbot
   hung up at 50 seconds, with the billed step kept from the trunk's prices.
-- A test fax to a public test line (``test_lines.py``) that is refused, or that a person answered, opens no Work
+- A test fax to a public test line (``public_test_lines.py``) that is refused, or that a person answered, opens no Work
   item, beside an ordinary fax that does.
 
 SQLite and PostgreSQL. Synthetic numbers only.
@@ -122,7 +122,7 @@ def test_a_call_the_cap_ended_reads_as_no_fax_answer_and_sent_details_say_so(  #
 
 def test_a_test_line_fax_refused_or_answered_by_a_person_opens_no_work_item(  # noqa: F811
         installation, another_route, monkeypatch):
-    from api.app import main, test_lines
+    from api.app import main, public_test_lines as test_lines
     from api.tests.test_person_answered import fax_result
     installation, ordinary, ordinary_claim = on_the_line(installation, SIP)
     configuration, store, _ = installation

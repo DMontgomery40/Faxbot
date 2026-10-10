@@ -291,7 +291,7 @@ def partners_pack(plan):
         name = found.get('display_name') or found['number']
         plan.item('partners', f"partners.invite.{found['number']}", 'step', f'Invite {name} to be a direct partner',
                   found['sentence'],
-                  [{'name': 'Savings & optimization → Opportunities → Partners',
+                  [{'name': 'Savings & optimization → Opportunities → Partner candidates',
                     'detail': f"{_plural(found['faxes'], 'fax', 'faxes')} in the last 30 days"}],
                   saving=({**found['monthly_cost'], 'faxes': found['faxes'], 'estimate': True}
                           if found.get('monthly_cost') else None),

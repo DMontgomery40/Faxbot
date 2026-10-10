@@ -7,7 +7,7 @@ This revision adds three append-only tables and changes no stored row:
   attempt's own ID. It keeps the cap and the trunk's billing step and minimum as Faxbot read them when the
   result arrived, so Sent details can say which billed step the call fitted in without reading today's prices.
 - ``test_line_sends``: one row per test fax a person sent to a public test line from Diagnostics
-  (``test_lines.py``): the line, the fax, the number dialled, the number the call showed for a reply, how many
+  (``public_test_lines.py``): the line, the fax, the number dialled, the number the call showed for a reply, how many
   minutes a reply may take (none when the line sends nothing back), and who sent it. Faxbot never schedules one.
 - ``test_line_replies``: one row per received fax labelled as a test line's reply: ``id`` is the received
   fax's own ID, ``how`` is ``number`` (it came from the line's own number) or ``person`` (a person confirmed

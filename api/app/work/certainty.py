@@ -249,7 +249,7 @@ class CertaintyStore:
         if notices is not None:
             conditions.append(~sa.exists(sa.select(1).where(notices.c.role == 'sender',
                                                             notices.c.notice_job_id == job_id)))
-        # A test fax to a public test line (test_lines.py): a person who answered or a station that differed there
+        # A test fax to a public test line (public_test_lines.py): a person who answered or a station that differed there
         # is the test's result, not a fax for anyone to settle.
         tests = self.sources.table('test_line_sends')
         if tests is not None:

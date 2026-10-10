@@ -91,7 +91,7 @@ from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
 from .routing.stations_http import router as routing_stations_router
-from .test_lines_http import router as test_lines_router
+from .public_test_lines_http import router as test_lines_router
 from .routing.after_answer_http import router as routing_after_answer_router
 from .routing.analog_http import router as routing_analog_router
 from .copiers_http import router as copiers_router
