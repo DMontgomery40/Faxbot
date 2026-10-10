@@ -923,8 +923,10 @@ def sent_sentence(record, phase=None) -> str | None:
 # and the next block's modem start. Measured on 10 October 2026 on the SSL Fax engine's loopback (HylaFAX+ 7.0.11
 # over an IAX modem, error correction, 256-octet frames, MH; test_sslfax_loopback case w): a page of 66,256 coded
 # octets went in two partial pages, and the second added 1.26 s from PPS-NULL to its first frame plus about 2.0 s
-# of modem start and flags before its data: about 3.3 s. One run; not yet measured on a T.38 path or with 64-octet
-# frames, where the research estimate from a two-gateway capture was 4.24 s.
+# of modem start and flags before its data: about 3.3 s. A repeat gave the same exchange (1.29 s and 2.0 s), and
+# the two pages' transfers took 72 s and 77 s for 1,291 more octets (about 1.1 s of data): about 3.9 s, give or take
+# the log's whole seconds. Not yet measured on a T.38 path or with 64-octet frames, where the research estimate from
+# a two-gateway capture was 4.24 s.
 ECM_FRAMES_PER_BLOCK = 256
 ECM_BLOCK_SECONDS = 3.3
 
