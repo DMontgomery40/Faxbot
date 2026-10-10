@@ -1,5 +1,5 @@
 {
-  "about": "Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot costs capabilities) show exactly what the server says. The response is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py scenario); its catalogue and capability fields must match app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite it after either changes, run tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.",
+  "about": "Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot costs capabilities, cli/commands/capabilities.py) show exactly what the server says. The response is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py scenario), and cli holds the lines the command prints from it: all of them, those ready to turn on, and some capabilities one by one. Its catalogue and capability fields must match app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite it after either changes, run tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.",
   "response": {
     "days": 30,
     "title": "Capabilities",
@@ -161,7 +161,7 @@
             "setting": {
               "address": "recipients/list",
               "label": "Recipients → Details",
-              "command": "faxbot recipients toll-free approve {number}"
+              "command": "faxbot recipients toll-free approve {number} {toll_free} --by {who} --on {date} --evidence {evidence}"
             },
             "results": {
               "address": "savings/results?part=toll_free",
@@ -282,7 +282,7 @@
             "setting": {
               "address": "savings/prices",
               "label": "Savings & optimization → Prices & plans",
-              "command": "faxbot costs plans budget"
+              "command": "faxbot costs plans budget {plan} --pages {count}"
             },
             "results": {
               "address": "savings/results?part=plan_first",
@@ -347,7 +347,7 @@
             "setting": {
               "address": "savings/opportunities?section=sending",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations sending"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=sending",
@@ -402,7 +402,7 @@
             "setting": {
               "address": "savings/opportunities?section=carriers",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations carriers"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=carriers",
@@ -457,7 +457,7 @@
             "setting": {
               "address": "savings/opportunities?section=steps",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations billing-steps"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=steps",
@@ -512,7 +512,7 @@
             "setting": {
               "address": "savings/opportunities?section=tollFree",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations toll-free"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=tollFree",
@@ -567,7 +567,7 @@
             "setting": {
               "address": "savings/opportunities?section=marker",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations fax-marker"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=marker",
@@ -631,7 +631,7 @@
             "setting": {
               "address": "savings/opportunities?section=sites",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations sites"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=sites",
@@ -693,7 +693,7 @@
             "setting": {
               "address": "delivery/connections",
               "label": "Delivery setup → Connections",
-              "command": "faxbot providers long-pages"
+              "command": "faxbot providers long-pages {route} --long-pages on"
             },
             "results": {
               "address": "savings/results?part=packing",
@@ -763,7 +763,7 @@
             "setting": {
               "address": "recipients/list",
               "label": "Recipients → Details",
-              "command": "faxbot recipients encoded set {number}"
+              "command": "faxbot recipients encoded set {number} --recipient-agreed"
             },
             "results": {
               "address": "savings/results?part=encoding",
@@ -895,7 +895,7 @@
             "setting": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot providers trunk mode"
+              "command": "faxbot providers trunk mode t38"
             },
             "results": {
               "address": "savings/results?part=t38",
@@ -950,7 +950,7 @@
             "setting": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot system settings set sip_fax_compression=jbig"
+              "command": null
             },
             "results": {
               "address": "savings/results?part=coding",
@@ -1070,7 +1070,7 @@
             "setting": {
               "address": "savings/opportunities?section=pages",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations shading"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=pages",
@@ -1267,7 +1267,7 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot recipients partners fax-images"
+              "command": "faxbot system settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=direct_fax_images",
@@ -1333,7 +1333,7 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot recipients partners send-once"
+              "command": "faxbot system settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=direct_bytes",
@@ -1406,7 +1406,7 @@
             "setting": {
               "address": "recipients/list",
               "label": "Recipients → Details",
-              "command": "faxbot recipients together set {number}"
+              "command": "faxbot recipients together set {number} --recipient-agreed"
             },
             "results": {
               "address": "savings/results?part=sending_together",
@@ -1575,7 +1575,7 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot recipients partners tunnel-calls"
+              "command": "faxbot recipients partners tunnel-calls {partner} on --address {address}"
             },
             "results": {
               "address": "savings/results?part=tunnel_calls",
@@ -1640,7 +1640,7 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot recipients partners relay accept"
+              "command": "faxbot recipients partners relay accept {partner}"
             },
             "results": {
               "address": "savings/results?part=relay",
@@ -1705,7 +1705,7 @@
             "setting": {
               "address": "recipients/list",
               "label": "Recipients → Details",
-              "command": "faxbot recipients digital add {number}"
+              "command": "faxbot recipients digital add {number} --direct {address} --confirm"
             },
             "results": {
               "address": "savings/results?part=digital",
@@ -1760,7 +1760,7 @@
             "setting": {
               "address": "savings/opportunities?section=partners",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations partners"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=partners",
@@ -1815,7 +1815,7 @@
             "setting": {
               "address": "savings/opportunities?section=discovery",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot recipients partners discover"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=discovery",
@@ -1871,7 +1871,7 @@
             "setting": {
               "address": "savings/opportunities?section=relays",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot recipients partners relay"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=relays",
@@ -1933,7 +1933,7 @@
             "setting": {
               "address": "recipients/list",
               "label": "Recipients → Details",
-              "command": "faxbot recipients schedule {number}"
+              "command": "faxbot recipients schedule {number} --learn"
             },
             "results": null,
             "affected": null
@@ -2035,7 +2035,7 @@
             "setting": {
               "address": "faxes/sent",
               "label": "Faxes → Sent",
-              "command": "faxbot sent continue {fax}"
+              "command": "faxbot sent continue {fax_id} --send"
             },
             "results": {
               "address": "savings/results?part=continuation",
@@ -2101,7 +2101,7 @@
             "setting": {
               "address": "recipients/partners",
               "label": "Recipients → Partners",
-              "command": "faxbot recipients partners repairs"
+              "command": "faxbot system settings set direct_delivery_enabled=true"
             },
             "results": {
               "address": "savings/results?part=partner_repair",
@@ -2172,7 +2172,7 @@
             "setting": {
               "address": "delivery/blocked",
               "label": "Delivery setup → Blocked senders",
-              "command": "faxbot numbers blocked add {number}"
+              "command": "faxbot numbers blocked add {number} --reason {reason}"
             },
             "results": {
               "address": "savings/results?part=blocked_calls",
@@ -2228,7 +2228,7 @@
             "setting": {
               "address": "savings/opportunities?section=plans",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations plans"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=plans",
@@ -2283,7 +2283,7 @@
             "setting": {
               "address": "savings/opportunities?section=receiving",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations receiving"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=receiving",
@@ -2339,7 +2339,7 @@
             "setting": {
               "address": "savings/opportunities?section=trunks",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations trunks"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=trunks",
@@ -2394,7 +2394,7 @@
             "setting": {
               "address": "savings/opportunities?section=numbers",
               "label": "Savings & optimization → Opportunities",
-              "command": "faxbot costs recommendations numbers"
+              "command": null
             },
             "results": {
               "address": "savings/opportunities?section=numbers",
@@ -2459,7 +2459,7 @@
             "setting": {
               "address": "delivery/trunk",
               "label": "Delivery setup → Telnyx",
-              "command": "faxbot providers trunk telnyx names"
+              "command": null
             },
             "results": {
               "address": "delivery/trunk",
@@ -2521,7 +2521,7 @@
             "setting": {
               "address": "savings/charges",
               "label": "Savings & optimization → Charges",
-              "command": "faxbot costs charges"
+              "command": null
             },
             "results": {
               "address": "savings/charges",
@@ -2566,7 +2566,7 @@
             "setting": {
               "address": "admin/setup",
               "label": "Administration → Setup",
-              "command": "faxbot system setup plan"
+              "command": null
             },
             "results": {
               "address": "admin/setup",
@@ -2578,5 +2578,375 @@
         ]
       }
     ]
+  },
+  "cli": {
+    "list": [
+      "Capabilities",
+      "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+      "",
+      "Spend less on sending",
+      "Choose the route, plan or number that costs least for each fax.",
+      "  Faxes to your own numbers (own_numbers): On · Works here · Sample data",
+      "    Delivers a fax to one of your own numbers straight into Received, with no phone call.",
+      "    Not used in 30 days",
+      "  Approved toll-free numbers (toll_free): On · Works here · Sample data",
+      "    Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
+      "    On for 1 recipient who approved a toll-free number.",
+      "    Not used in 30 days",
+      "  Cheapest route per delivered fax (cheapest_route): On · Not here · Sample data",
+      "    Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+      "    On; a preferred route for a number still comes first.",
+      "    Needs a second sending route to compare with; you send through Telnyx only.",
+      "    Missing: Connection, Prices",
+      "    Used on 2 faxes in 30 days",
+      "  Your plan's faxes first (plan_first): On · Not here · Sample data",
+      "    Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
+      "    Needs a monthly plan among your sending routes; you send through Telnyx only, with no plan.",
+      "    Missing: Prices",
+      "    Not used in 30 days",
+      "  Cheaper routes per number (advice_sending): On · Not here · Sample data",
+      "    Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
+      "    Needs a second sending route to compare with; you send through Telnyx only.",
+      "    Missing: Connection, Prices",
+      "  Other carriers' prices (advice_carriers): On · Works here · Sample data",
+      "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
+      "  Calls just past a billed minute (advice_billing_steps): On · Works here · Sample data",
+      "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
+      "  Toll-free numbers on file (advice_toll_free): On · Works here · Sample data",
+      "    Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
+      "  Fax marker on calls (advice_fax_marker): On · Works here · Sample data",
+      "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
+      "  Calls by state (advice_sites): On · Works here · Sample data",
+      "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
+      "",
+      "Smaller documents and shorter calls",
+      "Send fewer pages, and keep each page on the line for less time.",
+      "  Dense pages (dense_pages): On · Works here · Sample data",
+      "    Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
+      "    Not used in 30 days",
+      "  Encoded pages (experimental) (encoded_pages): Off · Works here · Sample data · Ready to turn on · Experimental",
+      "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+      "    No recipient has agreed to encoded pages yet.",
+      "    Missing: Recipient's agreement",
+      "    Not used in 30 days",
+      "    Turn it on in Recipients → Details.",
+      "  Lighter shading (fax_friendly): Off · Works here · Sample data · Ready to turn on",
+      "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+      "    Not used in 30 days",
+      "    Turn it on in Delivery setup → Connections.",
+      "  Fax over IP (T.38) (fax_over_ip): On · Works here · Live call",
+      "    Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+      "    Used on 3 calls in 30 days",
+      "  Smallest page coding (measured_coding): On · Works here · Test lab",
+      "    Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+      "    Not used in 30 days",
+      "  Faster pages (sslfax): On · Not here · Test lab",
+      "    Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+      "    Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+      "    Missing: Fax engine",
+      "    Not used in 30 days",
+      "  Time lighter shading would save (advice_shading): On · Works here · Sample data",
+      "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
+      "",
+      "Avoid repeated calls and documents",
+      "Send what a recipient already has only once, and share calls where recipients agree.",
+      "  Case packets (case_packets): Off · Works here · Sample data · Ready to turn on",
+      "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+      "    No recipient accepts a list of the documents they already have yet.",
+      "    Missing: Recipient's agreement",
+      "    Not used in 30 days",
+      "    Turn it on in Recipients → Details.",
+      "  Direct delivery (direct_delivery): Off · Not here · Sample data",
+      "    Sends documents to verified partners over the internet instead of placing a fax call.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner",
+      "    Not used in 30 days",
+      "  Fax images to partners (fax_images): Off · Not here · Sample data",
+      "    Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
+      "    Off while direct delivery is off.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner, Setting",
+      "    Not used in 30 days",
+      "  Send once and reuse (reuse): Off · Not here · Sample data · Experimental",
+      "    Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
+      "    Off while direct delivery is off.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner, Setting",
+      "    Not used in 30 days",
+      "  Sending together (sending_together): On · Works here · Test lab",
+      "    Sends several short faxes to the same number in one call, on a line that charges for each call.",
+      "    On for 1 recipient who agreed.",
+      "    Not used in 30 days",
+      "  Fewer separator pages (separator_pages): Off · Works here · Sample data · Ready to turn on",
+      "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+      "    No recipient has agreed to an index page or page marks yet.",
+      "    Missing: Recipient's agreement",
+      "    Not used in 30 days",
+      "    Turn it on in Recipients → Details.",
+      "",
+      "Work better with regular recipients",
+      "Agree better ways to deliver with the organizations you fax most.",
+      "  Partner fax over a private tunnel (partner_tunnel): Off · Not here · Test lab · Experimental",
+      "    Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
+      "    Off while direct delivery is off.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner, Partner, Setting",
+      "    Not used in 30 days",
+      "  Partner relays (relay): Off · Not here · Sample data",
+      "    Sends faxes abroad through a partner that places them as local calls in its own country.",
+      "    Off until you and a partner both sign a relay agreement.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner, Recipient's agreement",
+      "    Not used in 30 days",
+      "  Direct messages and FHIR (digital_routes): Off · Not here · Sample data",
+      "    Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
+      "    No recipient has a confirmed Direct address or FHIR server yet.",
+      "    Needs a Direct messaging (HISP) or FHIR account; none is set up yet.",
+      "    Missing: Connection, Recipient's agreement",
+      "    Not used in 30 days",
+      "  Partner candidates (advice_partners): On · Works here · Sample data",
+      "    Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
+      "  Recipients that run Faxbot (advice_discovery): On · Works here · Sample data",
+      "    Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
+      "  Partners that could relay (advice_relays): On · Not here · Sample data",
+      "    Names partners whose signed local price would have cost less than your own calls.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner",
+      "",
+      "Recover delivery with less waste",
+      "Wait for the right moment, and resend only what is missing.",
+      "  Calls at the right hour (busy_hours): On · Works here · Sample data",
+      "    Waits out a number's usual busy hours when a failed call there could be charged.",
+      "    On; urgent faxes still go at once.",
+      "    Faxbot keeps no count of the faxes that waited",
+      "  Wait for a free line (free_line): On · Works here · Sample data",
+      "    Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
+      "    On; each number takes one call at a time unless you allow more.",
+      "    Faxbot keeps no count of the faxes that waited",
+      "  Only the missing pages (continuation): On · Works here · Sample data",
+      "    Finishes a fax whose call broke by sending only the pages the call did not confirm.",
+      "    On; you choose it for each fax whose call broke.",
+      "    Not used in 30 days",
+      "  Missing pages to partners (partner_repair): Off · Not here · Sample data · Experimental",
+      "    After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
+      "    Off while direct delivery is off.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner, Setting",
+      "    Not used in 30 days",
+      "",
+      "Lower receiving and service costs",
+      "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+      "  Junk callers turned away (blocked_senders): On · Works here · Sample data",
+      "    Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+      "    On for 1 number on your blocked list.",
+      "    Turned away 1 call in 30 days",
+      "  Plans worth their fee (advice_plans): On · Not here · Sample data",
+      "    Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
+      "    Needs a monthly plan; none of your fax services has one.",
+      "    Missing: Prices",
+      "  Receiving lines and numbers (advice_receiving): On · Works here · Sample data",
+      "    Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
+      "  Your trunks compared (advice_trunks): On · Not here · Sample data",
+      "    Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
+      "    Needs two or more trunks to compare; you have one.",
+      "    Missing: Connection",
+      "  Where each number should live (advice_numbers): On · Works here · Sample data",
+      "    Says where each of your fax numbers costs least to receive on, and the steps to move it.",
+      "  Caller-name lookup (advice_caller_names): On · Not here · Sample data",
+      "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
+      "    Needs your Telnyx key saved on the Telnyx page.",
+      "    Missing: Setting",
+      "",
+      "Explain results and choose improvements",
+      "Check what you were billed, and find the next change worth making.",
+      "  Charge checks (charge_checks): On · Works here · Sample data",
+      "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
+      "  Suggested packs (advice_setup_packs): On · Works here · Sample data",
+      "    Gathers the settings and rules that would save money here into packs you review and apply.",
+      "",
+      "On or Off: Whether it is switched on for your faxes.",
+      "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
+      "Live call, Test lab or Sample data: How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only.",
+      "Ready to turn on: Off, but this installation already has what it needs.",
+      "Needs something: Missing something it needs, such as a connection, prices or a recipient's agreement.",
+      "Experimental: Still being proven; its evidence and limits are shown with it.",
+      "One capability in full: faxbot costs capabilities show KEY"
+    ],
+    "filtered": {
+      "ready": [
+        "Capabilities",
+        "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+        "Showing: Ready to turn on",
+        "",
+        "Smaller documents and shorter calls",
+        "Send fewer pages, and keep each page on the line for less time.",
+        "  Encoded pages (experimental) (encoded_pages): Off · Works here · Sample data · Ready to turn on · Experimental",
+        "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+        "    No recipient has agreed to encoded pages yet.",
+        "    Missing: Recipient's agreement",
+        "    Not used in 30 days",
+        "    Turn it on in Recipients → Details.",
+        "  Lighter shading (fax_friendly): Off · Works here · Sample data · Ready to turn on",
+        "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+        "    Not used in 30 days",
+        "    Turn it on in Delivery setup → Connections.",
+        "",
+        "Avoid repeated calls and documents",
+        "Send what a recipient already has only once, and share calls where recipients agree.",
+        "  Case packets (case_packets): Off · Works here · Sample data · Ready to turn on",
+        "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+        "    No recipient accepts a list of the documents they already have yet.",
+        "    Missing: Recipient's agreement",
+        "    Not used in 30 days",
+        "    Turn it on in Recipients → Details.",
+        "  Fewer separator pages (separator_pages): Off · Works here · Sample data · Ready to turn on",
+        "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+        "    No recipient has agreed to an index page or page marks yet.",
+        "    Missing: Recipient's agreement",
+        "    Not used in 30 days",
+        "    Turn it on in Recipients → Details.",
+        "",
+        "On or Off: Whether it is switched on for your faxes.",
+        "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
+        "Live call, Test lab or Sample data: How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only.",
+        "Ready to turn on: Off, but this installation already has what it needs.",
+        "Needs something: Missing something it needs, such as a connection, prices or a recipient's agreement.",
+        "Experimental: Still being proven; its evidence and limits are shown with it.",
+        "One capability in full: faxbot costs capabilities show KEY"
+      ]
+    },
+    "show": {
+      "sending_together": [
+        "Sending together",
+        "On · Works here · Test lab",
+        "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+        "For example: Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that charges for each call.",
+        "On for 1 recipient who agreed.",
+        "Helps with: Avoid repeated calls and documents",
+        "",
+        "What it needs",
+        "  In place · Connection: Your own SIP trunk for sending, from a phone carrier or your phone system. See Delivery setup → Telnyx.",
+        "  In place · Prices: Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less. See Savings & optimization → Prices & plans.",
+        "  In place · Recipient's agreement: A recipient that agrees to receive several faxes in one call; you record that on their page. See Recipients → Details.",
+        "",
+        "Its setting: Recipients → Details",
+        "Command line: faxbot recipients together set {number} --recipient-agreed",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "fax_friendly": [
+        "Lighter shading",
+        "Off · Works here · Sample data · Ready to turn on",
+        "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+        "For example: A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks removed first, so each page takes fewer seconds to send.",
+        "Helps with: Smaller documents and shorter calls",
+        "",
+        "What it needs",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "  In place · Prices: A sending route billed by the minute or second, such as your own SIP trunk. See Savings & optimization → Prices & plans.",
+        "",
+        "Its setting: Delivery setup → Connections",
+        "Command line: faxbot system settings set fax_friendly_documents=where_it_saves",
+        "Turn it on in Delivery setup → Connections.",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "encoded_pages": [
+        "Encoded pages (experimental)",
+        "Off · Works here · Sample data · Ready to turn on · Experimental",
+        "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+        "For example: A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the recipient's Faxbot turns them back into the exact original file.",
+        "No recipient has agreed to encoded pages yet.",
+        "Helps with: Smaller documents and shorter calls",
+        "",
+        "What it needs",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "  Missing · Recipient's agreement: A recipient that runs Faxbot and agrees to encoded pages; you record that on their page. See Recipients → Details.",
+        "",
+        "Its setting: Recipients → Details",
+        "Command line: faxbot recipients encoded set {number} --recipient-agreed",
+        "Turn it on in Recipients → Details.",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "direct_delivery": [
+        "Direct delivery",
+        "Off · Not here · Sample data",
+        "Sends documents to verified partners over the internet instead of placing a fax call.",
+        "For example: A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes over the internet as the original file, with no fax call.",
+        "Needs a verified partner; you have none yet.",
+        "Helps with: Avoid repeated calls and documents",
+        "",
+        "What it needs",
+        "  Missing · Partner: A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax. See Recipients → Partners.",
+        "",
+        "Its setting: Recipients → Partners",
+        "Command line: faxbot system settings set direct_delivery_enabled=true",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "separator_pages": [
+        "Fewer separator pages",
+        "Off · Works here · Sample data · Ready to turn on",
+        "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+        "For example: Three documents sent together to a lab start with one index page that lists them, instead of a separator page before each one.",
+        "No recipient has agreed to an index page or page marks yet.",
+        "Helps with: Avoid repeated calls and documents",
+        "",
+        "What it needs",
+        "  In place · Connection: Your own SIP trunk for sending, from a phone carrier or your phone system. See Delivery setup → Telnyx.",
+        "  In place · Prices: Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less. See Savings & optimization → Prices & plans.",
+        "  Missing · Recipient's agreement: A recipient that shares calls and agrees to an index page or page marks; you record that on their page. See Recipients → Details.",
+        "  In place · Setting: For marks at the top of every page: your header text and sending number. See Delivery setup → Sender identity.",
+        "",
+        "Its setting: Recipients → Details",
+        "Command line: faxbot recipients set {number} --index-page",
+        "Turn it on in Recipients → Details.",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "advice_plans": [
+        "Plans worth their fee",
+        "On · Not here · Sample data",
+        "Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
+        "For example: Your unlimited fax plan's fee is compared with what last month's faxes would have cost without it, so you can decide whether to keep it.",
+        "Needs a monthly plan; none of your fax services has one.",
+        "Helps with: Lower receiving and service costs",
+        "",
+        "What it needs",
+        "  Missing · Prices: A monthly plan on one of your fax services, with its fee entered. See Savings & optimization → Prices & plans.",
+        "",
+        "Its figures: Savings & optimization → Opportunities (faxbot costs recommendations plans)"
+      ],
+      "measured_coding": [
+        "Smallest page coding",
+        "On · Works here · Test lab",
+        "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
+        "For example: Before a call, Faxbot measures a scanned page in each coding the receiving machine accepts, and sends the smallest, so the page takes less time on the line.",
+        "Helps with: Smaller documents and shorter calls",
+        "",
+        "What it needs",
+        "  In place · Connection: Your own SIP trunk for sending, from a phone carrier or your phone system. See Delivery setup → Telnyx.",
+        "",
+        "Its setting: Delivery setup → Telnyx",
+        "On this installation: Not used in 30 days",
+        "Its figures: Savings & optimization → Savings (faxbot costs savings)"
+      ],
+      "busy_hours": [
+        "Calls at the right hour",
+        "On · Works here · Sample data",
+        "Waits out a number's usual busy hours when a failed call there could be charged.",
+        "For example: A clinic's line is busy every weekday from 9 to 10. A routine fax to it waits until 10 instead of placing calls that fail and may be charged.",
+        "On; urgent faxes still go at once.",
+        "Helps with: Recover delivery with less waste",
+        "",
+        "What it needs",
+        "  In place · Connection: A fax service account or your own SIP trunk that sends faxes. See Delivery setup → Connections.",
+        "",
+        "Its setting: Recipients → Details",
+        "Command line: faxbot recipients schedule {number} --learn",
+        "On this installation: Faxbot keeps no count of the faxes that waited"
+      ]
+    }
   }
 }
