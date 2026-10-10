@@ -610,7 +610,7 @@ async def engine_result(request: Request, payload: dict = Body(...),
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
         if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
-                                          sip_calls.PERSON_ANSWERED):
+                                          sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
@@ -618,11 +618,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
         # The engine's own sentence, unless the call says more: the engine heard no fax machine, no
-        # sound came back, sound came back but no fax machine answered, or the other machine answered
-        # (sent its ID) and the fax did not finish.
+        # sound came back, sound came back but no fax machine answered, the other machine answered
+        # (sent its ID) and the fax did not finish, or the far end hung up at once.
         found = (row or {}).get('verdict')
         if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed',
-                     sip_calls.PERSON_ANSWERED):
+                     sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
             sentence = sip_calls.verdict_sentence(found)
         # A person or a voice line answered: the fax fails and takes no other route by itself.
         category = sip_calls.category_for(found)
