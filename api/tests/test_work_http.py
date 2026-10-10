@@ -260,6 +260,22 @@ def test_export_contains_manifest_original_and_history_and_names_what_is_missing
     assert 'The original document is no longer stored.' in cleared['missing']
 
 
+def test_export_counts_only_a_delivered_email_as_an_email_delivery(client, tmp_path):
+    """The email queue's background step queues every received fax, connector or not; a queued item is not a
+    delivery, so the export still says none was recorded whenever that step runs before the export."""
+    from app.intake.store import IntakeStore
+    from app.intake.worker import ConnectorSecrets
+    mailbox(client, 'Front Desk', '+15550100001')
+    fax = receive(tmp_path, '+15550100001', content=pdf('Synthetic queued document'))
+    feed(4)
+    runtime = app.state.configuration_runtime
+    IntakeStore(runtime.manager.store.engine, ConnectorSecrets(runtime.manager.store)).feed_inbound()
+    item = item_of(client, fax)
+    manifest = json.loads(_export(client.get(f"/work/{item['id']}/export", headers=B))['manifest.json'])
+    assert [delivery['state'] for delivery in manifest['email_delivery']] == ['received']
+    assert 'No email delivery was recorded for this document.' in manifest['missing']
+
+
 def test_export_never_names_todays_email_recipients_as_the_ones_a_fax_went_to(client, tmp_path):
     """A delivery from before recipients were stored says so; a newer one names who it went to then."""
     from app.intake.store import IntakeStore
