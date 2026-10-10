@@ -15,6 +15,9 @@ export interface CodecNumber {
   enabled: boolean;
   style: 'dense' | 'picture';
   fec: 'low' | 'medium' | 'high';
+  // The recipient's decoder: any Faxbot decoder, or one from October 2026 or later that also reads capacity pages.
+  decoder?: 'any' | 'capacity';
+  decoder_text?: string;
   has_key: boolean;
   key_fingerprint: string | null;
   version: number;
@@ -30,6 +33,7 @@ export interface CodecSave {
   recipient_agreed?: boolean;
   style?: 'dense' | 'picture';
   fec?: 'low' | 'medium' | 'high';
+  decoder?: 'any' | 'capacity';
   shared_key?: string;
   clear_key?: boolean;
   version?: number;

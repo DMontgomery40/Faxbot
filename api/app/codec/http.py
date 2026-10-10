@@ -31,6 +31,8 @@ LIMITS = ('Experimental. The recipient must decode the pages to read the documen
           'meet their document-handling requirements.')
 STYLE_TEXT = {'dense': 'Dense pages', 'picture': 'A picture of the first page'}
 LEVEL_TEXT = {'low': 'Low', 'medium': 'Medium', 'high': 'High'}
+DECODER_TEXT = {'any': 'Any Faxbot decoder',
+                'capacity': 'A Faxbot decoder from October 2026 or later, which also reads capacity pages'}
 
 
 def _engine(request):
@@ -72,7 +74,8 @@ def _change_view(row):
     return {'action': row['action'], 'by': row['actor_name'] or 'Someone with settings access',
             'at': _utc(row['created_at']), 'recipient_agreed': bool(row['recipient_agreed']),
             'style': STYLE_TEXT.get(row['style'], row['style']), 'fec': LEVEL_TEXT.get(row['fec'], row['fec']),
-            'key_fingerprint': row['key_fingerprint']}
+            'key_fingerprint': row['key_fingerprint'],
+            'decoder': DECODER_TEXT.get(row.get('decoder') or 'any', DECODER_TEXT['any'])}
 
 
 def _number_view(settings, number):
@@ -85,6 +88,7 @@ def _number_view(settings, number):
     else:
         state = 'Off: faxes to this number go as normal pages.'
     return {'number': number, 'enabled': setting['enabled'], 'style': setting['style'], 'fec': setting['fec'],
+            'decoder': setting['decoder'], 'decoder_text': DECODER_TEXT[setting['decoder']],
             'has_key': setting['has_key'], 'key_fingerprint': setting['key_fingerprint'],
             'version': setting['version'], 'state_sentence': state,
             'agreement': None if agreement is None else _change_view(agreement),
@@ -105,6 +109,7 @@ class NumberSetting(BaseModel):
     style: str | None = Field(default=None, pattern='^(dense|picture)$')
     fec: str | None = Field(default=None, pattern='^(low|medium|high)$')
     shared_key: str | None = Field(default=None, min_length=8, max_length=200)
+    decoder: str | None = Field(default=None, pattern='^(any|capacity)$')
     clear_key: bool = False
     version: int | None = Field(default=None, ge=0)
 
@@ -129,12 +134,13 @@ async def _save(request, identity, number, payload):
             number, enabled=payload.enabled, recipient_agreed=payload.recipient_agreed,
             actor=identity.actor.replay_scope, actor_name=_actor_name(engine, identity.actor),
             style=payload.style, fec=payload.fec, secret=payload.shared_key, clear_key=payload.clear_key,
-            expected_version=payload.version)
+            expected_version=payload.version, decoder=payload.decoder)
         if action is not None:
             # Never the key: only whether one is set and its fingerprint.
             view = settings.get(number)
             audit_event('codec_' + action, to_number=number, recipient_agreed=payload.recipient_agreed,
-                        style=view['style'], fec=view['fec'], key_fingerprint=view['key_fingerprint'])
+                        style=view['style'], fec=view['fec'], key_fingerprint=view['key_fingerprint'],
+                        decoder=view['decoder'])
         return _number_view(settings, number)
     return await _call(save)
 

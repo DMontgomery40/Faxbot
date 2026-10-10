@@ -21,7 +21,7 @@ def _incident(**changes):
 
 def test_the_head_is_the_route_family_revision_and_validates(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema.HEAD == '0072_route_families'
+    assert schema.ROUTE_FAMILIES == '0072_route_families'
     assert schema_route_families.TABLES <= schema.STRICT_TABLES
     assert schema_route_families.TABLES <= _tables(database)
     with database.connect() as connection:

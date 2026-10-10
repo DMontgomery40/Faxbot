@@ -49,10 +49,35 @@ describe('Encoded pages in a fax number\'s Details', () => {
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     expect(await screen.findByText('Documents are encrypted with the shared key whose fingerprint is 3f2a9c1d.')).toBeTruthy();
-    expect(saved).toEqual([{ enabled: true, recipient_agreed: true, style: 'dense', fec: 'high', version: 0,
-      clear_key: false, shared_key: 'synthetic partner key' }]);
+    expect(saved).toEqual([{ enabled: true, recipient_agreed: true, style: 'dense', fec: 'high', decoder: 'any',
+      version: 0, clear_key: false, shared_key: 'synthetic partner key' }]);
     expect((screen.getByLabelText('Shared key (optional)') as HTMLInputElement).value).toBe('');
     expect(screen.getByText(/The recipient's agreement was recorded by Owner on/)).toBeTruthy();
+  });
+
+  it('records that the recipient\'s decoder reads capacity pages', async () => {
+    const on = { ...off, enabled: true, version: 2, decoder: 'any', decoder_text: 'Any Faxbot decoder',
+      state_sentence: 'On: Faxbot compares encoded pages with ordinary pages for each attempt.' };
+    const saved: unknown[] = [];
+    server.use(
+      http.get('/codec/numbers/:number', () => HttpResponse.json(on)),
+      http.put('/codec/numbers/:number', async ({ request }) => {
+        saved.push(await request.json());
+        return HttpResponse.json({ ...on, version: 3, decoder: 'capacity',
+          decoder_text: 'A Faxbot decoder from October 2026 or later, which also reads capacity pages' });
+      }),
+    );
+    render(<EncodedPagesPanel client={client()} number={NUMBER} canWrite />);
+    expect(await screen.findByText(on.state_sentence)).toBeTruthy();
+    const save = screen.getByRole('button', { name: 'Save encoded pages' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Recipient's decoder"), { target: { value: 'capacity' } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    expect(await screen.findByText(on.state_sentence, { selector: '.MuiAlert-message' })).toBeTruthy();
+    expect(saved).toEqual([{ enabled: true, recipient_agreed: false, style: 'dense', fec: 'medium',
+      decoder: 'capacity', version: 2, clear_key: false }]);
+    expect((screen.getByLabelText("Recipient's decoder") as HTMLSelectElement).value).toBe('capacity');
   });
 
   it('shows a person without settings access the setting without a save button', async () => {

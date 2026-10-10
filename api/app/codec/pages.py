@@ -373,7 +373,8 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
                 else:
                     changes, used = runcode.encode_line(tag, position, source, position, geo.resolution.width,
                                                        geo.run_limit)
-                lines.append(changes)
+                # Packed at once (a byte for 8 dots): a list of changing elements per line takes ~30 MB a page.
+                lines.append(t4.packed_from_changes(changes, geo.resolution.width))
                 position += used
             plans.append((first, min(position, total_bits), lines))
     if len(plans) > max_pages:
@@ -383,7 +384,9 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
         if picture is None:
             picture = Image.new('L', (geo.columns, geo.rows_per_page), 200)
         pictures = _picture_tones(geo, picture, geo.rows_per_page)
-    images = []
+    from ..conversion import FaxFrames
+    # Kept packed, one bit a pixel: a long document's payload pages would otherwise take a byte a pixel each.
+    images = FaxFrames()
     page_bits = []
     for index, (first, end, rows) in enumerate(plans):
         header = HEADER.pack(b'FXP', 1, LAYOUTS[layout], parity, index, len(plans), tag, codewords,
@@ -412,8 +415,7 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
                 line = _picture_line(geo, row_bits(tag, offset, chunk, geo.row_layout), pictures[number])
                 lines += [line] * geo.height
         else:
-            width = geo.resolution.width
-            lines += [t4.packed_from_changes(changes, width) for changes in rows]
+            lines += rows  # already packed
         lines += header_lines + [ladder] * (3 * geo.ladder_height)
         lines += [b'\xff' * stride] * geo.bottom
         images.append(_image(geo, lines))

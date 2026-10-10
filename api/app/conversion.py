@@ -632,6 +632,11 @@ class FaxFrames(Sequence):
                 found.append(image)
         return found
 
+    def __mul__(self, count):
+        found = FaxFrames()
+        found._pages = self._pages * int(count)
+        return found
+
     def __radd__(self, other):
         found = FaxFrames(other)
         found._pages += self._pages
@@ -786,7 +791,7 @@ def frames_resolution(frames) -> str:
 
 
 def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, seal=None, recipient=None,
-                exact_raster=False, resolution=None, tools=None, usable=None):
+                exact_raster=False, resolution=None, tools=None, usable=None, memo=None):
     """The experimental codec's encoded pages for this attempt, as (pages, sentence[, details]), or None.
 
     ``frames`` are the pages this attempt would otherwise send (the same pages ``choose_layout`` prices as
@@ -805,7 +810,7 @@ def codec_pages(frames, *, engine, number, route, capability=None, pdf_path, sea
     try:
         return codec_send.attempt_pages(engine, setting, frames=frames, page_bits=frame_bits(frames), number=number,
                                         route=route, pdf_path=pdf_path, seal=seal, exact_raster=exact_raster,
-                                        resolution=resolution, tools=tools, usable=usable)
+                                        resolution=resolution, tools=tools, usable=usable, memo=memo)
     except (CodecError, DocumentConversionError, OSError):
         import logging
         logging.getLogger(__name__).warning('Encoded pages could not be made for this attempt; it sends other pages.')
@@ -861,7 +866,7 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
     if codec is not None:
         encoded = codec(frames)
         if encoded and encoded[0]:
-            pieces[("as_is", "codec")] = (list(encoded[0]), encoded[1], encoded, fidelity.UNCHANGED.rank)
+            pieces[("as_is", "codec")] = (encoded[0], encoded[1], encoded, fidelity.UNCHANGED.rank)
     keys = list(pieces)
     choices, shapes = {}, {}
     for key in keys:

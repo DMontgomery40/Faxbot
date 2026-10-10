@@ -3353,6 +3353,7 @@ $ faxbot recipients encoded set [OPTIONS] {number}
 * `--style dense|picture`: Dense pages (the default), or a picture of the first page with the document hidden in its dots. With a shared key the picture is a plain pattern instead.
 * `--error-correction low|medium|high`: How much damage on the line the pages survive (default medium). Higher carries less.
 * `--shared-key KEY`: Encrypt documents with a key you and the recipient agreed outside fax (8 to 200 characters). Only its fingerprint is shown afterwards.
+* `--decoder any|capacity`: The recipient&#x27;s decoder: any Faxbot decoder (the default), or capacity for a Faxbot decoder from October 2026 or later, so Faxbot may also send capacity pages.
 * `--clear-key`: Stop encrypting with the shared key.
 * `--help`: Show this message and exit.
 

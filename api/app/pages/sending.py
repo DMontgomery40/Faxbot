@@ -253,6 +253,9 @@ class RasterCache:
     def __init__(self, root, job_id, attempt_id):
         self.root, self.job_id, self.attempt_id = Path(root), job_id, attempt_id
         self._frames, self._digests = {}, {}
+        # The encoded-page candidates and their measured codings, made once for every account compared
+        # (codec.decision._remember).
+        self.codec = {}
 
     def digest(self, path):
         """The SHA-256 of a file's bytes, or None when it is missing (a symbolic link counts as missing)."""
@@ -473,7 +476,8 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
         return conversion.codec_pages(pages, engine=engine, number=number, route=route, capability=cap,
                                       pdf_path=str(pdf), seal=seal, recipient=chosen,
                                       exact_raster=mode == 'image',
-                                      resolution='fine' if call_fine else 'standard', usable=usable)
+                                      resolution='fine' if call_fine else 'standard', usable=usable,
+                                      memo=cache.codec)
     choice = conversion.choose_layout(frames, route=route, destination=number, limit=cap.limit,
                                       dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                       card=account.card, boundary_seconds=cap.boundary_seconds,

@@ -120,3 +120,50 @@ def test_the_shading_drawing_is_read_one_page_at_a_time(tmp_path):
     assert isinstance(found, friendly.GrayPages) and len(found) == 3
     assert [page.tobytes() for page in found] == [page.tobytes() for page in pages]
     assert friendly._gray_pages(gray, conversion.FaxFrames(page.convert('1') for page in pages[:2])) is None
+
+
+ENCODE = r'''
+import json, random, resource, sys
+from collections import namedtuple
+sys.path.insert(0, sys.argv[1])
+from PIL import Image
+from app import codec
+from app.codec import decision
+Prediction = namedtuple('Prediction', 'billed_pages seconds cost basis marginal')
+Shape = namedtuple('Shape', 'pages page_bits resolution layout measured', defaults=(None,))
+
+def predict(route_key, destination, shape, *, now=None):
+    return Prediction(shape.pages, sum(shape.page_bits) / 14400 + 3 * shape.pages, shape.pages * 45000, 'per page', False)
+
+frames = []
+for number in range(10):
+    page = Image.new('1', (1728, 2156), 1)
+    page.info['dpi'] = (204.0, 196.0)
+    frames.append(page)
+document = codec.Document(random.Random(1).randbytes(int(sys.argv[2])), 'application/pdf', 'synthetic.pdf')
+before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+choice = decision.choose(document, route_key='sip', destination='+12025550123', pages_original=10,
+                         page_bits_original=[1] * 10, exact_raster=True, ecm_and_fine_seen=True,
+                         provider_renders=False, tools=(predict, Shape), frames_original=frames)
+peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+scale = 1 if sys.platform == 'darwin' else 1024
+print(json.dumps({'before': before * scale, 'peak': peak * scale, 'pages': choice.pages_encoded,
+                  'layout': choice.layout}))
+'''
+
+
+@pytest.mark.skipif(sys.platform not in ('darwin', 'linux'), reason='peak memory is read from getrusage')
+def test_encoded_pages_for_a_long_document_stay_packed_while_the_chooser_compares_them(tmp_path):
+    """Every encoded-page candidate (three run-coded limits and the grid) for a 2 MB document that does not
+    compress, chosen in a fresh process. Measured on 10 October 2026 (macOS, the repository's virtual environment):
+    the choice grew the process by 519 MB while each page's lines were kept as lists of changing elements and its
+    pages as images, and by 97 MB once both were kept packed."""
+    script = tmp_path / 'encode.py'
+    script.write_text(ENCODE)
+    result = subprocess.run([sys.executable, str(script), str(API), str(2_000_000)], capture_output=True, text=True,
+                            timeout=900, check=True)
+    found = json.loads(result.stdout.strip().splitlines()[-1])
+    grown = found['peak'] - found['before']
+    print(f'2 MB encoded-pages choice: peak {found["peak"] / 1e6:.0f} MB, grew {grown / 1e6:.0f} MB')
+    assert found['layout'] == 'runs' and found['pages'] < 10, found
+    assert grown < 250_000_000, found
