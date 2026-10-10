@@ -23,7 +23,8 @@ def card(per_minute=5000, per_page=0, increment=60, minimum=60):
 
 @pytest.mark.parametrize('found, on_text, off_text', [
     (card(), 'and the call is billed as one minute instead of two.', 'is billed as two minutes.'),
-    (card(increment=120, minimum=120), 'before a longer wait is billed.', 'is billed for that whole wait.'),
+    (card(increment=120, minimum=120), "on this trunk's 120-second billing steps that does not change the charge.",
+     "on this trunk's 120-second billing steps the charge is the same either way."),
     (card(increment=6, minimum=6), 'your carrier bills its calls in 6-second steps', 'Off: Faxbot waits'),
     (card(per_minute=0, per_page=70000), 'does not bill its calls by the minute', 'Off: Faxbot waits'),
     (None, 'it has no call prices for this trunk', 'Off: Faxbot waits'),
@@ -33,6 +34,9 @@ def test_the_switch_sentence_says_whether_faxbot_uses_the_cap_and_why(monkeypatc
     on = stations.cap_view(trunk_values(), None)
     assert on['on'] is True and on['applies'] is stations.bills_by_minute(found)
     assert on_text in on['sentence'] and on['sentence'] == on['on_sentence']
+    if on['applies']:
+        # Only the built-in fax engine ends a call at the cap (asterisk patch 0007).
+        assert "Faxbot's built-in fax engine hangs up" in on['sentence']
     off = stations.cap_view(trunk_values(SIP_FAX_ANSWER_CAP='false'), None)
     assert off['on'] is False and off['applies'] is False
     assert off_text in off['sentence'] and off['sentence'] == off['off_sentence'] == on['off_sentence']

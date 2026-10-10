@@ -124,7 +124,9 @@ async def get_receipt(send_id: str, request: Request):
         line = test_lines.BY_ID.get(row['line_id'])
         if line is None or line.receipt != 'faxbeep':
             raise HTTPException(400, detail='Only Faxbeep lists each fax it receives in a way Faxbot can look up.')
-        return test_lines.faxbeep_receipt(row)
+        with engine.connect() as connection:
+            ended = test_lines.call_ended_at(connection, row['job_id'])
+        return test_lines.faxbeep_receipt(row, ended_at=ended)
     return await run_lifecycle_step(look)
 
 

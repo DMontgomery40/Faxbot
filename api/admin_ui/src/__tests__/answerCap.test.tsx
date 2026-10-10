@@ -12,8 +12,8 @@ const PRESETS = [
 ];
 const META = { active_revision_id: 'rev-1', desired_revision_id: 'rev-1', generation: 1, apply_state: 'applied',
   pending_fields: [] };
-const ON = 'On: your carrier bills this trunk by the minute, so when no fax machine answers within 50 seconds Faxbot '
-  + 'hangs up and the call is billed as one minute instead of two.';
+const ON = 'On: your carrier bills this trunk by the minute, so when no fax machine answers within 50 seconds '
+  + "Faxbot's built-in fax engine hangs up, and the call is billed as one minute instead of two.";
 const OFF = 'Off: Faxbot waits the usual 60 seconds for a fax machine to answer, so a call no fax machine answers is '
   + 'billed as two minutes.';
 

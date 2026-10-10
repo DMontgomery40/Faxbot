@@ -271,11 +271,32 @@ def _fax_state(connection, job_id):
     return 'on_its_way', 'The test fax is on its way.'
 
 
+def call_ended_at(connection, job_id):
+    """When the test fax's successful call ended: its attempt's completion, else when its delivery last changed;
+    None until it went through. A test fax can wait in Sent (busy lines, a schedule) long after it was accepted, so
+    a line's wait for a reply counts from here."""
+    deliveries = sa.table('outbound_deliveries', sa.column('id'), sa.column('state'), sa.column('attempt_id'),
+                          sa.column('updated_at', sa.DateTime()))
+    attempts = sa.table('outbound_attempts', sa.column('id'), sa.column('completed_at', sa.DateTime()))
+    found = connection.execute(sa.select(deliveries.c.state, deliveries.c.updated_at, attempts.c.completed_at)
+                               .select_from(deliveries.outerjoin(attempts, attempts.c.id == deliveries.c.attempt_id))
+                               .where(deliveries.c.id == job_id)).mappings().first()
+    if found is None or found['state'] != 'success':
+        return None
+    return found['completed_at'] or found['updated_at']
+
+
+def _wait_ends(connection, row):
+    """The end of the line's wait for a reply: ``reply_minutes`` after the call ended (after acceptance until then)."""
+    start = call_ended_at(connection, row['job_id']) or row['created_at']
+    return max(start, row['created_at']) + timedelta(minutes=row['reply_minutes'])
+
+
 def _candidates(connection, row):
-    """Received faxes that may be this test's reply: on the reply number, within the line's wait, not labelled."""
+    """Received faxes that may be this test's reply: on the reply number, between the test and the end of the line's
+    wait, not labelled yet."""
     inbound, replies = _inbound(), _replies()
-    start = row['created_at']
-    end = start + timedelta(minutes=row['reply_minutes'])
+    start, end = row['created_at'], _wait_ends(connection, row)
     query = sa.select(inbound).where(inbound.c.created_at >= start, inbound.c.created_at <= end,
                                      ~sa.exists(sa.select(replies.c.id).where(replies.c.id == inbound.c.id)))
     if row['reply_number']:
@@ -316,7 +337,7 @@ def _reply_view(connection, line, row, fax_state, now):
     candidates = _candidates(connection, row)
     offered = [{'inbound_id': item['id'], 'from_number': item['from_number'], 'pages': item['pages'],
                 'received_at_text': _when(item['created_at'])} for item in candidates[:5]]
-    waiting = now < row['created_at'] + timedelta(minutes=row['reply_minutes'])
+    waiting = now < _wait_ends(connection, row)
     if offered:
         return {'state': 'possible', 'inbound_id': None, 'candidates': offered,
                 'sentence': (f'A fax arrived on {row["reply_number"] or "your number"} from another number while '
@@ -404,10 +425,12 @@ def confirm_reply(engine, send_id, inbound_id, *, actor_principal_id=None, actor
         return send_view(connection, row, now)
 
 
-def replies(engine):
-    """Received faxes labelled as a test line's reply, for Received."""
+def replies(engine, now=None):
+    """Received faxes labelled as a test line's reply, for Received; replies from a line's own number that arrived
+    since anyone last looked are labelled first, so Received shows them without opening Diagnostics."""
     sends, labels = _sends(), _replies()
-    with engine.connect() as connection:
+    with engine.begin() as connection:
+        match_replies_on(connection, now or datetime.utcnow())
         rows = connection.execute(sa.select(labels.c.id, labels.c.how, sends.c.line_id)
                                   .select_from(labels.join(sends, sends.c.id == labels.c.send_id))
                                   .order_by(labels.c.created_at.desc()).limit(500)).mappings().all()
@@ -422,15 +445,19 @@ def replies(engine):
 
 # -- Faxbeep's public receipt ---------------------------------------------------------------------------------------
 
-def faxbeep_receipt(row, *, get=None, now=None):
+def faxbeep_receipt(row, *, ended_at=None, get=None):
     """Faxbeep's public page for this test fax: looked up only when asked, in Faxbeep's public read-only API.
 
     Faxbeep masks the sender and does not say which of its numbers a fax arrived on, so a fax fits only by its
-    time (after the test was sent, within an hour) and its single page. Exactly one fit: its page. Several: the
-    list, and Faxbot says it cannot tell which. ``get(url, params)`` returns parsed JSON (tests pass their own)."""
+    time and its single page: within 15 minutes of when the call ended (``ended_at``), or, while that is not known,
+    within an hour after the test was sent. Exactly one fit: its page. Several: the list, and Faxbot says it cannot
+    tell which. ``get(url, params)`` returns parsed JSON (tests pass their own)."""
     if get is None:
         get = _faxbeep_get
-    since = row['created_at'] - timedelta(minutes=1)
+    if ended_at is not None:
+        since, end = ended_at - timedelta(minutes=15), ended_at + timedelta(minutes=15)
+    else:
+        since, end = row['created_at'] - timedelta(minutes=1), row['created_at'] + timedelta(hours=1)
     try:
         found = get(FAXBEEP_API, {'since': since.strftime('%Y-%m-%dT%H:%M:%SZ'), 'limit': 100})
     except (OSError, ValueError, RuntimeError) as error:
@@ -439,7 +466,6 @@ def faxbeep_receipt(row, *, get=None, now=None):
     if not isinstance(found, list):
         return {'url': None, 'sentence': 'Faxbeep answered in a way Faxbot does not understand. Look on its page.',
                 'list_url': FAXBEEP_HOME}
-    end = row['created_at'] + timedelta(hours=1)
     fits = []
     for item in found:
         if not isinstance(item, dict) or item.get('source') != 'phone' or item.get('page_count') != 1:
@@ -449,7 +475,7 @@ def faxbeep_receipt(row, *, get=None, now=None):
         except ValueError:
             continue
         slug = str(item.get('slug') or '')
-        if row['created_at'] - timedelta(minutes=1) <= received <= end and FAXBEEP_SLUG.fullmatch(slug):
+        if since <= received <= end and FAXBEEP_SLUG.fullmatch(slug):
             fits.append((received, slug))
     if len(fits) == 1:
         return {'url': f'https://faxbeep.com/faxtest/{fits[0][1]}', 'list_url': FAXBEEP_HOME,

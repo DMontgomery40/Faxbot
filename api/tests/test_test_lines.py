@@ -166,6 +166,27 @@ def test_silence_is_no_answer_from_the_service_and_a_person_may_mark_a_fax_that_
     assert label['inbound_id'] == maybe and label['how'] == 'person'
 
 
+def test_the_wait_for_a_reply_counts_from_the_call_and_received_labels_it_without_opening_diagnostics(
+        client):  # noqa: F811
+    """A test fax that waited 40 minutes in Sent before its call: HP's reply 6 minutes after the call is still the
+    reply, never 'no answer', and Received shows it labelled even though nobody opened Diagnostics."""
+    engine = _engine()
+    sent = client.post('/diagnostics/test-lines/hp-us/send', headers=_b()).json()['send']
+    accepted = datetime.utcnow()
+    called = accepted + timedelta(minutes=40)
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'success', updated_at = :at WHERE id = :id"),
+                           {'id': sent['fax_id'], 'at': called})
+    assert test_lines.one_view(engine, sent['id'], now=called + timedelta(minutes=5))['reply']['state'] == 'waiting'
+    reply = _received(engine, '+18884732963', called + timedelta(minutes=6))
+    (label,) = client.get('/diagnostics/test-lines/replies', headers=_b()).json()['replies']
+    assert label['inbound_id'] == reply and label['how'] == 'number'
+    assert test_lines.one_view(engine, sent['id'], now=called + timedelta(minutes=7))['reply']['state'] == 'replied'
+    # Faxbeep's lookup counts from the call too.
+    with engine.connect() as connection:
+        assert test_lines.call_ended_at(connection, sent['fax_id']) == called
+
+
 def test_faxbeeps_receipt_is_linked_only_when_exactly_one_fax_fits():
     row = {'created_at': datetime(2026, 10, 10, 6, 0)}
 
@@ -182,6 +203,10 @@ def test_faxbeeps_receipt_is_linked_only_when_exactly_one_fax_fits():
     assert test_lines.faxbeep_receipt(row, get=answer())['sentence'].startswith('Faxbeep does not show it yet.')
     junk = test_lines.faxbeep_receipt(row, get=answer({**one, 'slug': '../../evil'}))
     assert junk['url'] is None
+    # Once the call's end is known, only a fax within 15 minutes of it fits.
+    late = {**one, 'slug': 'fax_eeeeeeee', 'received_at': '2026-10-10T06:43:00Z'}
+    assert test_lines.faxbeep_receipt(row, ended_at=datetime(2026, 10, 10, 6, 42), get=answer(one, late))['url'] == (
+        'https://faxbeep.com/faxtest/fax_eeeeeeee')
 
     def down(url, params):
         raise OSError('unreachable')

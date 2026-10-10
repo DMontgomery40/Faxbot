@@ -238,11 +238,19 @@ def cap_view(values, engine):
     cap = T0_CAP_MS // 1000
     if applies:
         saving = _saving(card.billing_increment_seconds, card.minimum_seconds)
-        on = (f'On: your carrier bills this trunk by the minute, so when no fax machine answers within {cap} seconds '
-              'Faxbot hangs up' + (f' and the call is billed as {saving[0]}.' if saving
-                                   else ' before a longer wait is billed.'))
-        off = ('Off: Faxbot waits the usual 60 seconds for a fax machine to answer, so a call no fax machine answers '
-               'is billed' + (f' as {saving[1]}.' if saving else ' for that whole wait.'))
+        step = card.billing_increment_seconds
+        # Only the built-in fax engine (asterisk patch 0007) ends a call at the cap; the SSL Fax engine keeps its own.
+        if saving:
+            on = (f'On: your carrier bills this trunk by the minute, so when no fax machine answers within {cap} '
+                  "seconds Faxbot's built-in fax engine hangs up, and the call is billed as "
+                  f'{saving[0]}.')
+            off = ('Off: Faxbot waits the usual 60 seconds for a fax machine to answer, so a call no fax machine '
+                   f'answers is billed as {saving[1]}.')
+        else:
+            on = (f"On: when no fax machine answers within {cap} seconds, Faxbot's built-in fax engine hangs up; on "
+                  f"this trunk's {step}-second billing steps that does not change the charge.")
+            off = ('Off: Faxbot waits the usual 60 seconds for a fax machine to answer; on this trunk\'s '
+                   f'{step}-second billing steps the charge is the same either way.')
     else:
         if card is None:
             on = ('On, but Faxbot does not use it yet: it has no call prices for this trunk, so it cannot tell '
