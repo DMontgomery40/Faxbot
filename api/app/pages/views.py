@@ -113,8 +113,11 @@ def sent_view(engine, job_id, root=None):
     from .friendly import call_rate, run_for, seconds_at, sent_sentence
     lightened = run_for(engine, job_id)
     rate = call_rate(engine, job_id) if lightened else None
+    # A change with nothing changed carries only why the pages went as they are (a fax too long to change).
+    unchanged = (change or {}).get('reason') if change and not change.get('layout') and not change.get(
+        'trimmed_pages') and not change.get('resolution') else None
     sentences = [text for text in (packed_sentence(change, (change or {}).get('attempt_phase')),
-                                   trimmed_sentence(change),
+                                   unchanged, trimmed_sentence(change),
                                    RESOLUTION_SENTENCE if resolution == 'standard' else None,
                                    sent_sentence(lightened, rate)) if text]
     if not sentences:
@@ -208,7 +211,10 @@ def savings(routes, engine, *, since, days, layout=None):
             costs.c.outcome == 'success', changes.c.created_at >= since,
             # Encoded pages (experimental) are counted apart from packing.
             changes.c.layout == 'codec' if layout == 'codec' else
-            sa.or_(changes.c.layout.is_(None), changes.c.layout != 'codec'))).all()
+            sa.and_(sa.or_(changes.c.layout.is_(None), changes.c.layout != 'codec'),
+                    # A fax too long to change records only why; it saved nothing.
+                    sa.or_(changes.c.layout.is_not(None), changes.c.trimmed_pages.is_not(None),
+                           changes.c.resolution.is_not(None))))).all()
     result = {'faxes': 0, 'pages_saved': 0, 'trimmed_pages': 0, 'seconds_saved': 0, 'priced': 0, 'in_plan': 0,
               'plan_pages': 0, 'unpriced': 0, 'saved': {}}
     cards = {}

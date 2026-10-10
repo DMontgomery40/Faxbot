@@ -125,10 +125,14 @@ def codec_encode(source: Path = typer.Argument(..., exists=True, dir_okay=False,
                  output: Path = typer.Option(..., '--output', '-o', help='The fax TIFF to write.'),
                  resolution: str = typer.Option('fine', '--resolution', metavar='standard|fine|superfine|300|400',
                                                 help='The fax resolution the pages are made for.'),
-                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture|enumerative',
-                     help='grid survives resolution changes; runs carries the most but needs the exact image; '
-                          'picture hides the document in a picture; enumerative needs an unchanged image '
-                          'and a recipient whose Faxbot supports enumerative profile 1.'),
+                 layout: str = typer.Option('grid', '--layout', metavar='grid|runs|picture|enumerative|capacity',
+                     help='grid survives resolution changes; runs needs the exact image; picture hides the '
+                          'document in a picture; enumerative needs an unchanged image and a recipient whose '
+                          'Faxbot supports enumerative profile 1; capacity carries the most for its line time or '
+                          'pages and needs the exact image and a decoder from October 2026 or later.'),
+                 profile: str = typer.Option('time', '--capacity-profile', metavar='time|balanced|pages',
+                     help='With --layout capacity: time for the shortest call (routes billed by the minute), '
+                          'pages for the fewest pages (routes billed by the page), or balanced.'),
                  fec: str = typer.Option('medium', '--error-correction', metavar='low|medium|high',
                                          help='How much damage the pages survive.'),
                  key: str = typer.Option(None, '--shared-key', metavar='KEY', help='Encrypt with this shared key.'),
@@ -140,9 +144,11 @@ def codec_encode(source: Path = typer.Argument(..., exists=True, dir_okay=False,
     data = source.read_bytes()
     content_type = 'application/pdf' if data[:5] == b'%PDF-' else 'text/plain'
     try:
+        from ...codec import capacity
+        chosen = capacity.profile_for(profile) if layout == 'capacity' else None
         encoded = codec.encode_document(codec.Document(data, content_type, source.name), resolution=resolution,
-                                        layout=layout, fec=fec, secret=key)
-    except (codec.CodecError, KeyError) as error:
+                                        layout=layout, fec=fec, secret=key, profile=chosen)
+    except (codec.CodecError, capacity.CapacityError, KeyError) as error:
         raise CliError(str(error).strip("'") or 'The document could not be encoded.') from None
     codec.write_tiff(encoded.pages, output)
     result = {'file': str(output), 'pages': encoded.page_count, 'layout': layout, 'resolution': resolution}

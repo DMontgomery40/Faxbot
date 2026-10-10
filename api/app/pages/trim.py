@@ -39,7 +39,9 @@ def trim_frames(frames, trimmable):
     ``MARGIN_ROWS`` white rows (a blank page keeps that many rows); every other row stays exactly."""
     if len(trimmable) != len(frames):
         raise ValueError('Say for every page whether it may be trimmed')
-    result, pages, rows = [], 0, 0
+    from ..conversion import FaxFrames
+    # Packed pages stay packed (conversion.FaxFrames): a long fax's pages would take gigabytes as images.
+    result, pages, rows = (FaxFrames() if isinstance(frames, FaxFrames) else []), 0, 0
     for frame, allowed in zip(frames, trimmable):
         white = trailing_white_rows(frame) if allowed else 0
         drop = min(white - MARGIN_ROWS, frame.height - MARGIN_ROWS) if white > MARGIN_ROWS else 0

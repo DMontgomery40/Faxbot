@@ -108,7 +108,8 @@ def test_enumerative_header_rejects_unknown_profiles_and_forged_bounds(field, va
     values = [b'FXP', 1, 4, 32, 0, 1, encoded.tag, encoded.codewords,
               encoded.container_length, 0, encoded.stream_bytes * 8, 63, 1]
     values[field] = value
-    assert pages._decode_header(pages.HEADER.pack(*values)) is None
+    # Never read as a header; a newer format version is refused as made by a newer Faxbot (pages.NEWER).
+    assert pages._decode_header(pages.HEADER.pack(*values)) is (pages.NEWER if field == 1 else None)
 
 
 def test_enumerative_mapping_matches_exhaustive_small_rasters():

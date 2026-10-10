@@ -413,6 +413,10 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
     sources = (cache.digest(pdf), cache.digest(source) if source is not None else None)
     if not compare and not packing_ok and not trim_ok and not match_ok and not codec_ok and not requests:
         return None
+    if too_long(account, pdf, tiff) is not None:
+        # Every account sends a fax this long as it is: changing its pages would hold too much in memory. The bound
+        # account's preparation records why, once (``prepare``).
+        return None
     # The changed pages, made once for the fax and each method and kept with the attempt files (a retry, or another
     # account compared for this attempt, draws nothing again).
     rendered = {}
@@ -630,10 +634,35 @@ def prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, 
     try:
         chosen = account_for(engine, values, configuration, job.get('to_number'), key=account, now=now)
         evaluated = evaluate(engine, values, chosen, claim, job, pdf, tiff, rule=rule, seal=seal, now=now)
-        return publish(engine, evaluated, claim, pdf, tiff, now=now) if evaluated is not None else None
+        if evaluated is None:
+            _note_too_long(engine, chosen, claim, job, pdf, tiff, now)
+            return None
+        return publish(engine, evaluated, claim, pdf, tiff, now=now)
     except Exception:
         logging.getLogger(__name__).warning('Fax pages could not be prepared; they go as they are.', exc_info=True)
         return None
+
+
+def too_long(account, pdf, tiff):
+    """The page count of a fax longer than ``conversion.MAX_OPTIMIZED_PAGES`` (its pages go as they are on every
+    account), else None. Reads only the document's page headers."""
+    from .. import conversion
+    source = tiff if account.mode == 'image' and tiff else pdf
+    count = conversion.document_page_count(source) if source else None
+    return count if count is not None and count > conversion.MAX_OPTIMIZED_PAGES else None
+
+
+def _note_too_long(engine, account, claim, job, pdf, tiff, now):
+    """For the bound account only: when the fax is too long to change, say why in its Sent details, once."""
+    from .. import conversion
+    if engine is None or getattr(claim, 'members', None) or not (
+            _HEX32.fullmatch(str(claim.job_id)) and _HEX32.fullmatch(str(claim.attempt_id))):
+        return
+    count = too_long(account, pdf, tiff)
+    if count is not None:
+        capabilities.records_for(engine).record_change(
+            job_id=claim.job_id, attempt_id=claim.attempt_id, number=job.get('to_number'), route=account.provider_id,
+            original_pages=count, sent_pages=count, reason=conversion.too_long_sentence(count), now=now)
 
 
 def _usable_codings(engine, values, route, mode, number, cap):
