@@ -1727,5 +1727,10 @@ def sender_identity_for(engine, job_id):
                 if found is None or found['peer_id'] != fax['peer_id']:
                     return None
         return peer.organization[:50], (agreement['reply_number'] or peer.phone_number)
-    except Exception:
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+        # The relay's records could not be read (a database before the relay's tables, or one not answering): the
+        # fax carries this installation's own header and number, and the cause is logged. Anything else raises.
+        logging.getLogger(__name__).warning('Whether fax %s is relayed for a partner could not be read (%s); it '
+                                            "carries this installation's own header and number.", job_id,
+                                            type(error).__name__)
         return None

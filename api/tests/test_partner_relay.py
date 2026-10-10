@@ -407,7 +407,7 @@ async def test_a_relayed_fax_within_the_limits_goes_as_the_relays_own_fax_and_on
 
 
 @pytest.mark.asyncio
-async def test_the_header_line_and_station_id_name_the_true_sender(relay_trio):
+async def test_the_header_line_and_station_id_name_the_true_sender(relay_trio, monkeypatch, tmp_path):
     from PIL import Image
     trio, a = relay_trio, relay_trio.a
     await asyncio.to_thread(agree, trio, a)
@@ -435,6 +435,33 @@ async def test_the_header_line_and_station_id_name_the_true_sender(relay_trio):
                                 zone_name='Australia/Sydney')
     assert pages == 1 and line == ' 7-Oct-2026   14:00   Leeds HQ   +441134960123   p.1'
     assert sender_identity_for(trio.b_engine, uuid4().hex) is None
+
+    # Both engines take it through the real hook (ami.sender_identity): the built-in engine's Originate fields, and
+    # the SSL Fax engine's job, whose tag line and TSI carry it (hylafax_engine.prepare_job).
+    from app import ami, hylafax_engine
+    from api.tests.test_reply_number import _decoded
+    from api.tests.test_sip_trunks import FakeAMI, trunk_values
+    monkeypatch.setattr(ami, '_database', lambda: trio.b_engine)
+    assert ami.sender_identity(relayed['job_id']) == ('Leeds HQ', LEEDS)
+    assert ami.sender_identity(uuid4().hex) is None
+    values = trunk_values(FAX_DATA_DIR=str(tmp_path), FAX_HEADER='Sydney office')
+    fields = ami.originate_fields_for(values, relayed['job_id'], DEST, str(tmp_path / 'x.tiff'))
+    assert (_decoded(fields, 'FAXHEADER64'), _decoded(fields, 'FAXSTATION64')) == ('Leeds HQ', LEEDS)
+    jobs = []
+    monkeypatch.setattr(hylafax_engine, 'create_job', lambda *args, **kwargs: jobs.append(kwargs) or
+                        hylafax_engine.PreparedJob(None, tag=kwargs['tag']))
+    await hylafax_engine.prepare_job(values, FakeAMI(), job_id=relayed['job_id'], attempt_id=uuid4().hex, dest=DEST,
+                                     tiff_path=str(tmp_path / 'x.tiff'))
+    assert (jobs[-1]['header'], jobs[-1]['station']) == ('Leeds HQ', LEEDS)
+    # Records that cannot be read (here: a database without the relay's tables) leave the relay's own header and
+    # number, logged; anything else is a defect and raises (00-common: no broad except around another module).
+    assert sender_identity_for(sa.create_engine('sqlite://'), relayed['job_id']) is None
+
+    def broken(engine, job_id):
+        raise RuntimeError('synthetic defect')
+    monkeypatch.setattr('app.direct.relay.sender_identity_for', broken)
+    with pytest.raises(RuntimeError):
+        ami.sender_identity(relayed['job_id'])
 
 
 def _engine_page():

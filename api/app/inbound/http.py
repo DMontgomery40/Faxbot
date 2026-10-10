@@ -743,7 +743,7 @@ def received_diversion(payload, call, engine, *, received_at=None):
     headers = diversion.read_headers(settings.fax_data_dir, payload.get('uniqueid'))
     if not headers:
         return None
-    moment = diversion.call_time(call, received_at or diversion.utcnow())
+    moment = diversion.call_time(call, received_at or diversion.utcnow(), headers)
     return diversion.diversion_for(headers, did=payload.get('to_number'), at=moment,
                                    check=diversion_rules_exist(engine), country=settings.fax_default_country,
                                    trusted=trust.certificates(configuration_values()))

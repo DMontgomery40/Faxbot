@@ -60,8 +60,11 @@ FETCH_SECONDS = 3.0
 CACHE_SECONDS = 3600
 FAILED_CACHE_SECONDS = 300
 HEADERS_BYTES = 64 * 1024
-# P-Asserted-Identity and From carry the carrier's STIR/SHAKEN verstat (inbound/caller_check.py).
-HEADER_NAMES = ('Diversion', 'History-Info', 'Identity', 'P-Asserted-Identity', 'From')
+# P-Asserted-Identity and From carry the carrier's STIR/SHAKEN verstat (inbound/caller_check.py). Faxbot-Started is
+# not a SIP header: Asterisk adds the call's start (epoch seconds) to the file, so a hand-over that comes long after
+# the INVITE (the SSL Fax engine's, after the last page) still checks a PASSporT against the time of the call.
+STARTED = 'Faxbot-Started'
+HEADER_NAMES = ('Diversion', 'History-Info', 'Identity', 'P-Asserted-Identity', 'From', STARTED)
 SIGNED, UNANCHORED, UNCHECKED, FAILED, STATED = 'signed', 'unanchored', 'unchecked', 'failed', 'stated'
 _TOKEN = re.compile(r'[0-9]{1,40}')
 _USER = re.compile(r'(?:sips?|tel):\+?([0-9][0-9\-.() ]{2,31})', re.IGNORECASE)
@@ -431,13 +434,17 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def call_time(call, fallback):
-    """The call's start as naive UTC (the hand-over's started_at in epoch seconds), else ``fallback``."""
+def call_time(call, fallback, headers=None):
+    """The call's start as naive UTC: the hand-over's started_at (epoch seconds; the built-in engine's), else the
+    start Asterisk wrote beside the call's headers (``STARTED``; the SSL Fax engine hands over only after the last
+    page, minutes after the INVITE), else ``fallback``."""
     value = (call or {}).get('started_at') if isinstance(call, dict) else None
+    if value is None and headers:
+        value = next(iter(headers.get(STARTED) or ()), None)
     try:
-        seconds = int(value)
+        seconds = int(str(value).strip()) if value is not None else None
     except (TypeError, ValueError):
         return fallback
-    if not 946684800 <= seconds <= 4102444800:
+    if seconds is None or not 946684800 <= seconds <= 4102444800:
         return fallback
     return datetime.fromtimestamp(seconds, timezone.utc).replace(tzinfo=None)

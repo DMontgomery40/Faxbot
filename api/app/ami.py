@@ -330,21 +330,18 @@ def job_mailbox(job_id) -> Optional[str]:
 
 
 def sender_identity(job_id):
-    """(header text, station ID) for a fax Faxbot relays for a partner (``direct.relay``), or None for every
-    other fax. Never raises: without the relay, or when nothing can be read, the fax carries its own."""
-    try:
-        from .direct.relay import sender_identity_for
-    except Exception:
+    """(header text, station ID) for a fax Faxbot relays for a partner (``direct.relay.sender_identity_for``), or
+    None for every other fax, which carries its own. Both engines print it: the built-in engine in FAXHEADER64 and
+    FAXSTATION64, the SSL Fax engine in the job's tag line and TSI (``hylafax_engine.prepare_job``). The relay's
+    lookup logs its documented store errors and gives None; anything else raises."""
+    from .direct.relay import sender_identity_for
+    engine = _database()
+    if engine is None or not job_id:
         return None
-    try:
-        found = sender_identity_for(_database(), job_id)
-    except Exception:
-        return None
-    if not isinstance(found, (tuple, list)) or len(found) != 2:
+    found = sender_identity_for(engine, job_id)
+    if found is None:
         return None
     header, station = found
-    if not isinstance(header, str) or not isinstance(station, str):
-        return None
     return header, station
 
 

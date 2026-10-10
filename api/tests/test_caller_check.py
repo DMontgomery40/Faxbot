@@ -88,6 +88,8 @@ def test_asterisk_keeps_the_headers_for_a_verstat_or_any_identity_and_the_reader
     assert 'GotoIf($[${LEN(${PJSIP_HEADER(read,Identity,1)})} > 0]?keep)' in context
     assert 'verstat=' in context and 'Gosub(faxbot-sip-header,s,1(P-Asserted-Identity,1))' in context
     assert 'Gosub(faxbot-sip-header,s,1(From,1))' in context
+    # The call's start beside its headers, for the SSL Fax engine's late hand-over.
+    assert 'n(keep),Set(FILE(${FAXBOT_SIP_FILE},,,al,u)=Faxbot-Started ${BASE64_ENCODE(${FAXBOT_STARTED})})' in context
     line = f'P-Asserted-Identity {base64.b64encode(b"<sip:+13035550150@c.example;verstat=TN-Validation-Passed>").decode()}'
     assert diversion.parse_header_lines(line)['P-Asserted-Identity'][0].endswith('TN-Validation-Passed>')
 
@@ -131,3 +133,48 @@ def test_the_stamp_is_kept_with_the_fax_and_your_list_is_an_audited_setting(monk
     assert caller_check.for_fax(engine, 'missing') is None
     source = (ROOT / 'api' / 'app' / 'inbound' / 'http.py').read_text()
     assert "report['caller_check'] = stamp" in source and 'if diverted is not None or kept_headers:' in source
+
+
+@pytest.mark.parametrize('started', [True, False], ids=['call-start-kept', 'no-call-start'])
+def test_the_ssl_fax_engines_receive_is_stamped_with_the_signature_checked_at_the_time_of_the_call(
+        isolated_installation, monkeypatch, tmp_path, started):
+    """The SSL Fax engine hands a received fax over only after its last page, here three minutes after the INVITE.
+    Its stamp comes from the same header file and the same code as the built-in engine's; the attestation-A
+    PASSporT (signed when the call started) checks against the start Asterisk wrote beside the headers. Without that
+    line the check ran at hand-over time, where a PASSporT is no longer fresh (60 s), and nothing could be
+    verified."""
+    import time
+    from fastapi.testclient import TestClient
+    from api.tests.test_hylafax_results import engine_installation, handed_over
+    from app.inbound import trust
+    from app.main import app
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    ca, served, key = _authority()
+    monkeypatch.setattr(trust, 'certificates', lambda values: [ca])
+    monkeypatch.setattr(diversion, 'fetch_chain', lambda url, **options: served)
+    start = int(time.time()) - 180
+    called = '+15555550100'
+    signed = _passport('A', key=key, dest=called, iat=start)
+    token = '17911995026'
+    body = handed_over(data, str(start + 170), token)
+    lines = [f'Identity {base64.b64encode(signed.encode()).decode()}',
+             f'P-Asserted-Identity {base64.b64encode(b"<sip:+15555550199@carrier.example>").decode()}']
+    if started:
+        lines.insert(0, f'Faxbot-Started {base64.b64encode(str(start).encode()).decode()}')
+    (data / 'inbound').mkdir(parents=True, exist_ok=True)
+    (data / 'inbound' / f'{token}.sip').write_text('\n'.join(lines) + '\n')
+    with TestClient(app, base_url='http://testserver') as client:
+        answer = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json=body)
+        assert answer.status_code == 200, answer.text
+        fax_id = answer.json()['id']
+        view = client.get(f'/caller-check/faxes/{fax_id}', headers={'X-API-Key': 'bootstrap_admin_only'})
+        assert view.status_code == 200, view.text
+    stamp = view.json()['stamp']
+    if started:
+        assert (stamp['stamp'], stamp['attest']) == (caller_check.VERIFIED_UNREGISTERED, 'A'), stamp
+        assert 'attestation A, signed and checked by Faxbot' in stamp['sentence']
+    else:
+        assert (stamp['stamp'], stamp['attest']) == (caller_check.UNVERIFIED, 'A'), stamp
+        assert 'it was not signed at the time of the call' in stamp['sentence']
+    # The hand-over removed the header file once the fax held what it needed.
+    assert not (data / 'inbound' / f'{token}.sip').exists()

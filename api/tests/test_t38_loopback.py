@@ -1164,6 +1164,207 @@ def test_a_forwarded_calls_headers_reach_faxbot_unchanged_and_its_signature_stil
                                          'from': found.diverted_from, 'image': outcome['image']}}, indent=2))
 
 
+
+# Item 5 of brief 98: [faxbot-sip-headers] over hostile display names, run in Asterisk -----------------------------
+
+# A carrier's INVITE as a small UDP client sends it, one per case: Asterisk answers (the built-in engine), the client
+# acknowledges and hangs up. Display names carry the characters that could break a dialplan expression or a FILE()
+# write: commas, double quotes (escaped as RFC 3261 25.1 allows), parentheses, braces and a dollar sign.
+SIP_CLIENT = r"""
+import json, socket, sys, time, uuid
+cases = json.load(sys.stdin)
+target, port = sys.argv[1], 5060
+me = socket.gethostbyname(socket.gethostname())
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(('0.0.0.0', 5070))
+sock.settimeout(2.0)
+results = []
+for case in cases:
+    call_id = uuid.uuid4().hex + '@' + me
+    tag = uuid.uuid4().hex[:10]
+    branch = 'z9hG4bK' + uuid.uuid4().hex[:16]
+    ruri = 'sip:%s@%s:%d' % (case['did'], target, port)
+    sdp = ('v=0\r\no=- 1 1 IN IP4 %s\r\ns=-\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio 40000 RTP/AVP 0\r\n'
+           'a=rtpmap:0 PCMU/8000\r\na=sendrecv\r\n') % (me, me)
+    headers = ['Via: SIP/2.0/UDP %s:5070;branch=%s;rport' % (me, branch), 'Max-Forwards: 70',
+               'From: %s;tag=%s' % (case['from'], tag), 'To: <%s>' % ruri, 'Call-ID: ' + call_id,
+               'CSeq: 1 INVITE', 'Contact: <sip:%s@%s:5070>' % (case['caller'], me)]
+    headers += ['%s: %s' % (name, value) for name, value in case.get('extra', [])]
+    headers += ['Content-Type: application/sdp', 'Content-Length: %d' % len(sdp)]
+    sock.sendto(('INVITE %s SIP/2.0\r\n' % ruri + '\r\n'.join(headers) + '\r\n\r\n' + sdp).encode(), (target, port))
+    final, to_header, deadline = None, None, time.time() + 15
+    while time.time() < deadline and final is None:
+        try:
+            data, _ = sock.recvfrom(65535)
+        except socket.timeout:
+            continue
+        text = data.decode('utf-8', 'replace')
+        status = text.split('\r\n', 1)[0]
+        if 'CSeq: 1 INVITE' not in text or not status.startswith('SIP/2.0 '):
+            continue
+        code = int(status.split()[1])
+        if code >= 200:
+            final = code
+            to_header = next(line for line in text.split('\r\n') if line.lower().startswith('to:'))
+
+    def send(method, cseq, via_branch):
+        lines = ['Via: SIP/2.0/UDP %s:5070;branch=%s;rport' % (me, via_branch), 'Max-Forwards: 70',
+                 'From: %s;tag=%s' % (case['from'], tag), to_header, 'Call-ID: ' + call_id,
+                 'CSeq: %d %s' % (cseq, method), 'Content-Length: 0']
+        sock.sendto(('%s %s SIP/2.0\r\n' % (method, ruri) + '\r\n'.join(lines) + '\r\n\r\n').encode(), (target, port))
+    if final is not None:
+        send('ACK', 1, branch if final >= 300 else 'z9hG4bK' + uuid.uuid4().hex[:16])
+    if final == 200:
+        time.sleep(1.0)
+        send('BYE', 2, 'z9hG4bK' + uuid.uuid4().hex[:16])
+        time.sleep(1.0)
+    results.append({'name': case['name'], 'final': final})
+print(json.dumps(results))
+"""
+
+HOSTILE = '"Clinic, Inc. \\"Main\\" (fax) {x}$1"'
+PASSPORT = ('eyJhbGciOiJFUzI1NiJ9.eyJhdHRlc3QiOiJBIn0.c2lnbmF0dXJl;info=<https://cert.example.net/sp.pem>;alg=ES256;'
+            'ppt=shaken')
+
+
+def test_hostile_display_names_leave_the_caller_check_headers_intact(tmp_path):
+    """Brief 98 item 5: the [faxbot-sip-headers] REGEX and FILE() writes, run in Asterisk on INVITEs whose From and
+    P-Asserted-Identity carry quoted display names with commas, quotes, parentheses, braces and a dollar sign. A
+    verstat in From or in P-Asserted-Identity, or any Identity header, keeps the call's headers for Faxbot, byte for
+    byte, with the call's start beside them (diversion.STARTED, for the SSL Fax engine's late hand-over); a call with
+    none of them keeps nothing. Each kept header reads back through inbound/diversion.py, and the caller check reads
+    the verstat from it."""
+    from datetime import datetime
+    from app.inbound import caller_check, diversion
+    caller = '+13035550150'
+    passed = ';verstat=TN-Validation-Passed'
+    cases = [
+        {'name': 'verstat-in-from', 'did': DID, 'caller': caller,
+         'from': f'{HOSTILE} <sip:{caller}@carrier.example;user=phone{passed}>'},
+        {'name': 'verstat-in-pai', 'did': DID, 'caller': caller,
+         'from': f'{HOSTILE} <sip:{caller}@carrier.example;user=phone>',
+         'extra': [('P-Asserted-Identity',
+                    f'"Clinic (main), Inc." <sip:{caller}@carrier.example;user=phone{passed}>')]},
+        {'name': 'identity-only', 'did': DID, 'caller': caller,
+         'from': f'{HOSTILE} <sip:{caller}@carrier.example>', 'extra': [('Identity', PASSPORT)]},
+        {'name': 'nothing-asserted', 'did': DID, 'caller': caller,
+         'from': f'{HOSTILE} <sip:{caller}@carrier.example>'},
+    ]
+    docker = Docker()
+    image = os.environ.get('FAXBOT_NATIVE_IMAGE') or 'faxbot-native:t38-proof'
+    if not os.environ.get('FAXBOT_NATIVE_IMAGE'):
+        docker.run('build', '--quiet', '--tag', image, str(ROOT / 'asterisk'), timeout=3600)
+    problems = []
+    try:
+        docker.network = docker.prefix
+        docker.run('network', 'create', '--internal', '--label', 'com.faxbot.scope=t38-proof', docker.network)
+        client = docker.start('carrier', 'python:3.11-slim', 'infinity', entrypoint='sleep')
+        receiver = docker.start('receiver', image, 'infinity', entrypoint='sleep')
+        carrier = docker.address(client)
+        rendered = tmp_path / 'receiver.conf'
+        rendered.write_text(sip_trunk.render_pjsip(trunk_values(carrier)))
+        docker.run('exec', receiver, 'mkdir', '-p', '/faxdata/asterisk', '/faxdata/inbound')
+        docker.run('cp', str(rendered), f'{receiver}:/faxdata/asterisk/pjsip.conf')
+        docker.run('exec', '--detach', '--env', f'ASTERISK_INBOUND_SECRET={SECRET}', receiver, 'sh', '-c',
+                   '/start.sh > /tmp/asterisk.log 2>&1')
+        wait_booted(docker, receiver)
+        found = {}
+        for case in cases:
+            listing = "ls /faxdata/inbound/ 2>/dev/null"
+            before = set(docker.run('exec', receiver, 'sh', '-c', listing, check=False).stdout.split())
+            started = int(time.time())
+            answered = docker.run('exec', '--interactive', client, 'python', '-c', SIP_CLIENT,
+                                  docker.address(receiver), input_text=json.dumps([case]), timeout=60)
+            outcome = json.loads(answered.stdout.strip().splitlines()[-1])[0]
+            after = set(docker.run('exec', receiver, 'sh', '-c', listing, check=False).stdout.split())
+            kept = sorted(name for name in after - before if name.endswith('.sip'))
+            text = ''.join(docker.read(receiver, f'/faxdata/inbound/{name}') for name in kept)
+            found[case['name']] = {'final': outcome['final'], 'files': kept, 'started': started,
+                                   'headers': diversion.parse_header_lines(text)}
+        log = docker.read(receiver, '/tmp/asterisk.log')
+        # Errors from the dialplan itself (expressions, functions, FILE() writes). The client hangs up while the
+        # built-in engine waits for fax tones, which res_fax logs as an error on every case: not counted here.
+        problems = [line for line in log.splitlines() if ('ERROR' in line or 'WARNING' in line)
+                    and any(word in line for word in ('pbx', 'func_', 'ast_expr', 'expr2', 'app_stack', 'REGEX'))]
+        print(json.dumps({'sip_headers_hostile_names': {
+            name: {'final': item['final'], 'files': item['files'], 'headers': item['headers']}
+            for name, item in found.items()}, 'dialplan_problems': problems[-10:]}, indent=2))
+    finally:
+        docker.close()
+    by_name = {case['name']: case for case in cases}
+    for name in ('verstat-in-from', 'verstat-in-pai', 'identity-only'):
+        item = found[name]
+        assert item['final'] == 200 and len(item['files']) == 1, (name, item, problems)
+        headers = item['headers']
+        # Byte for byte: the display name's quotes, commas, parentheses, braces and dollar sign survive, and the
+        # From header Asterisk kept is the one sent (with the tag the client added).
+        sent = by_name[name]['from']
+        assert len(headers['From']) == 1 and headers['From'][0].startswith(sent + ';tag='), (name, headers)
+        started = int(headers[diversion.STARTED][0])
+        assert abs(started - item['started']) <= 5, (name, started, item['started'])
+        assert diversion.call_time({}, None, headers) == datetime.utcfromtimestamp(started)
+    assert caller_check.verstat(found['verstat-in-from']['headers']) == caller_check.PASSED
+    pai = found['verstat-in-pai']['headers']
+    assert pai['P-Asserted-Identity'] == [by_name['verstat-in-pai']['extra'][0][1]], pai
+    assert caller_check.verstat(pai) == caller_check.PASSED
+    assert found['identity-only']['headers']['Identity'] == [PASSPORT], found['identity-only']
+    assert found['nothing-asserted']['final'] == 200 and found['nothing-asserted']['files'] == []
+    assert not problems, problems
+
+
+# Item 4 of brief 98: the relay's true sender in the built-in engine's header line and station ID ---------------
+
+RELAY_SENDER, RELAY_NUMBER = 'Leeds HQ', '+441134960123'
+
+
+def header_line_text(path, rows, *, page=0):
+    """What Tesseract reads in the top ``rows`` rows of one page of a received fax image (the header line the
+    sending engine printed), lower-cased. The strip is cut to its ink and enlarged twice across and four times down
+    without smoothing, inside a white margin: a fax header's font is small and its rows are doubled at fine
+    resolution."""
+    from PIL import Image, ImageOps, ImageSequence
+    with Image.open(path) as image:
+        frame = next(frame for index, frame in enumerate(ImageSequence.Iterator(image)) if index == page)
+        strip = frame.convert('L').crop((0, 0, frame.size[0], max(rows, 8)))
+        ink = ImageOps.invert(strip).getbbox() or (0, 0, strip.size[0], strip.size[1])
+        strip = strip.crop((max(0, ink[0] - 10), 0, min(strip.size[0], ink[2] + 10), strip.size[1]))
+        strip = ImageOps.expand(strip.resize((strip.size[0] * 2, strip.size[1] * 4), Image.NEAREST), border=20,
+                                fill=255)
+        with tempfile.TemporaryDirectory() as folder:
+            picture = Path(folder) / 'header.png'
+            strip.save(picture)
+            result = subprocess.run(['tesseract', str(picture), 'stdout', '--psm', '7'], capture_output=True,
+                                    text=True, timeout=60)
+    return ' '.join(result.stdout.split()).lower()
+
+
+@pytest.mark.skipif(not __import__('shutil').which('tesseract'), reason='Tesseract reads the header line')
+def test_a_relayed_fax_shows_the_true_sender_in_the_built_in_engines_header_line_and_station_id(tmp_path,
+                                                                                               monkeypatch):
+    """The relay's hook (direct.relay.sender_identity_for, here answering for this job as the relay's records would:
+    test_partner_relay proves that answer) reaches the built-in engine through the production path
+    (ami.sender_identity, ami.originate_fields_for): the receiving engine reports the true sender's number as the
+    station ID it was sent (TSI), and the header line spandsp printed above each page reads the sender's name and
+    number, read back with Tesseract from the received image."""
+    job, attempt = uuid.uuid4().hex, uuid.uuid4().hex
+    monkeypatch.setattr('app.direct.relay.sender_identity_for',
+                        lambda engine, job_id: (RELAY_SENDER, RELAY_NUMBER) if job_id == job else None)
+    assert ami.sender_identity(job) == (RELAY_SENDER, RELAY_NUMBER)
+    outcome = exchange(tmp_path, identity=(job, attempt))
+    assert outcome['result']['Status'] == 'SUCCESS', outcome['result']
+    captured = outcome['captured']
+    assert captured is not None, 'The receiver did not hand the fax over'
+    station = base64.b64decode(captured['body']['call'].get('remote_station_id_b64') or '').decode().strip()
+    rows = page_heights(outcome['received'])[0] - page_heights(outcome['sent'])[0]
+    text = header_line_text(outcome['received'], rows)
+    digits = ''.join(character for character in text if character.isdigit())
+    print(json.dumps({'relay_header_line': {'station_id_received': station, 'header_rows': rows,
+                                            'header_line_read': text}}, indent=2))
+    fields = outcome['fields']['Variable']
+    assert base64.b64encode(RELAY_SENDER.encode()).decode() in fields
+    assert station == RELAY_NUMBER, station
+    assert rows > 0 and 'leeds' in text and RELAY_NUMBER.lstrip('+') in digits, text
+
 WIREGUARD_DOCKERFILE = '''FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 \\
     && rm -rf /var/lib/apt/lists/*

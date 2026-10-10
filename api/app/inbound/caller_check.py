@@ -13,8 +13,11 @@ result, Faxbot keeps it with each received fax and stamps it:
 - **verified but unregistered**: verified, and not on that list;
 - **unverified**: the network did not verify it, or said nothing.
 
-Only calls the built-in engine hands over are stamped; the SSL Fax engine's received calls are not yet. Header
-files a call leaves without a hand-over are removed by the recovery scan after a day (``sip_handover.prune_headers``).
+Calls both fax engines hand over are stamped the same way, from the same header file: the built-in engine's
+hand-over, and the SSL Fax engine's (``hylafax_http.engine_inbound``), which reaches Faxbot only after the last
+page. A PASSporT is checked against the time the call started either way: the built-in engine's hand-over carries
+it, and Asterisk writes it beside the SSL Fax engine's call's headers (``diversion.STARTED``). Header files a call
+leaves without a hand-over are removed by the recovery scan after a day (``sip_handover.prune_headers``).
 
 The network's word comes from either of two places. The carrier's own check, the
 ``verstat`` parameter on the caller's P-Asserted-Identity or From
@@ -128,13 +131,13 @@ def check(headers, *, caller, did, at, trusted=(), numbers=(), fetch=None):
 
 
 def received(payload, call, *, received_at=None):
-    """The stamp for a call handed over by the built-in engine (``inbound/http.receive_handover``), from the headers
+    """The stamp for a call either fax engine handed over (``inbound/http.receive_handover``), from the headers
     Asterisk kept for it; also whether a header file was there to remove."""
     from . import diversion, trust
     from ..config import configuration_values, settings
     values = configuration_values()
     headers = diversion.read_headers(settings.fax_data_dir, payload.get('uniqueid'))
-    moment = diversion.call_time(call, received_at or diversion.utcnow())
+    moment = diversion.call_time(call, received_at or diversion.utcnow(), headers)
     stamp = check(headers, caller=payload.get('from_number'), did=payload.get('to_number'), at=moment,
                   trusted=trust.certificates(values) if headers else (), numbers=registered(values))
     return stamp, bool(headers)
