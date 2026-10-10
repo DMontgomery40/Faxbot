@@ -1,0 +1,3795 @@
+{
+ "about": "The Overview's blocks on the console and in `faxbot overview`, from the same answers. `base` is a healthy, established installation (a trimmed copy of capabilities.json); each scenario replaces some answers. dashboard.test.tsx renders the console from it; api/tests/test_cli_overview.py runs the command on it.",
+ "base": {
+  "/admin/health-status": {
+   "status": 200,
+   "body": {
+    "timestamp": "2026-10-09T20:00:00Z",
+    "backend": "sip",
+    "backend_healthy": true,
+    "receiving_backend": "sip",
+    "receiving_ready": true,
+    "backend_message": null,
+    "jobs": {
+     "queued": 1,
+     "in_progress": 0,
+     "recent_failures": 0,
+     "held": 0,
+     "reconciliation_required": 0,
+     "waiting_for_line": 0
+    },
+    "inbound_enabled": true,
+    "api_keys_configured": true,
+    "require_auth": true
+   }
+  },
+  "/routing/holds": {
+   "status": 200,
+   "body": {
+    "can_approve": true,
+    "holds": []
+   }
+  },
+  "/work/counts": {
+   "status": 200,
+   "body": {
+    "open": 3,
+    "acknowledged": 1,
+    "done": 9,
+    "unassigned": 0,
+    "mine": 1,
+    "overdue": 0
+   }
+  },
+  "/intake/items": {
+   "status": 200,
+   "body": {
+    "items": [],
+    "counts": {
+     "received": 0,
+     "sending": 0,
+     "delivered": 12,
+     "failed": 0
+    }
+   }
+  },
+  "/expected-faxes/counts": {
+   "status": 200,
+   "body": {
+    "waiting": 2,
+    "overdue": 0,
+    "proposed": 0,
+    "missing": 0,
+    "conflicts": 0,
+    "matched": 4
+   }
+  },
+  "/routing/costs": {
+   "status": 200,
+   "body": {
+    "since": "2026-09-09T00:00:00",
+    "providers": []
+   }
+  },
+  "/admin/sip/network": {
+   "status": 200,
+   "body": {
+    "applies": false,
+    "checked": false,
+    "t38": null,
+    "text": null
+   }
+  },
+  "/routing/capabilities": {
+   "status": 200,
+   "body": {
+    "days": 30,
+    "title": "Capabilities",
+    "sentence": "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+    "legend": [
+     {
+      "label": "On or Off",
+      "sentence": "Whether it is switched on for your faxes."
+     },
+     {
+      "label": "Works here or Not here",
+      "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+     },
+     {
+      "label": "Live call, Test lab or Sample data",
+      "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
+     }
+    ],
+    "filters": [
+     {
+      "key": "on",
+      "label": "On",
+      "sentence": "Switched on for your faxes."
+     },
+     {
+      "key": "off",
+      "label": "Off",
+      "sentence": "Switched off for now."
+     },
+     {
+      "key": "ready",
+      "label": "Ready to turn on",
+      "sentence": "Off, but this installation already has what it needs."
+     },
+     {
+      "key": "needs",
+      "label": "Needs something",
+      "sentence": "Missing something it needs, such as a connection, prices or a recipient's agreement."
+     },
+     {
+      "key": "experimental",
+      "label": "Experimental",
+      "sentence": "Still being proven; its evidence and limits are shown with it."
+     }
+    ],
+    "outcomes": [
+     {
+      "key": "spend_less",
+      "title": "Spend less on sending",
+      "sentence": "Choose the route, plan or number that costs least for each fax.",
+      "capabilities": [
+       {
+        "key": "cheapest_route",
+        "name": "Cheapest route per delivered fax",
+        "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+        "example": "Faxes to a busy clinic went through two routes last month. Faxbot now sends that number by the route that cost less per delivered fax, counting the tries that failed.",
+        "outcome": "spend_less",
+        "address": "savings/capabilities?key=cheapest_route",
+        "enabled": {
+         "on": true,
+         "label": "On",
+         "sentence": "On; a preferred route for a number still comes first."
+        },
+        "works": {
+         "here": false,
+         "label": "Not here",
+         "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 2,
+         "sentence": "Used on 2 faxes in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 2,
+        "filters": [
+         "on",
+         "needs"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": false,
+          "label": "Missing",
+          "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+          "address": "delivery/connections",
+          "address_label": "Delivery setup → Connections"
+         },
+         {
+          "kind": "prices",
+          "kind_label": "Prices",
+          "met": false,
+          "label": "Missing",
+          "sentence": "Prices for at least two sending routes that charge for each fax.",
+          "address": "savings/prices",
+          "address_label": "Savings & optimization → Prices & plans"
+         }
+        ],
+        "setting": {
+         "address": "recipients/list",
+         "label": "Recipients → Details",
+         "command": "faxbot recipients set {number} --preferred-route automatic"
+        },
+        "results": {
+         "address": "savings/results?part=cheapest_route",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       }
+      ]
+     },
+     {
+      "key": "shorter_calls",
+      "title": "Smaller documents and shorter calls",
+      "sentence": "Send fewer pages, and keep each page on the line for less time.",
+      "capabilities": [
+       {
+        "key": "encoded_pages",
+        "name": "Encoded pages (experimental)",
+        "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+        "example": "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the recipient's Faxbot turns them back into the exact original file.",
+        "outcome": "shorter_calls",
+        "address": "savings/capabilities?key=encoded_pages",
+        "enabled": {
+         "on": false,
+         "label": "Off",
+         "sentence": "No recipient has agreed to encoded pages yet."
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": true,
+        "ready": true,
+        "missing": 1,
+        "filters": [
+         "off",
+         "ready",
+         "needs",
+         "experimental"
+        ],
+        "improvement": {
+         "kind": "experimental",
+         "label": "Experimental"
+        },
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "address": "delivery/connections",
+          "address_label": "Delivery setup → Connections"
+         },
+         {
+          "kind": "agreement",
+          "kind_label": "Recipient's agreement",
+          "met": false,
+          "label": "Missing",
+          "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
+          "address": "recipients/list",
+          "address_label": "Recipients → Details"
+         }
+        ],
+        "setting": {
+         "address": "recipients/list",
+         "label": "Recipients → Details",
+         "command": "faxbot recipients encoded set {number}"
+        },
+        "results": {
+         "address": "savings/results?part=encoding",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "fax_friendly",
+        "name": "Lighter shading",
+        "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+        "example": "A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks removed first, so each page takes fewer seconds to send.",
+        "outcome": "shorter_calls",
+        "address": "savings/capabilities?key=fax_friendly",
+        "enabled": {
+         "on": false,
+         "label": "Off",
+         "sentence": null
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": true,
+        "missing": 0,
+        "filters": [
+         "off",
+         "ready"
+        ],
+        "improvement": {
+         "kind": "now",
+         "label": "You can do this now"
+        },
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "address": "delivery/connections",
+          "address_label": "Delivery setup → Connections"
+         },
+         {
+          "kind": "prices",
+          "kind_label": "Prices",
+          "met": true,
+          "label": "In place",
+          "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+          "address": "savings/prices",
+          "address_label": "Savings & optimization → Prices & plans"
+         }
+        ],
+        "setting": {
+         "address": "delivery/connections",
+         "label": "Delivery setup → Connections",
+         "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
+        },
+        "results": {
+         "address": "savings/results?part=fax_friendly",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "fax_over_ip",
+        "name": "Fax over IP (T.38)",
+        "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+        "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+        "outcome": "shorter_calls",
+        "address": "savings/capabilities?key=fax_over_ip",
+        "enabled": {
+         "on": true,
+         "label": "On",
+         "sentence": null
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "live",
+         "label": "Live call"
+        },
+        "here": {
+         "used": 3,
+         "sentence": "Used on 3 calls in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 0,
+        "filters": [
+         "on"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         },
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "A network and carrier that carry T.38. Faxbot checks this itself and switches T.38 back on when they do.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         }
+        ],
+        "setting": {
+         "address": "delivery/trunk",
+         "label": "Delivery setup → Telnyx",
+         "command": "faxbot delivery providers trunk mode"
+        },
+        "results": {
+         "address": "savings/results?part=t38",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "sslfax",
+        "name": "Faster pages",
+        "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+        "example": "When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during the call instead of as audio, so the call ends sooner.",
+        "outcome": "shorter_calls",
+        "address": "savings/capabilities?key=sslfax",
+        "enabled": {
+         "on": true,
+         "label": "On",
+         "sentence": null
+        },
+        "works": {
+         "here": false,
+         "label": "Not here",
+         "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
+        },
+        "evidence": {
+         "level": "lab",
+         "label": "Test lab"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 1,
+        "filters": [
+         "on",
+         "needs"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         },
+         {
+          "kind": "engine",
+          "kind_label": "Fax engine",
+          "met": false,
+          "label": "Missing",
+          "sentence": "Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         }
+        ],
+        "setting": {
+         "address": "delivery/trunk",
+         "label": "Delivery setup → Telnyx",
+         "command": "faxbot admin settings set sip_sslfax_enabled=true"
+        },
+        "results": {
+         "address": "savings/results?part=sslfax",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       }
+      ]
+     },
+     {
+      "key": "no_repeats",
+      "title": "Avoid repeated calls and documents",
+      "sentence": "Send what a recipient already has only once, and share calls where recipients agree.",
+      "capabilities": [
+       {
+        "key": "case_packets",
+        "name": "Case packets",
+        "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+        "example": "A clinic sends a referral packet to the same specialist every month. The specialist already confirmed the insurance card and consent form, so the packet lists them instead of faxing those pages again.",
+        "outcome": "no_repeats",
+        "address": "savings/capabilities?key=case_packets",
+        "enabled": {
+         "on": false,
+         "label": "Off",
+         "sentence": "No recipient accepts a list of the documents they already have yet."
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": true,
+        "missing": 1,
+        "filters": [
+         "off",
+         "ready",
+         "needs"
+        ],
+        "improvement": {
+         "kind": "agreement",
+         "label": "Needs a recipient's agreement"
+        },
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+          "address": "delivery/connections",
+          "address_label": "Delivery setup → Connections"
+         },
+         {
+          "kind": "agreement",
+          "kind_label": "Recipient's agreement",
+          "met": false,
+          "label": "Missing",
+          "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
+          "address": "recipients/list",
+          "address_label": "Recipients → Details"
+         }
+        ],
+        "setting": {
+         "address": "recipients/list",
+         "label": "Recipients → Details",
+         "command": "faxbot recipients set {number} --accepts-references"
+        },
+        "results": {
+         "address": "savings/results?part=case_packets",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "direct_delivery",
+        "name": "Direct delivery",
+        "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+        "example": "A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes over the internet as the original file, with no fax call.",
+        "outcome": "no_repeats",
+        "address": "savings/capabilities?key=direct_delivery",
+        "enabled": {
+         "on": false,
+         "label": "Off",
+         "sentence": null
+        },
+        "works": {
+         "here": false,
+         "label": "Not here",
+         "sentence": "Needs a verified partner; you have none yet."
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 1,
+        "filters": [
+         "off",
+         "needs"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "partner",
+          "kind_label": "Partner",
+          "met": false,
+          "label": "Missing",
+          "sentence": "A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax.",
+          "address": "recipients/partners",
+          "address_label": "Recipients → Partners"
+         }
+        ],
+        "setting": {
+         "address": "recipients/partners",
+         "label": "Recipients → Partners",
+         "command": "faxbot admin settings set direct_delivery_enabled=true"
+        },
+        "results": {
+         "address": "savings/results?part=direct_delivery",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "sending_together",
+        "name": "Sending together",
+        "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+        "example": "Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that charges for each call.",
+        "outcome": "no_repeats",
+        "address": "savings/capabilities?key=sending_together",
+        "enabled": {
+         "on": true,
+         "label": "On",
+         "sentence": "On for 1 recipient who agreed."
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "lab",
+         "label": "Test lab"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 0,
+        "filters": [
+         "on"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         },
+         {
+          "kind": "prices",
+          "kind_label": "Prices",
+          "met": true,
+          "label": "In place",
+          "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+          "address": "savings/prices",
+          "address_label": "Savings & optimization → Prices & plans"
+         },
+         {
+          "kind": "agreement",
+          "kind_label": "Recipient's agreement",
+          "met": true,
+          "label": "In place",
+          "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
+          "address": "recipients/list",
+          "address_label": "Recipients → Details"
+         }
+        ],
+        "setting": {
+         "address": "recipients/list",
+         "label": "Recipients → Details",
+         "command": "faxbot recipients together set {number}"
+        },
+        "results": {
+         "address": "savings/results?part=sending_together",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       },
+       {
+        "key": "separator_pages",
+        "name": "Fewer separator pages",
+        "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+        "example": "Three documents sent together to a lab start with one index page that lists them, instead of a separator page before each one.",
+        "outcome": "no_repeats",
+        "address": "savings/capabilities?key=separator_pages",
+        "enabled": {
+         "on": false,
+         "label": "Off",
+         "sentence": "No recipient has agreed to an index page or page marks yet."
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 0,
+         "sentence": "Not used in 30 days"
+        },
+        "experimental": false,
+        "ready": true,
+        "missing": 1,
+        "filters": [
+         "off",
+         "ready",
+         "needs"
+        ],
+        "improvement": {
+         "kind": "agreement",
+         "label": "Needs a recipient's agreement"
+        },
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         },
+         {
+          "kind": "prices",
+          "kind_label": "Prices",
+          "met": true,
+          "label": "In place",
+          "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+          "address": "savings/prices",
+          "address_label": "Savings & optimization → Prices & plans"
+         },
+         {
+          "kind": "agreement",
+          "kind_label": "Recipient's agreement",
+          "met": false,
+          "label": "Missing",
+          "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
+          "address": "recipients/list",
+          "address_label": "Recipients → Details"
+         },
+         {
+          "kind": "setting",
+          "kind_label": "Setting",
+          "met": true,
+          "label": "In place",
+          "sentence": "For marks at the top of every page: your header text and sending number.",
+          "address": "delivery/identity",
+          "address_label": "Delivery setup → Sender identity"
+         }
+        ],
+        "setting": {
+         "address": "recipients/list",
+         "label": "Recipients → Details",
+         "command": "faxbot recipients set {number} --index-page"
+        },
+        "results": {
+         "address": "savings/results?part=separator_pages",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       }
+      ]
+     },
+     {
+      "key": "receiving",
+      "title": "Lower receiving and service costs",
+      "sentence": "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+      "capabilities": [
+       {
+        "key": "blocked_senders",
+        "name": "Junk callers turned away",
+        "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+        "example": "A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot answers, so nothing is received or stored.",
+        "outcome": "receiving",
+        "address": "savings/capabilities?key=blocked_senders",
+        "enabled": {
+         "on": true,
+         "label": "On",
+         "sentence": "On for 1 number on your blocked list."
+        },
+        "works": {
+         "here": true,
+         "label": "Works here",
+         "sentence": null
+        },
+        "evidence": {
+         "level": "built",
+         "label": "Sample data"
+        },
+        "here": {
+         "used": 1,
+         "sentence": "Turned away 1 call in 30 days"
+        },
+        "experimental": false,
+        "ready": false,
+        "missing": 0,
+        "filters": [
+         "on"
+        ],
+        "improvement": null,
+        "prerequisites": [
+         {
+          "kind": "connection",
+          "kind_label": "Connection",
+          "met": true,
+          "label": "In place",
+          "sentence": "Faxes received over your own SIP trunk.",
+          "address": "delivery/trunk",
+          "address_label": "Delivery setup → Telnyx"
+         },
+         {
+          "kind": "setting",
+          "kind_label": "Setting",
+          "met": true,
+          "label": "In place",
+          "sentence": "A number on your blocked list.",
+          "address": "delivery/blocked",
+          "address_label": "Delivery setup → Blocked senders"
+         }
+        ],
+        "setting": {
+         "address": "delivery/blocked",
+         "label": "Delivery setup → Blocked senders",
+         "command": "faxbot delivery blocked add {number}"
+        },
+        "results": {
+         "address": "savings/results?part=blocked_calls",
+         "label": "Savings & optimization → Savings",
+         "command": "faxbot savings results"
+        },
+        "affected": null
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "/routing/savings": {
+   "status": 200,
+   "body": {
+    "days": 30,
+    "since": "2026-09-09T00:00:00",
+    "estimate": true,
+    "sentence": "Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.",
+    "total_saved": [
+     {
+      "currency": "USD",
+      "amount": "1.25"
+     }
+    ],
+    "total_sentence": "About $1.25 saved in the last 30 days.",
+    "sending_together": {
+     "estimate": true,
+     "saved": [
+      {
+       "currency": "USD",
+       "amount": "0.40"
+      }
+     ],
+     "sentence": "3 faxes to 1 number went in 1 call: 2 calls and about $0.40 saved.",
+     "numbers": 1,
+     "calls": 1,
+     "faxes": 3,
+     "calls_saved": 2,
+     "priced_calls": 1
+    },
+    "case_packets": {
+     "estimate": true,
+     "saved": [
+      {
+       "currency": "USD",
+       "amount": "0.60"
+      }
+     ],
+     "sentence": "2 case packets left out 3 documents the recipient already had: 12 pages and about $0.60 saved.",
+     "counted_from": null,
+     "earlier_not_counted": false,
+     "counted_from_sentence": null,
+     "packets": 2,
+     "documents_left_out": 3,
+     "pages_not_resent": 14,
+     "pages_saved": 12,
+     "priced": 2,
+     "in_plan": 0,
+     "unpriced": 0
+    },
+    "sslfax": {
+     "estimate": true,
+     "saved": [
+      {
+       "currency": "USD",
+       "amount": "0.25"
+      }
+     ],
+     "sentence": "4 faxes went over SSL Fax: 95 seconds and about $0.25 saved.",
+     "faxes": 4,
+     "seconds_saved": 95,
+     "priced": 4,
+     "in_plan": 0,
+     "unpriced": 0,
+     "same_cost": 0
+    },
+    "direct_delivery": {
+     "estimate": true,
+     "saved": [],
+     "sentence": "No documents went straight to a partner in the last 30 days.",
+     "faxes": 0,
+     "calls_avoided": 0,
+     "pages": 0,
+     "priced": 0,
+     "in_plan": 0,
+     "unpriced": 0
+    },
+    "direct_bytes": {
+     "bytes_saved": 2400000,
+     "documents": 2,
+     "references": 1,
+     "patches": 1,
+     "sentence": "2.4 MB not sent again: 1 reference and 1 set of changes."
+    }
+   }
+  },
+  "/routing/recommendations/sending": {
+   "status": 200,
+   "body": {
+    "window_days": 30,
+    "min_delivered": 3,
+    "empty_sentence": "Nothing to suggest yet.",
+    "items": [
+     {
+      "number": "+13035550124",
+      "display_name": "Synthetic Lab",
+      "version": 1,
+      "preferred_route": null,
+      "chosen_by_you": false,
+      "kind": "cheaper_route",
+      "current_label": "Phaxio",
+      "current": null,
+      "suggested": {
+       "route": "sip",
+       "label": "Telnyx"
+      },
+      "saving_per_fax": {
+       "currency": "USD",
+       "amount": "0.03"
+      },
+      "sentence": "Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio."
+     }
+    ]
+   }
+  },
+  "/routing/recommendations/facts": {
+   "status": 200,
+   "body": {
+    "days": 90,
+    "state": "advice",
+    "estimate": true,
+    "sentence": "Establishing one fact would have made faxes to 1 recipient cheaper or priced over the last 90 days.",
+    "recipients": [
+     {
+      "number": "+13035550199",
+      "display": "+1 303-555-0199",
+      "name": "County Records",
+      "kind": "recipient",
+      "faxes": 4,
+      "baseline": [],
+      "unpriced": 4,
+      "largest": [],
+      "sentence": "4 faxes to County Records have no price yet.",
+      "facts": [
+       {
+        "fact": "route_price",
+        "kind": "price",
+        "title": "No price for the route these faxes took",
+        "boundary": false,
+        "saving": [],
+        "net": [],
+        "faxes": 4,
+        "establish_cost": [],
+        "establish": "about 5 minutes of your time",
+        "confirm": "Your Phaxio account shows what it charges for each page.",
+        "step": "Enter the price under Savings & optimization → Prices & plans.",
+        "chance": null,
+        "break_even": null,
+        "unknown": true,
+        "realized": false,
+        "sentence": "4 faxes have no price, so Faxbot cannot compare routes for them."
+       }
+      ]
+     }
+    ],
+    "realized": "These figures are what your faxes would have cost, not savings.",
+    "note": "Faxbot only advises.",
+    "catalogue": [],
+    "assumptions": []
+   }
+  }
+ },
+ "scenarios": [
+  {
+   "name": "healthy",
+   "settings": true,
+   "responses": {},
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "cli": [
+    "What Faxbot is doing",
+    "  Used here in the last 30 days",
+    "    Fax over IP (T.38): Used on 3 calls in 30 days",
+    "    Cheapest route per delivered fax: Used on 2 faxes in 30 days",
+    "    Junk callers turned away: Turned away 1 call in 30 days",
+    "  Results, each in its own unit",
+    "    Money (estimate): About $1.25 saved in the last 30 days.",
+    "    Pages not sent: Case packets 12 pages",
+    "    Call time saved: Faster pages 2 minutes",
+    "    Calls avoided: Sending together 2 calls",
+    "    Data not sent again: Send once and reuse 2.4 MB",
+    "    How each was counted: faxbot savings results",
+    "Next improvements",
+    "  Lighter shading: You can do this now",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
+    "  A cheaper route to Synthetic Lab: You can do this now",
+    "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
+    "    faxbot savings opportunities sending",
+    "  No price for the route these faxes took (County Records): Needs a fact",
+    "    Enter the price under Savings & optimization → Prices & plans.",
+    "    faxbot savings facts",
+    "  Case packets: Needs a recipient's agreement",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    faxbot recipients set {number} --accepts-references",
+    "  Fewer separator pages: Needs a recipient's agreement",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    faxbot recipients set {number} --index-page",
+    "  Encoded pages (experimental): Experimental",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    faxbot recipients encoded set {number}",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: 1 fax waiting to send, 0 sending now.",
+    "  Expected: 2 expected faxes waiting.",
+    "Needs attention",
+    "  Nothing needs attention.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "new",
+   "settings": true,
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "responses": {
+    "/admin/health-status": {
+     "status": 200,
+     "body": {
+      "timestamp": "2026-10-09T20:00:00Z",
+      "backend": "",
+      "backend_healthy": false,
+      "receiving_backend": "",
+      "receiving_ready": false,
+      "backend_message": null,
+      "jobs": {
+       "queued": 0,
+       "in_progress": 0,
+       "recent_failures": 0,
+       "held": 0,
+       "reconciliation_required": 0,
+       "waiting_for_line": 0
+      },
+      "inbound_enabled": false,
+      "api_keys_configured": true,
+      "require_auth": true
+     }
+    },
+    "/work/counts": {
+     "status": 200,
+     "body": {
+      "open": 0,
+      "acknowledged": 0,
+      "done": 0,
+      "unassigned": 0,
+      "mine": 0,
+      "overdue": 0
+     }
+    },
+    "/expected-faxes/counts": {
+     "status": 200,
+     "body": {
+      "waiting": 0,
+      "overdue": 0,
+      "proposed": 0,
+      "missing": 0,
+      "conflicts": 0,
+      "matched": 0
+     }
+    },
+    "/routing/capabilities": {
+     "status": 200,
+     "body": {
+      "days": 30,
+      "title": "Capabilities",
+      "sentence": "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+      "legend": [
+       {
+        "label": "On or Off",
+        "sentence": "Whether it is switched on for your faxes."
+       },
+       {
+        "label": "Works here or Not here",
+        "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+       },
+       {
+        "label": "Live call, Test lab or Sample data",
+        "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
+       }
+      ],
+      "filters": [
+       {
+        "key": "on",
+        "label": "On",
+        "sentence": "Switched on for your faxes."
+       },
+       {
+        "key": "off",
+        "label": "Off",
+        "sentence": "Switched off for now."
+       },
+       {
+        "key": "ready",
+        "label": "Ready to turn on",
+        "sentence": "Off, but this installation already has what it needs."
+       },
+       {
+        "key": "needs",
+        "label": "Needs something",
+        "sentence": "Missing something it needs, such as a connection, prices or a recipient's agreement."
+       },
+       {
+        "key": "experimental",
+        "label": "Experimental",
+        "sentence": "Still being proven; its evidence and limits are shown with it."
+       }
+      ],
+      "outcomes": [
+       {
+        "key": "spend_less",
+        "title": "Spend less on sending",
+        "sentence": "Choose the route, plan or number that costs least for each fax.",
+        "capabilities": [
+         {
+          "key": "cheapest_route",
+          "name": "Cheapest route per delivered fax",
+          "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+          "example": "Faxes to a busy clinic went through two routes last month. Faxbot now sends that number by the route that cost less per delivered fax, counting the tries that failed.",
+          "outcome": "spend_less",
+          "address": "savings/capabilities?key=cheapest_route",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On; a preferred route for a number still comes first."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Prices for at least two sending routes that charge for each fax.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --preferred-route automatic"
+          },
+          "results": {
+           "address": "savings/results?part=cheapest_route",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "shorter_calls",
+        "title": "Smaller documents and shorter calls",
+        "sentence": "Send fewer pages, and keep each page on the line for less time.",
+        "capabilities": [
+         {
+          "key": "encoded_pages",
+          "name": "Encoded pages (experimental)",
+          "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+          "example": "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the recipient's Faxbot turns them back into the exact original file.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=encoded_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to encoded pages yet."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": true,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "off",
+           "needs",
+           "experimental"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients encoded set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=encoding",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_friendly",
+          "name": "Lighter shading",
+          "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+          "example": "A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks removed first, so each page takes fewer seconds to send.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_friendly",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "delivery/connections",
+           "label": "Delivery setup → Connections",
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
+          },
+          "results": {
+           "address": "savings/results?part=fax_friendly",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_over_ip",
+          "name": "Fax over IP (T.38)",
+          "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_over_ip",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "live",
+           "label": "Live call"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A network and carrier that carry T.38. Faxbot checks this itself and switches T.38 back on when they do.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot delivery providers trunk mode"
+          },
+          "results": {
+           "address": "savings/results?part=t38",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sslfax",
+          "name": "Faster pages",
+          "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+          "example": "When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during the call instead of as audio, so the call ends sooner.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=sslfax",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "engine",
+            "kind_label": "Fax engine",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=sslfax",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "no_repeats",
+        "title": "Avoid repeated calls and documents",
+        "sentence": "Send what a recipient already has only once, and share calls where recipients agree.",
+        "capabilities": [
+         {
+          "key": "case_packets",
+          "name": "Case packets",
+          "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+          "example": "A clinic sends a referral packet to the same specialist every month. The specialist already confirmed the insurance card and consent form, so the packet lists them instead of faxing those pages again.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=case_packets",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient accepts a list of the documents they already have yet."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --accepts-references"
+          },
+          "results": {
+           "address": "savings/results?part=case_packets",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "direct_delivery",
+          "name": "Direct delivery",
+          "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+          "example": "A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes over the internet as the original file, with no fax call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=direct_delivery",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a verified partner; you have none yet."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "partner",
+            "kind_label": "Partner",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax.",
+            "address": "recipients/partners",
+            "address_label": "Recipients → Partners"
+           }
+          ],
+          "setting": {
+           "address": "recipients/partners",
+           "label": "Recipients → Partners",
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=direct_delivery",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sending_together",
+          "name": "Sending together",
+          "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+          "example": "Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that charges for each call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=sending_together",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 recipient who agreed."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": true,
+            "label": "In place",
+            "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients together set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=sending_together",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "separator_pages",
+          "name": "Fewer separator pages",
+          "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+          "example": "Three documents sent together to a lab start with one index page that lists them, instead of a separator page before each one.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=separator_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to an index page or page marks yet."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "For marks at the top of every page: your header text and sending number.",
+            "address": "delivery/identity",
+            "address_label": "Delivery setup → Sender identity"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --index-page"
+          },
+          "results": {
+           "address": "savings/results?part=separator_pages",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "receiving",
+        "title": "Lower receiving and service costs",
+        "sentence": "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+        "capabilities": [
+         {
+          "key": "blocked_senders",
+          "name": "Junk callers turned away",
+          "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+          "example": "A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot answers, so nothing is received or stored.",
+          "outcome": "receiving",
+          "address": "savings/capabilities?key=blocked_senders",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 number on your blocked list."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Faxes received over your own SIP trunk.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "A number on your blocked list.",
+            "address": "delivery/blocked",
+            "address_label": "Delivery setup → Blocked senders"
+           }
+          ],
+          "setting": {
+           "address": "delivery/blocked",
+           "label": "Delivery setup → Blocked senders",
+           "command": "faxbot delivery blocked add {number}"
+          },
+          "results": {
+           "address": "savings/results?part=blocked_calls",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "/routing/savings": {
+     "status": 200,
+     "body": {
+      "days": 30,
+      "since": "2026-09-09T00:00:00",
+      "estimate": true,
+      "sentence": "Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.",
+      "total_saved": [],
+      "total_sentence": "No money saved in the last 30 days, as far as Faxbot can tell.",
+      "sending_together": {
+       "estimate": true,
+       "saved": [],
+       "sentence": "No faxes were sent together in the last 30 days.",
+       "numbers": 0,
+       "calls": 0,
+       "faxes": 0,
+       "calls_saved": 0,
+       "priced_calls": 0
+      }
+     }
+    },
+    "/routing/recommendations/sending": {
+     "status": 200,
+     "body": {
+      "window_days": 30,
+      "min_delivered": 3,
+      "items": [],
+      "empty_sentence": "Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days."
+     }
+    },
+    "/routing/recommendations/facts": {
+     "status": 200,
+     "body": {
+      "days": 90,
+      "state": "nothing_sent",
+      "estimate": true,
+      "sentence": "No faxes were sent in the last 90 days.",
+      "recipients": [],
+      "realized": "",
+      "note": "",
+      "catalogue": [],
+      "assumptions": []
+     }
+    }
+   },
+   "cli": [
+    "What Faxbot is doing",
+    "  No fax provider is set up yet, so Faxbot has nothing to improve so far.",
+    "  Connect in Delivery setup → Telnyx",
+    "    Then these work right away: Fax over IP (T.38), Sending together, Junk callers turned away.",
+    "  Connect in Delivery setup → Connections",
+    "    Then these work right away: Lighter shading.",
+    "Next improvements",
+    "  Nothing to suggest right now. Every capability, and what each needs, is on the Capabilities page.",
+    "Everyday faxes",
+    "  Received: 0 open faxes.",
+    "  Sent: Sending is not set up yet.",
+    "  Expected: 0 expected faxes waiting.",
+    "Needs attention",
+    "  To check",
+    "    No fax provider is set up yet",
+    "      faxbot delivery providers list",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "quiet",
+   "settings": true,
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "responses": {
+    "/routing/capabilities": {
+     "status": 200,
+     "body": {
+      "days": 30,
+      "title": "Capabilities",
+      "sentence": "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+      "legend": [
+       {
+        "label": "On or Off",
+        "sentence": "Whether it is switched on for your faxes."
+       },
+       {
+        "label": "Works here or Not here",
+        "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+       },
+       {
+        "label": "Live call, Test lab or Sample data",
+        "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
+       }
+      ],
+      "filters": [
+       {
+        "key": "on",
+        "label": "On",
+        "sentence": "Switched on for your faxes."
+       },
+       {
+        "key": "off",
+        "label": "Off",
+        "sentence": "Switched off for now."
+       },
+       {
+        "key": "ready",
+        "label": "Ready to turn on",
+        "sentence": "Off, but this installation already has what it needs."
+       },
+       {
+        "key": "needs",
+        "label": "Needs something",
+        "sentence": "Missing something it needs, such as a connection, prices or a recipient's agreement."
+       },
+       {
+        "key": "experimental",
+        "label": "Experimental",
+        "sentence": "Still being proven; its evidence and limits are shown with it."
+       }
+      ],
+      "outcomes": [
+       {
+        "key": "spend_less",
+        "title": "Spend less on sending",
+        "sentence": "Choose the route, plan or number that costs least for each fax.",
+        "capabilities": [
+         {
+          "key": "cheapest_route",
+          "name": "Cheapest route per delivered fax",
+          "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+          "example": "Faxes to a busy clinic went through two routes last month. Faxbot now sends that number by the route that cost less per delivered fax, counting the tries that failed.",
+          "outcome": "spend_less",
+          "address": "savings/capabilities?key=cheapest_route",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On; a preferred route for a number still comes first."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Prices for at least two sending routes that charge for each fax.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --preferred-route automatic"
+          },
+          "results": {
+           "address": "savings/results?part=cheapest_route",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "shorter_calls",
+        "title": "Smaller documents and shorter calls",
+        "sentence": "Send fewer pages, and keep each page on the line for less time.",
+        "capabilities": [
+         {
+          "key": "encoded_pages",
+          "name": "Encoded pages (experimental)",
+          "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+          "example": "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the recipient's Faxbot turns them back into the exact original file.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=encoded_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to encoded pages yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": true,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs",
+           "experimental"
+          ],
+          "improvement": {
+           "kind": "experimental",
+           "label": "Experimental"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients encoded set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=encoding",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_friendly",
+          "name": "Lighter shading",
+          "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+          "example": "A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks removed first, so each page takes fewer seconds to send.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_friendly",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 0,
+          "filters": [
+           "off",
+           "ready"
+          ],
+          "improvement": {
+           "kind": "now",
+           "label": "You can do this now"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "delivery/connections",
+           "label": "Delivery setup → Connections",
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
+          },
+          "results": {
+           "address": "savings/results?part=fax_friendly",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_over_ip",
+          "name": "Fax over IP (T.38)",
+          "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_over_ip",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "live",
+           "label": "Live call"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A network and carrier that carry T.38. Faxbot checks this itself and switches T.38 back on when they do.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot delivery providers trunk mode"
+          },
+          "results": {
+           "address": "savings/results?part=t38",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sslfax",
+          "name": "Faster pages",
+          "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+          "example": "When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during the call instead of as audio, so the call ends sooner.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=sslfax",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "engine",
+            "kind_label": "Fax engine",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=sslfax",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "no_repeats",
+        "title": "Avoid repeated calls and documents",
+        "sentence": "Send what a recipient already has only once, and share calls where recipients agree.",
+        "capabilities": [
+         {
+          "key": "case_packets",
+          "name": "Case packets",
+          "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+          "example": "A clinic sends a referral packet to the same specialist every month. The specialist already confirmed the insurance card and consent form, so the packet lists them instead of faxing those pages again.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=case_packets",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient accepts a list of the documents they already have yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs"
+          ],
+          "improvement": {
+           "kind": "agreement",
+           "label": "Needs a recipient's agreement"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --accepts-references"
+          },
+          "results": {
+           "address": "savings/results?part=case_packets",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "direct_delivery",
+          "name": "Direct delivery",
+          "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+          "example": "A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes over the internet as the original file, with no fax call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=direct_delivery",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a verified partner; you have none yet."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "partner",
+            "kind_label": "Partner",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax.",
+            "address": "recipients/partners",
+            "address_label": "Recipients → Partners"
+           }
+          ],
+          "setting": {
+           "address": "recipients/partners",
+           "label": "Recipients → Partners",
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=direct_delivery",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sending_together",
+          "name": "Sending together",
+          "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+          "example": "Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that charges for each call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=sending_together",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 recipient who agreed."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": true,
+            "label": "In place",
+            "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients together set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=sending_together",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "separator_pages",
+          "name": "Fewer separator pages",
+          "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+          "example": "Three documents sent together to a lab start with one index page that lists them, instead of a separator page before each one.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=separator_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to an index page or page marks yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs"
+          ],
+          "improvement": {
+           "kind": "agreement",
+           "label": "Needs a recipient's agreement"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "For marks at the top of every page: your header text and sending number.",
+            "address": "delivery/identity",
+            "address_label": "Delivery setup → Sender identity"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --index-page"
+          },
+          "results": {
+           "address": "savings/results?part=separator_pages",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "receiving",
+        "title": "Lower receiving and service costs",
+        "sentence": "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+        "capabilities": [
+         {
+          "key": "blocked_senders",
+          "name": "Junk callers turned away",
+          "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+          "example": "A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot answers, so nothing is received or stored.",
+          "outcome": "receiving",
+          "address": "savings/capabilities?key=blocked_senders",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 number on your blocked list."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Faxes received over your own SIP trunk.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "A number on your blocked list.",
+            "address": "delivery/blocked",
+            "address_label": "Delivery setup → Blocked senders"
+           }
+          ],
+          "setting": {
+           "address": "delivery/blocked",
+           "label": "Delivery setup → Blocked senders",
+           "command": "faxbot delivery blocked add {number}"
+          },
+          "results": {
+           "address": "savings/results?part=blocked_calls",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "/routing/savings": {
+     "status": 200,
+     "body": {
+      "days": 30,
+      "since": "2026-09-09T00:00:00",
+      "estimate": true,
+      "sentence": "Each figure is an estimate: what you paid compared with what the same faxes would have cost the usual way.",
+      "total_saved": [],
+      "total_sentence": "No money saved in the last 30 days, as far as Faxbot can tell.",
+      "sending_together": {
+       "estimate": true,
+       "saved": [],
+       "sentence": "No faxes were sent together in the last 30 days.",
+       "numbers": 0,
+       "calls": 0,
+       "faxes": 0,
+       "calls_saved": 0,
+       "priced_calls": 0
+      }
+     }
+    },
+    "/routing/recommendations/sending": {
+     "status": 200,
+     "body": {
+      "window_days": 30,
+      "min_delivered": 3,
+      "items": [],
+      "empty_sentence": "Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days."
+     }
+    },
+    "/routing/recommendations/facts": {
+     "status": 200,
+     "body": {
+      "days": 90,
+      "state": "nothing_sent",
+      "estimate": true,
+      "sentence": "No faxes were sent in the last 90 days.",
+      "recipients": [],
+      "realized": "",
+      "note": "",
+      "catalogue": [],
+      "assumptions": []
+     }
+    }
+   },
+   "cli": [
+    "What Faxbot is doing",
+    "  Nothing Faxbot can improve acted on your faxes in the last 30 days, so there are no results yet.",
+    "Next improvements",
+    "  Lighter shading: You can do this now",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
+    "  Case packets: Needs a recipient's agreement",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    faxbot recipients set {number} --accepts-references",
+    "  Fewer separator pages: Needs a recipient's agreement",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    faxbot recipients set {number} --index-page",
+    "  Encoded pages (experimental): Experimental",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    faxbot recipients encoded set {number}",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: 1 fax waiting to send, 0 sending now.",
+    "  Expected: 2 expected faxes waiting.",
+    "Needs attention",
+    "  Nothing needs attention.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "receive-only",
+   "settings": true,
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "responses": {
+    "/admin/health-status": {
+     "status": 200,
+     "body": {
+      "timestamp": "2026-10-09T20:00:00Z",
+      "backend": "",
+      "backend_healthy": false,
+      "receiving_backend": "sip",
+      "receiving_ready": true,
+      "backend_message": null,
+      "jobs": {
+       "queued": 0,
+       "in_progress": 0,
+       "recent_failures": 0,
+       "held": 0,
+       "reconciliation_required": 0,
+       "waiting_for_line": 0
+      },
+      "inbound_enabled": true,
+      "api_keys_configured": true,
+      "require_auth": true
+     }
+    }
+   },
+   "cli": [
+    "What Faxbot is doing",
+    "  Used here in the last 30 days",
+    "    Fax over IP (T.38): Used on 3 calls in 30 days",
+    "    Cheapest route per delivered fax: Used on 2 faxes in 30 days",
+    "    Junk callers turned away: Turned away 1 call in 30 days",
+    "  Results, each in its own unit",
+    "    Money (estimate): About $1.25 saved in the last 30 days.",
+    "    Pages not sent: Case packets 12 pages",
+    "    Call time saved: Faster pages 2 minutes",
+    "    Calls avoided: Sending together 2 calls",
+    "    Data not sent again: Send once and reuse 2.4 MB",
+    "    How each was counted: faxbot savings results",
+    "Next improvements",
+    "  Lighter shading: You can do this now",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
+    "  A cheaper route to Synthetic Lab: You can do this now",
+    "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
+    "    faxbot savings opportunities sending",
+    "  No price for the route these faxes took (County Records): Needs a fact",
+    "    Enter the price under Savings & optimization → Prices & plans.",
+    "    faxbot savings facts",
+    "  Case packets: Needs a recipient's agreement",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    faxbot recipients set {number} --accepts-references",
+    "  Fewer separator pages: Needs a recipient's agreement",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    faxbot recipients set {number} --index-page",
+    "  Encoded pages (experimental): Experimental",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    faxbot recipients encoded set {number}",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: This installation receives faxes only; sending is not set up.",
+    "  Expected: 2 expected faxes waiting.",
+    "Needs attention",
+    "  Nothing needs attention.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "incident",
+   "settings": true,
+   "order": [
+    "attention",
+    "doing",
+    "next",
+    "everyday"
+   ],
+   "responses": {
+    "/admin/health-status": {
+     "status": 200,
+     "body": {
+      "timestamp": "2026-10-09T20:00:00Z",
+      "backend": "sip",
+      "backend_healthy": false,
+      "receiving_backend": "sip",
+      "receiving_ready": true,
+      "backend_message": null,
+      "jobs": {
+       "queued": 1,
+       "in_progress": 0,
+       "recent_failures": 0,
+       "held": 0,
+       "reconciliation_required": 1,
+       "waiting_for_line": 0
+      },
+      "inbound_enabled": true,
+      "api_keys_configured": true,
+      "require_auth": true
+     }
+    }
+   },
+   "cli": [
+    "Needs attention",
+    "  Serious problems",
+    "    Faxbot is not ready to send faxes",
+    "      faxbot admin health",
+    "    Sent faxes with an uncertain result: 1",
+    "      Check your provider account before you send any of them again.",
+    "      faxbot faxes sent list --status reconciliation_required",
+    "What Faxbot is doing",
+    "  Used here in the last 30 days",
+    "    Fax over IP (T.38): Used on 3 calls in 30 days",
+    "    Cheapest route per delivered fax: Used on 2 faxes in 30 days",
+    "    Junk callers turned away: Turned away 1 call in 30 days",
+    "  Results, each in its own unit",
+    "    Money (estimate): About $1.25 saved in the last 30 days.",
+    "    Pages not sent: Case packets 12 pages",
+    "    Call time saved: Faster pages 2 minutes",
+    "    Calls avoided: Sending together 2 calls",
+    "    Data not sent again: Send once and reuse 2.4 MB",
+    "    How each was counted: faxbot savings results",
+    "Next improvements",
+    "  Lighter shading: You can do this now",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
+    "  A cheaper route to Synthetic Lab: You can do this now",
+    "    Faxes to Synthetic Lab cost about $0.03 less each through Telnyx than through Phaxio.",
+    "    faxbot savings opportunities sending",
+    "  No price for the route these faxes took (County Records): Needs a fact",
+    "    Enter the price under Savings & optimization → Prices & plans.",
+    "    faxbot savings facts",
+    "  Case packets: Needs a recipient's agreement",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    faxbot recipients set {number} --accepts-references",
+    "  Fewer separator pages: Needs a recipient's agreement",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    faxbot recipients set {number} --index-page",
+    "  Encoded pages (experimental): Experimental",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    faxbot recipients encoded set {number}",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: 1 fax waiting to send, 0 sending now.",
+    "  Expected: 2 expected faxes waiting.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "failed source",
+   "settings": true,
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "responses": {
+    "/routing/savings": {
+     "status": 500,
+     "body": {
+      "detail": "Internal Server Error"
+     }
+    },
+    "/routing/capabilities": {
+     "status": 200,
+     "body": {
+      "days": 30,
+      "title": "Capabilities",
+      "sentence": "Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.",
+      "legend": [
+       {
+        "label": "On or Off",
+        "sentence": "Whether it is switched on for your faxes."
+       },
+       {
+        "label": "Works here or Not here",
+        "sentence": "Whether this installation has what it needs, such as its own phone line or a partner."
+       },
+       {
+        "label": "Live call, Test lab or Sample data",
+        "sentence": "How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only."
+       }
+      ],
+      "filters": [
+       {
+        "key": "on",
+        "label": "On",
+        "sentence": "Switched on for your faxes."
+       },
+       {
+        "key": "off",
+        "label": "Off",
+        "sentence": "Switched off for now."
+       },
+       {
+        "key": "ready",
+        "label": "Ready to turn on",
+        "sentence": "Off, but this installation already has what it needs."
+       },
+       {
+        "key": "needs",
+        "label": "Needs something",
+        "sentence": "Missing something it needs, such as a connection, prices or a recipient's agreement."
+       },
+       {
+        "key": "experimental",
+        "label": "Experimental",
+        "sentence": "Still being proven; its evidence and limits are shown with it."
+       }
+      ],
+      "outcomes": [
+       {
+        "key": "spend_less",
+        "title": "Spend less on sending",
+        "sentence": "Choose the route, plan or number that costs least for each fax.",
+        "capabilities": [
+         {
+          "key": "cheapest_route",
+          "name": "Cheapest route per delivered fax",
+          "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
+          "example": "Faxes to a busy clinic went through two routes last month. Faxbot now sends that number by the route that cost less per delivered fax, counting the tries that failed.",
+          "outcome": "spend_less",
+          "address": "savings/capabilities?key=cheapest_route",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On; a preferred route for a number still comes first."
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a second sending route to compare with; you send through Telnyx only."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 2,
+           "sentence": "Used on 2 faxes in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 2,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A second sending route, such as another fax service account or your own SIP trunk.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Prices for at least two sending routes that charge for each fax.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --preferred-route automatic"
+          },
+          "results": {
+           "address": "savings/results?part=cheapest_route",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "shorter_calls",
+        "title": "Smaller documents and shorter calls",
+        "sentence": "Send fewer pages, and keep each page on the line for less time.",
+        "capabilities": [
+         {
+          "key": "encoded_pages",
+          "name": "Encoded pages (experimental)",
+          "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+          "example": "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the recipient's Faxbot turns them back into the exact original file.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=encoded_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to encoded pages yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": true,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs",
+           "experimental"
+          ],
+          "improvement": {
+           "kind": "experimental",
+           "label": "Experimental"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that runs Faxbot and agrees to encoded pages; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients encoded set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=encoding",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_friendly",
+          "name": "Lighter shading",
+          "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+          "example": "A scanned form with grey shading goes over a line billed by the minute. The shading is lightened and specks removed first, so each page takes fewer seconds to send.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_friendly",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 0,
+          "filters": [
+           "off",
+           "ready"
+          ],
+          "improvement": {
+           "kind": "now",
+           "label": "You can do this now"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "A sending route billed by the minute or second, such as your own SIP trunk.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           }
+          ],
+          "setting": {
+           "address": "delivery/connections",
+           "label": "Delivery setup → Connections",
+           "command": "faxbot admin settings set fax_friendly_documents=where_it_saves"
+          },
+          "results": {
+           "address": "savings/results?part=fax_friendly",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "fax_over_ip",
+          "name": "Fax over IP (T.38)",
+          "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
+          "example": "A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=fax_over_ip",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "live",
+           "label": "Live call"
+          },
+          "here": {
+           "used": 3,
+           "sentence": "Used on 3 calls in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A network and carrier that carry T.38. Faxbot checks this itself and switches T.38 back on when they do.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot delivery providers trunk mode"
+          },
+          "results": {
+           "address": "savings/results?part=t38",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sslfax",
+          "name": "Faster pages",
+          "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
+          "example": "When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during the call instead of as audio, so the call ends sooner.",
+          "outcome": "shorter_calls",
+          "address": "savings/capabilities?key=sslfax",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs Faxbot's fax engine, which starts when you select Apply and connect on the trunk page."
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "on",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "engine",
+            "kind_label": "Fax engine",
+            "met": false,
+            "label": "Missing",
+            "sentence": "Faxbot's fax engine, which starts when you select Apply and connect on the trunk page.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           }
+          ],
+          "setting": {
+           "address": "delivery/trunk",
+           "label": "Delivery setup → Telnyx",
+           "command": "faxbot admin settings set sip_sslfax_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=sslfax",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "no_repeats",
+        "title": "Avoid repeated calls and documents",
+        "sentence": "Send what a recipient already has only once, and share calls where recipients agree.",
+        "capabilities": [
+         {
+          "key": "case_packets",
+          "name": "Case packets",
+          "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+          "example": "A clinic sends a referral packet to the same specialist every month. The specialist already confirmed the insurance card and consent form, so the packet lists them instead of faxing those pages again.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=case_packets",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient accepts a list of the documents they already have yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs"
+          ],
+          "improvement": {
+           "kind": "agreement",
+           "label": "Needs a recipient's agreement"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "A fax service account or your own SIP trunk that sends faxes.",
+            "address": "delivery/connections",
+            "address_label": "Delivery setup → Connections"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "The recipient accepts a list of the documents they already have; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --accepts-references"
+          },
+          "results": {
+           "address": "savings/results?part=case_packets",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "direct_delivery",
+          "name": "Direct delivery",
+          "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
+          "example": "A hospital that also runs Faxbot is your verified partner. A discharge summary to its fax number goes over the internet as the original file, with no fax call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=direct_delivery",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": null
+          },
+          "works": {
+           "here": false,
+           "label": "Not here",
+           "sentence": "Needs a verified partner; you have none yet."
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 1,
+          "filters": [
+           "off",
+           "needs"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "partner",
+            "kind_label": "Partner",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax.",
+            "address": "recipients/partners",
+            "address_label": "Recipients → Partners"
+           }
+          ],
+          "setting": {
+           "address": "recipients/partners",
+           "label": "Recipients → Partners",
+           "command": "faxbot admin settings set direct_delivery_enabled=true"
+          },
+          "results": {
+           "address": "savings/results?part=direct_delivery",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "sending_together",
+          "name": "Sending together",
+          "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
+          "example": "Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that charges for each call.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=sending_together",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 recipient who agreed."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "lab",
+           "label": "Test lab"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": true,
+            "label": "In place",
+            "sentence": "A recipient that agrees to receive several faxes in one call; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients together set {number}"
+          },
+          "results": {
+           "address": "savings/results?part=sending_together",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         },
+         {
+          "key": "separator_pages",
+          "name": "Fewer separator pages",
+          "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+          "example": "Three documents sent together to a lab start with one index page that lists them, instead of a separator page before each one.",
+          "outcome": "no_repeats",
+          "address": "savings/capabilities?key=separator_pages",
+          "enabled": {
+           "on": false,
+           "label": "Off",
+           "sentence": "No recipient has agreed to an index page or page marks yet."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 0,
+           "sentence": "Not used in 30 days"
+          },
+          "experimental": false,
+          "ready": true,
+          "missing": 1,
+          "filters": [
+           "off",
+           "ready",
+           "needs"
+          ],
+          "improvement": {
+           "kind": "agreement",
+           "label": "Needs a recipient's agreement"
+          },
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Your own SIP trunk for sending, from a phone carrier or your phone system.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "prices",
+            "kind_label": "Prices",
+            "met": true,
+            "label": "In place",
+            "sentence": "Trunk prices that charge for each call or bill whole minutes, so one call for several faxes costs less.",
+            "address": "savings/prices",
+            "address_label": "Savings & optimization → Prices & plans"
+           },
+           {
+            "kind": "agreement",
+            "kind_label": "Recipient's agreement",
+            "met": false,
+            "label": "Missing",
+            "sentence": "A recipient that shares calls and agrees to an index page or page marks; you record that on their page.",
+            "address": "recipients/list",
+            "address_label": "Recipients → Details"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "For marks at the top of every page: your header text and sending number.",
+            "address": "delivery/identity",
+            "address_label": "Delivery setup → Sender identity"
+           }
+          ],
+          "setting": {
+           "address": "recipients/list",
+           "label": "Recipients → Details",
+           "command": "faxbot recipients set {number} --index-page"
+          },
+          "results": {
+           "address": "savings/results?part=separator_pages",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       },
+       {
+        "key": "receiving",
+        "title": "Lower receiving and service costs",
+        "sentence": "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+        "capabilities": [
+         {
+          "key": "blocked_senders",
+          "name": "Junk callers turned away",
+          "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
+          "example": "A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot answers, so nothing is received or stored.",
+          "outcome": "receiving",
+          "address": "savings/capabilities?key=blocked_senders",
+          "enabled": {
+           "on": true,
+           "label": "On",
+           "sentence": "On for 1 number on your blocked list."
+          },
+          "works": {
+           "here": true,
+           "label": "Works here",
+           "sentence": null
+          },
+          "evidence": {
+           "level": "built",
+           "label": "Sample data"
+          },
+          "here": {
+           "used": 1,
+           "sentence": "Turned away 1 call in 30 days"
+          },
+          "experimental": false,
+          "ready": false,
+          "missing": 0,
+          "filters": [
+           "on"
+          ],
+          "improvement": null,
+          "prerequisites": [
+           {
+            "kind": "connection",
+            "kind_label": "Connection",
+            "met": true,
+            "label": "In place",
+            "sentence": "Faxes received over your own SIP trunk.",
+            "address": "delivery/trunk",
+            "address_label": "Delivery setup → Telnyx"
+           },
+           {
+            "kind": "setting",
+            "kind_label": "Setting",
+            "met": true,
+            "label": "In place",
+            "sentence": "A number on your blocked list.",
+            "address": "delivery/blocked",
+            "address_label": "Delivery setup → Blocked senders"
+           }
+          ],
+          "setting": {
+           "address": "delivery/blocked",
+           "label": "Delivery setup → Blocked senders",
+           "command": "faxbot delivery blocked add {number}"
+          },
+          "results": {
+           "address": "savings/results?part=blocked_calls",
+           "label": "Savings & optimization → Savings",
+           "command": "faxbot savings results"
+          },
+          "affected": null
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "/routing/recommendations/sending": {
+     "status": 500,
+     "body": {
+      "detail": "Internal Server Error"
+     }
+    }
+   },
+   "cli": [
+    "What Faxbot is doing",
+    "  Used here in the last 30 days",
+    "    Fax over IP (T.38): Used on 3 calls in 30 days",
+    "    Cheapest route per delivered fax: Used on 2 faxes in 30 days",
+    "    Junk callers turned away: Turned away 1 call in 30 days",
+    "  The results could not be read. Run the command again.",
+    "Next improvements",
+    "  Lighter shading: You can do this now",
+    "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
+    "    faxbot admin settings set fax_friendly_documents=where_it_saves",
+    "  No price for the route these faxes took (County Records): Needs a fact",
+    "    Enter the price under Savings & optimization → Prices & plans.",
+    "    faxbot savings facts",
+    "  Case packets: Needs a recipient's agreement",
+    "    Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
+    "    faxbot recipients set {number} --accepts-references",
+    "  Fewer separator pages: Needs a recipient's agreement",
+    "    Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
+    "    faxbot recipients set {number} --index-page",
+    "  Encoded pages (experimental): Experimental",
+    "    Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
+    "    faxbot recipients encoded set {number}",
+    "  Some advice could not be checked. Run the command again.",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: 1 fax waiting to send, 0 sending now.",
+    "  Expected: 2 expected faxes waiting.",
+    "Needs attention",
+    "  Nothing needs attention.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  },
+  {
+   "name": "restricted",
+   "settings": false,
+   "order": [
+    "doing",
+    "next",
+    "everyday",
+    "attention"
+   ],
+   "responses": {
+    "/routing/capabilities": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    },
+    "/routing/savings": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    },
+    "/routing/recommendations/sending": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    },
+    "/routing/recommendations/facts": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    },
+    "/routing/costs": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    },
+    "/admin/sip/network": {
+     "status": 403,
+     "body": {
+      "detail": "This operation is not permitted."
+     }
+    }
+   },
+   "cli": [
+    "What Faxbot is doing",
+    "  Not available to this account.",
+    "Next improvements",
+    "  Not available to this account.",
+    "Everyday faxes",
+    "  Received: 3 open faxes.",
+    "  Sent: 1 fax waiting to send, 0 sending now.",
+    "  Expected: 2 expected faxes waiting.",
+    "Needs attention",
+    "  Nothing needs attention in what Faxbot could check.",
+    "  Not available to this account: carrier charges and the network check.",
+    "Every way Faxbot saves money, step by step: faxbot savings mechanisms"
+   ]
+  }
+ ]
+}

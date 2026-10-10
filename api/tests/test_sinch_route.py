@@ -81,7 +81,7 @@ def mock_client(handler):
 
 
 def fax_cost(configuration, routes, job):
-    """(state, sentence) for one sent fax's cost, as Sent and 'faxbot costs fax' show it."""
+    """(state, sentence) for one sent fax's cost, as Sent and 'faxbot savings fax' show it."""
     from api.app.routing.carriers import CarrierChargeStore
     from api.app.routing.spending import Spending
     cost = Spending(routes, CarrierChargeStore(configuration.engine)).job(job)

@@ -16,6 +16,7 @@ import {
   useTheme,
 } from '@mui/material';
 import AdminAPIClient from '../api/client';
+import { NAVIGATION } from '../navigation';
 
 interface LoginScreenProps {
   notice?: string;
@@ -129,7 +130,7 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
                   Send, receive and manage faxes for this installation
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {['Faxes', 'Numbers', 'Recipients', 'Providers', 'Costs'].map((item) => <Chip key={item} label={item} size="small" />)}
+                  {NAVIGATION.map((area) => <Chip key={area.id} label={area.label} size="small" />)}
                 </Box>
               </Box>
             </Slide>

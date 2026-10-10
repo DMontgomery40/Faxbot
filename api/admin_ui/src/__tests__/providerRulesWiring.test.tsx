@@ -103,13 +103,15 @@ describe('Faxes → Sent: held faxes', () => {
 });
 
 describe('Overview: faxes waiting for you', () => {
-  it('shows the held faxes and opens Sent', async () => {
+  it('counts the held faxes in Needs attention and opens only them in Sent', async () => {
     server.use(http.get('/routing/holds', () => HttpResponse.json({ holds: [hold] })));
     const navigate = vi.fn();
     render(<Dashboard client={keyClient()} onNavigate={navigate} />);
-    expect(await screen.findByText('1 fax is waiting for you')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Sent' }));
-    expect(navigate).toHaveBeenCalledWith('faxes/sent');
+    const item = await screen.findByTestId('attention-held');
+    expect(item.textContent).toContain('Faxes your rules are holding');
+    expect(item.textContent).toContain('1 waiting for approval. Nothing has been sent for them.');
+    fireEvent.click(item);
+    expect(navigate).toHaveBeenCalledWith('faxes/sent?show=held');
   });
 });
 
@@ -157,7 +159,7 @@ describe('Costs → Recommendations: Add as rule', () => {
     );
     render(<SendingRecommendations client={keyClient()} canWrite onNavigate={() => undefined} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add as rule' }));
-    expect(await screen.findByText('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
+    expect(await screen.findByText('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.')).toBeTruthy();
     expect(drafts.map((draft) => draft.document.routes.map((rule) => rule.name))).toEqual([['Faxes to +44 numbers go through Sinch (UK)']]);
   });
 
@@ -182,7 +184,7 @@ describe('Costs → Recommendations: Add as rule', () => {
     render(<SendingRecommendations client={keyClient()} canWrite onNavigate={() => undefined} />);
     expect(await screen.findByText(/Faxes to \+44 numbers cost about \$0\.031 less each through Sinch/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add as rule' }));
-    expect(await screen.findByText('“Numbers in the United Kingdom go by Sinch” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
+    expect(await screen.findByText('“Numbers in the United Kingdom go by Sinch” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.')).toBeTruthy();
     expect(drafts[0].document.routes[0].when).toEqual({ destination: { countries: ['GB'] } });
   });
 });

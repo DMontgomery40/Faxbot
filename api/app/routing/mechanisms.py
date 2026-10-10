@@ -11,7 +11,7 @@ settings and stored records, never the network, and says for each entry:
 - **Tested**, as two separate facts: the product evidence level (fixed per entry, from the README roadmap) and
   what happened on this installation, from the same Savings part, so the map and Costs → Savings never disagree.
 
-The Overview's map and ``faxbot costs mechanisms`` show the result of GET /routing/savings/mechanisms. Neither
+The Overview's map and ``faxbot savings mechanisms`` show the result of GET /routing/savings/mechanisms. Neither
 shows money: what each mechanism saved stays on Costs → Savings, under the entry's ``part``.
 
 A new mechanism adds its entry here. ``api/tests/test_savings_mechanisms.py`` fails when a Savings part has no
@@ -369,9 +369,9 @@ def separator_pages(here):
         # Faxbot falls back to separator pages by itself (batching.policy.HEADER_NEEDS), and says why; what turns
         # page marks on then is the header text, on Sender identity.
         sentence = ((sentence + ' ') if working else '') + (
-            'Marks at the top of every page need your header text and sending number set in Numbers > Sender '
-            'identity, so faxes to those recipients use separator pages for now.')
-        page = ('numbers/identity', 'Numbers → Sender identity')
+            'Marks at the top of every page need your header text and sending number set in Delivery setup → '
+            'Sending identity, so faxes to those recipients use separator pages for now.')
+        page = ('numbers/identity', 'Delivery setup → Sending identity')
     why = _shared_calls(here)
     return State(bool(working), why is None, sentence, why, page=page)
 
@@ -535,8 +535,8 @@ def _telnyx_numbers(here):
 
 
 def _advice(key, name, sentence, section, command, check):
-    return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Costs → Recommendations',
-                     check, link=f'costs/recommendations?section={section}', link_label='Costs → Recommendations',
+    return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Savings & optimization → Opportunities',
+                     check, link=f'costs/recommendations?section={section}', link_label='Savings & optimization → Opportunities',
                      command=command)
 
 
@@ -552,7 +552,7 @@ CATALOGUE = (
     Mechanism('dense_pages', 'Dense pages',
               'Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank '
               'page bottoms, so fewer pages and seconds are billed.',
-              'document', 'built', 'packing', 'providers/sending', 'Providers → In use → Delivery routes',
+              'document', 'built', 'packing', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
               dense_pages),
     Mechanism('encoded_pages', 'Encoded pages (experimental)',
               "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the "
@@ -561,11 +561,11 @@ CATALOGUE = (
     Mechanism('fax_friendly', 'Lighter shading',
               'Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages '
               'take less time to send.',
-              'document', 'built', 'fax_friendly', 'providers/sending', 'Providers → In use → Delivery routes',
+              'document', 'built', 'fax_friendly', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
               fax_friendly, settings=('fax_friendly_documents',)),
     Mechanism('own_numbers', 'Faxes to your own numbers',
               'Delivers a fax to one of your own numbers straight into Received, with no phone call.',
-              'route', 'built', 'own_numbers', 'providers/sending', 'Providers → In use → Delivery routes',
+              'route', 'built', 'own_numbers', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
               own_numbers, settings=('local_delivery_enabled',)),
     Mechanism('direct_delivery', 'Direct delivery',
               'Sends documents to verified partners over the internet instead of placing a fax call.',
@@ -597,7 +597,7 @@ CATALOGUE = (
               'route', 'built', 'cheapest_route', 'recipients/list', 'Recipients → Details', cheapest_route),
     Mechanism('plan_first', "Your plan's faxes first",
               'Uses a monthly plan while it has room under its budget, before routes that charge per fax.',
-              'route', 'built', 'plan_first', 'costs/prices', 'Costs → Prices & plans', plan_first,
+              'route', 'built', 'plan_first', 'costs/prices', 'Savings & optimization → Prices & plans', plan_first,
               settings=('plan_budgets',)),
     Mechanism('busy_hours', 'Calls at the right hour',
               "Waits out a number's usual busy hours when a failed call there could be charged.",
@@ -611,12 +611,12 @@ CATALOGUE = (
     Mechanism('fax_over_ip', 'Fax over IP (T.38)',
               'Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls '
               'are shorter.',
-              'call', 'live', 't38', 'providers/trunk', 'Providers → Carrier trunk', fax_over_ip,
+              'call', 'live', 't38', 'providers/trunk', 'Delivery setup → Carrier trunk', fax_over_ip,
               settings=('sip_t38_enabled',), counts=('calls', 'call', 'calls')),
     Mechanism('measured_coding', 'Smallest page coding',
               "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take "
               'less time on the line.',
-              'call', 'lab', 'coding', 'providers/trunk', 'Providers → Carrier trunk', measured_coding,
+              'call', 'lab', 'coding', 'providers/trunk', 'Delivery setup → Carrier trunk', measured_coding,
               settings=('sip_fax_compression',)),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
@@ -628,7 +628,7 @@ CATALOGUE = (
               counts=('calls', 'shared call', 'shared calls')),
     Mechanism('sslfax', 'Faster pages',
               'Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.',
-              'call', 'lab', 'sslfax', 'providers/trunk', 'Providers → Carrier trunk', sslfax,
+              'call', 'lab', 'sslfax', 'providers/trunk', 'Delivery setup → Carrier trunk', sslfax,
               settings=('sip_sslfax_enabled',)),
     Mechanism('continuation', 'Only the missing pages',
               'Finishes a fax whose call broke by sending only the pages the call did not confirm.',
@@ -640,33 +640,33 @@ CATALOGUE = (
     Mechanism('charge_checks', 'Charge checks',
               'Matches what your carriers and fax services billed against your faxes, and points out charges and '
               "invoice amounts your faxes don't explain.",
-              'after', 'built', None, 'costs/charges', 'Costs → Charges', charge_checks,
-              link='costs/charges', link_label='Costs → Charges', command='faxbot costs charges'),
+              'after', 'built', None, 'costs/charges', 'Savings & optimization → Charges', charge_checks,
+              link='costs/charges', link_label='Savings & optimization → Charges', command='faxbot savings charges'),
     Mechanism('blocked_senders', 'Junk callers turned away',
               'Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.',
-              'receiving', 'built', 'blocked_calls', 'numbers/blocked', 'Numbers → Blocked senders',
+              'receiving', 'built', 'blocked_calls', 'numbers/blocked', 'Delivery setup → Blocked senders',
               blocked_senders, counts=('calls', 'call', 'calls'), verb='Turned away'),
     _advice('advice_sending', 'Cheaper routes per number',
             'Names numbers whose usual route cost more per delivered fax than another, with a button to switch.',
-            'sending', 'faxbot costs recommendations sending', _compares),
+            'sending', 'faxbot savings opportunities sending', _compares),
     _advice('advice_plans', 'Plans worth their fee',
             'Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.',
-            'plans', 'faxbot costs recommendations plans', _has_plan),
+            'plans', 'faxbot savings opportunities plans', _has_plan),
     _advice('advice_receiving', 'Receiving lines and numbers',
             'Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep '
             'than they bring in.',
-            'receiving', 'faxbot costs recommendations receiving', _receives),
+            'receiving', 'faxbot savings opportunities receiving', _receives),
     _advice('advice_carriers', "Other carriers' prices",
             "Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching "
             'would change.',
-            'carriers', 'faxbot costs recommendations carriers', _sends),
+            'carriers', 'faxbot savings opportunities carriers', _sends),
     _advice('advice_billing_steps', 'Calls just past a billed minute',
             'Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would '
             'cost less.',
-            'steps', 'faxbot costs recommendations billing-steps', _on_trunk),
+            'steps', 'faxbot savings opportunities billing-steps', _on_trunk),
     _advice('advice_partners', 'Partner candidates',
             'Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.',
-            'partners', 'faxbot costs recommendations partners', _sends),
+            'partners', 'faxbot savings opportunities partners', _sends),
     _advice('advice_discovery', 'Recipients that run Faxbot',
             'Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.',
             'discovery', 'faxbot recipients partners discover', _sends_on_trunk),
@@ -676,42 +676,42 @@ CATALOGUE = (
     _advice('advice_toll_free', 'Toll-free numbers on file',
             'Lists recipients with a toll-free fax number, so you can record their approval and stop paying for '
             'those calls.',
-            'tollFree', 'faxbot costs recommendations toll-free', _sends),
+            'tollFree', 'faxbot savings opportunities toll-free', _sends),
     _advice('advice_fax_marker', 'Fax marker on calls',
             'Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.',
-            'marker', 'faxbot costs recommendations fax-marker', _sends_on_trunk),
+            'marker', 'faxbot savings opportunities fax-marker', _sends_on_trunk),
     _advice('advice_shading', 'Time lighter shading would save',
             'While Lighter shading is set to Never, measures your recent faxes and says how much time it would '
             'have saved.',
-            'pages', 'faxbot costs recommendations shading', _sends),
+            'pages', 'faxbot savings opportunities shading', _sends),
     _advice('advice_trunks', 'Your trunks compared',
             "Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
-            'trunks', 'faxbot costs recommendations trunks', _two_trunks),
+            'trunks', 'faxbot savings opportunities trunks', _two_trunks),
     _advice('advice_numbers', 'Where each number should live',
             'Says where each of your fax numbers costs least to receive on, and the steps to move it.',
-            'numbers', 'faxbot costs recommendations numbers', _receives),
+            'numbers', 'faxbot savings opportunities numbers', _receives),
     _advice('advice_sites', 'Calls by state',
             "Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
-            'sites', 'faxbot costs recommendations sites', _in_the_us),
+            'sites', 'faxbot savings opportunities sites', _in_the_us),
     Mechanism('advice_caller_names', 'Caller-name lookup',
               'Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can '
               'turn it off.',
-              'advice', 'built', None, 'providers/trunk', 'Providers → Carrier trunk', _telnyx_numbers,
-              link='providers/trunk', link_label='Providers → Carrier trunk',
-              command='faxbot providers trunk telnyx names'),
+              'advice', 'built', None, 'providers/trunk', 'Delivery setup → Carrier trunk', _telnyx_numbers,
+              link='providers/trunk', link_label='Delivery setup → Carrier trunk',
+              command='faxbot delivery providers trunk telnyx names'),
     Mechanism('advice_setup_packs', 'Suggested packs',
               'Gathers the settings and rules that would save money here into packs you review and apply.',
-              'advice', 'built', None, 'system/setup', 'System → Setup', _always,
-              link='system/setup', link_label='System → Setup', command='faxbot system setup plan'),
+              'advice', 'built', None, 'system/setup', 'Administration → Setup', _always,
+              link='system/setup', link_label='Administration → Setup', command='faxbot admin setup plan'),
 )
 BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
 
 def _label(page, label, values):
-    """A page's name as the console shows it; the trunk page is named after its carrier ("Providers → Telnyx")."""
+    """A page's name as the console shows it; the trunk page is named after its carrier ("Delivery setup → Telnyx")."""
     if page == 'providers/trunk':
         from ..provider_labels import trunk_name
-        return f"Providers → {trunk_name(getattr(values, 'sip_trunk_preset', ''))}"
+        return f"Delivery setup → {trunk_name(getattr(values, 'sip_trunk_preset', ''))}"
     return label
 
 
@@ -734,9 +734,9 @@ def _view(mechanism, here):
         'page_label': state.page[1] if state.page else _label(mechanism.page, mechanism.page_label, here.values),
         # Where selecting it leads: its part on Costs → Savings, or the page with its own figures or advice.
         'link': mechanism.destination,
-        'link_label': 'Costs → Savings' if mechanism.part else (
+        'link_label': 'Savings & optimization → Savings results' if mechanism.part else (
             _label(mechanism.link, mechanism.link_label, here.values) if mechanism.link else None),
-        'command': 'faxbot costs savings' if mechanism.part else mechanism.command,
+        'command': 'faxbot savings results' if mechanism.part else mechanism.command,
         # "Turn on" leads to the setting's page only when the mechanism is off and works here.
         'turn_on': not state.on and state.works,
     }

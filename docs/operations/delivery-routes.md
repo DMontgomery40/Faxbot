@@ -142,7 +142,7 @@ If a call record with measured connected time is available for an attempt, Faxbo
 
 ### Flat monthly plans
 
-Some providers charge a monthly fee and nothing per fax. In **Costs → Prices & plans**, add or edit that provider's rate card, enter the **Monthly plan fee**, and leave the per-minute, per-page and per-call prices at 0. Faxbot treats a fax as included only when the applicable destination price says the plan covers it. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
+Some providers charge a monthly fee and nothing per fax. In **Savings & optimization → Prices & plans**, add or edit that provider's rate card, enter the **Monthly plan fee**, and leave the per-minute, per-page and per-call prices at 0. Faxbot treats a fax as included only when the applicable destination price says the plan covers it. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
 
 ### Published prices Faxbot ships
 
@@ -160,9 +160,9 @@ Every time Faxbot starts, each provider you send or receive with that has never 
 
 ## Rate cards
 
-In **Costs → Prices & plans**, choose **Add rate card** or **Edit**. Enter the advertised price per minute, per page and per call, how the provider rounds call time, its currency, and the price source and date. Keep the sending and receiving cards separate. A separate account's own saved card takes precedence for that account; otherwise Faxbot uses the provider's applicable price.
+In **Savings & optimization → Prices & plans**, choose **Add rate card** or **Edit**. Enter the advertised price per minute, per page and per call, how the provider rounds call time, its currency, and the price source and date. Keep the sending and receiving cards separate. A separate account's own saved card takes precedence for that account; otherwise Faxbot uses the provider's applicable price.
 
-Under **Costs → Prices & plans**, you can also set a plan's included pages or minutes and any extra-page price. Those allowances apply only to destinations covered by the plan's applicable tariff. They do not price a destination with no tariff or cover a separate destination price.
+Under **Savings & optimization → Prices & plans**, you can also set a plan's included pages or minutes and any extra-page price. Those allowances apply only to destinations covered by the plan's applicable tariff. They do not price a destination with no tariff or cover a separate destination price.
 
 These are examples of advertised prices (advertised on 2026-10-03). Check your own account, because prices vary by destination and plan:
 
@@ -199,7 +199,7 @@ Send a case packet with `POST /cases/{case}/faxes`, using form fields `to`, one 
 - Otherwise the packet holds every document.
 - When nothing is new, Faxbot refuses the packet instead of faxing an index alone.
 
-For example, a 40-page record and a cover letter go out as 41 pages. Each later update of four pages then goes out as 5 pages instead of 45. Add `preview=true` to see the packet without sending it. `GET /cases/{case}/documents?to=` lists what the recipient has accepted. `GET /cases?limit=` (default 50, at most 200) lists the newest cases this installation sent packets for, one row per case and recipient, with the number of documents, how many the recipient has, the pages and when the last one was sent; **Recipients → Case packets** shows the same list. Both need `settings:read`.
+For example, a 40-page record and a cover letter go out as 41 pages. Each later update of four pages then goes out as 5 pages instead of 45. Add `preview=true` to see the packet without sending it. `GET /cases/{case}/documents?to=` lists what the recipient has accepted. `GET /cases?limit=` (default 50, at most 200) lists the newest cases this installation sent packets for, one row per case and recipient, with the number of documents, how many the recipient has, the pages and when the last one was sent; **Faxes → Case packets** shows the same list. Both need `settings:read`.
 
 Faxbot records what each packet left out when it is sent (schema `0016_case_packet_sends`). Savings from case packets count from the first packet recorded this way; earlier packets are not counted.
 

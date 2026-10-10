@@ -31,9 +31,9 @@ const choices = {
 };
 
 describe('Email and folders', () => {
-  it('is a Numbers page for people who read settings', () => {
-    const numbers = NAVIGATION.find((area) => area.id === 'numbers')!;
-    const page = numbers.pages.find((item) => item.id === 'connectors')!;
+  it('is a Delivery setup page for people who read settings', () => {
+    const delivery = NAVIGATION.find((area) => area.id === 'delivery')!;
+    const page = delivery.pages.find((item) => item.id === 'connectors')!;
     expect(page.label).toBe('Email and folders');
     expect(page.gate).toEqual({ anyOf: ['settings:read'] });
   });

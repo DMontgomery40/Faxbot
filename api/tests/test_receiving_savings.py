@@ -334,7 +334,7 @@ def test_some_calls_without_a_price_stop_the_comparison_and_name_their_numbers(h
     assert pool['state'] == 'unpriced' and pool['unpriced_numbers'] == [BUSY[0], BUSY[1]]
     assert pool['sentence'] == (f'Faxbot has no price for some calls received on {BUSY[0]} and {BUSY[1]}, so it cannot '
                                 'compare shared lines yet.')
-    assert pool['action'] == "Add Telnyx's price for receiving faxes in Costs → Prices & plans."
+    assert pool['action'] == "Add Telnyx's price for receiving faxes in Savings & optimization → Prices & plans."
     assert not {'check', 'choose', 'channels', 'pool_numbers'} & set(pool)
     rows = {row['number']: row for row in pool['numbers']}
     assert rows[BUSY[0]]['billed_by_the_minute'] == [] and rows[BUSY[0]]['unpriced_calls'] == 60
@@ -464,16 +464,16 @@ def test_connections_are_arithmetic_on_monthly_fees(history):
     assert both['sentence'] == ('Your 4 fax services cost $10.00 a month in fixed fees (estimate). Keeping only '
                                 'Telnyx would cost $0.00 a month, $10.00 less, if it can carry all your numbers and '
                                 'calls; keep a second service if you need a backup. Faxbot does not know the monthly '
-                                'fees of Phaxio and SignalWire yet; enter them in Costs → Prices & plans.')
+                                'fees of Phaxio and SignalWire yet; enter them in Savings & optimization → Prices & plans.')
     unpriced = receiving_report(engine, routes, values(outbound_route_providers=('phaxio',)), now=NOW, days=DAYS)
     assert unpriced['connections']['sentence'] == (
         'Telnyx has no monthly fee. Faxbot does not know the monthly fees of Phaxio and SignalWire yet; enter them in '
-        'Costs → Prices & plans.')
+        'Savings & optimization → Prices & plans.')
     # Before the SignalWire call, only Phaxio has no price.
     earlier = receiving_report(engine, routes, values(outbound_route_providers=('phaxio',)),
                                now=NOW - timedelta(days=4), days=DAYS)
     assert earlier['connections']['sentence'] == (
-        "Telnyx has no monthly fee. Faxbot does not know Phaxio's monthly fee yet; enter it in Costs → Prices & plans.")
+        "Telnyx has no monthly fee. Faxbot does not know Phaxio's monthly fee yet; enter it in Savings & optimization → Prices & plans.")
 
 
 def test_no_trunk_or_a_carrier_without_a_channel_price_says_so_in_one_sentence(history):

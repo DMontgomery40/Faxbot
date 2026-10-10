@@ -6,9 +6,9 @@ How people and apps sign in is covered in [Authentication](authentication.md).
 
 ## Users and integrations
 
-**Users** are people. They sign in with a username and password. Under **Access → Users**, add a user to receive a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. You can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
+**Users** are people. They sign in with a username and password. Under **Administration → Users**, add a user to receive a temporary password to pass on. At first sign-in the new user must choose a password of at least 12 characters. You can reset a password, which issues a new temporary one, or disable a user, which ends their sessions and stops their keys.
 
-**Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them under **Access → Users** too. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
+**Integrations** are apps, scanners, scripts and other systems. They have no password and only use [API keys](#keys). Add them under **Administration → Users** too. Each iPhone that pairs with Faxbot becomes its own integration named after the device.
 
 **The installation key** is the `API_KEY` value saved in the installation's configuration. It can do everything. Use it to create the first owner and to recover owner access, not for daily work. If `API_KEY` is empty, the installation key cannot sign in at all.
 
@@ -96,7 +96,7 @@ To let a team see only their own faxes, give their group **Fax Viewer** or **Fax
 
 ## Keys
 
-API keys let apps, scanners and phones use Faxbot. Manage them under **Access → Keys & phones**, which needs `keys:manage`.
+API keys let apps, scanners and phones use Faxbot. Manage them under **Administration → Keys & phones**, which needs `keys:manage`.
 
 - **Every key belongs to a user or an integration.** It can never do more than its owner, even if the owner later loses access.
 - **Every key has its own permission list.** When you create a key, choose only what that app needs, for example `fax:send` and `fax:read` for a scanner. The key can do something only when both its owner and its permission list allow it.
@@ -108,7 +108,7 @@ Keys created before this access system appear as **Needs review** when they had 
 
 ### Keys for the iPhone app
 
-When the iPhone app pairs, Faxbot creates an integration for that device and gives it a key. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. It is listed under **Access → Keys & phones** under the device's name, where you can revoke it if the phone is lost. See [iOS App](../apps/ios.md#pair-the-app).
+When the iPhone app pairs, Faxbot creates an integration for that device and gives it a key. The key can send faxes, see sent faxes and their documents, and see received faxes and their documents. It is listed under **Administration → Keys & phones** under the device's name, where you can revoke it if the phone is lost. See [iOS App](../apps/ios.md#pair-the-app).
 
 ## Create the first owner
 
@@ -124,7 +124,7 @@ The **Create the first owner** prompt appears only while no owner exists.
 
 ## Recover owner access
 
-If every owner is locked out, sign in to the console with the installation key (`API_KEY`), as in the steps above. The installation key can do everything an Owner can, including resetting an owner's password under **Access → Users** or adding a new owner.
+If every owner is locked out, sign in to the console with the installation key (`API_KEY`), as in the steps above. The installation key can do everything an Owner can, including resetting an owner's password under **Administration → Users** or adding a new owner.
 
 Keep `API_KEY` somewhere safe, such as a password manager. On an existing installation, only an Owner can change it, through the settings API (`PUT /admin/settings` with `api_key`); the Settings screen does not show it, and editing `.env` does not change it.
 
@@ -134,4 +134,4 @@ If `API_KEY` is empty or lost, the host operator can set a new one with Faxbot s
 
 Faxbot records access changes and sign-ins in a security audit: users, integrations, groups, roles, access, keys, mailboxes and routing rules that were added or changed, and every session started, whether allowed or refused. Received faxes also record which mailbox they were placed in.
 
-Read the security audit in the console under **System → Audit log**: who did what, how they were signed in, what changed and whether it was refused, newest first, filtered by person and by action. The same page holds the event-recording settings (whether Faxbot records events, their format, a file and the system log); only the owner can change them. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.
+Read the security audit in the console under **Administration → Audit log**: who did what, how they were signed in, what changed and whether it was refused, newest first, filtered by person and by action. The same page holds the event-recording settings (whether Faxbot records events, their format, a file and the system log); only the owner can change them. The **Logs** screen, which needs `logs:read`, shows the separate activity log, including terminal use and iPhone pairing.

@@ -2,7 +2,7 @@
 
 Every document Faxbot receives, by fax or by [direct delivery](direct-delivery.md), goes into one intake queue. Faxbot can deliver each one to an email inbox, with the original PDF attached. To bring documents in from a mailbox or folder, or to send faxes from email or files, set up [Email and folders](connectors.md).
 
-In the Admin Console, **Faxes → Received** shows each received fax with its email delivery, and **Numbers → Email delivery** holds the email delivery setup. Select **Email delivery settings** at the top of Received to go there.
+In the Admin Console, **Faxes → Received** shows each received fax with its email delivery, and **Delivery setup → Staff email delivery** holds the email delivery setup. Select **Email delivery settings** at the top of Received to go there.
 
 A fax enters the queue only after its real document has arrived and been checked; see [Receiving faxes](receiving.md).
 
@@ -29,7 +29,7 @@ People who cannot read the installation's deliveries (`mailboxes:read`) see Rece
 
 ## Set up email delivery
 
-Under **Numbers → Email delivery**:
+Under **Delivery setup → Staff email delivery**:
 
 1. Select **Add email delivery**.
 2. Enter a name, the recipient addresses, and your email server, port, security and sign-in details.
@@ -47,7 +47,7 @@ Email delivery handles faxes that arrive after it is set up. Faxes received earl
 
 ## Intake defaults
 
-One email delivery can be defined for the whole installation, in **Numbers → Email delivery** under **Email delivery for the whole installation** (or the environment when a new installation starts). Faxbot keeps it in step with the settings within a few minutes, and lists it with the other email deliveries as set for the whole installation:
+One email delivery can be defined for the whole installation, in **Delivery setup → Staff email delivery** under **Email delivery for the whole installation** (or the environment when a new installation starts). Faxbot keeps it in step with the settings within a few minutes, and lists it with the other email deliveries as set for the whole installation:
 
 ```env
 INTAKE_EMAIL_ENABLED=true

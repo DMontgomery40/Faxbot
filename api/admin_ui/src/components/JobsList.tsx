@@ -62,6 +62,22 @@ interface JobsListProps {
   // Holds the "Approve faxes" permission: may approve, refuse or send anyway the faxes rules held.
   canApprove?: boolean;
   onNavigate?: (destination: AdminDestination) => void;
+  // The status filter in the page address (?status=failed), and a way to keep it there.
+  status?: string;
+  onStatusChange?: (status: string) => void;
+  // Only the faxes your rules are holding (?show=held), and a way back to every sent fax.
+  heldOnly?: boolean;
+  onShowAll?: () => void;
+  // Only faxes whose state changed in the last this many hours (?since=24h), and a way to show any time.
+  sinceHours?: number | null;
+  onShowAnyTime?: () => void;
+}
+
+// Hours from the page address ('24h'), or null for any time.
+export function readSentSince(value: string | null | undefined): number | null {
+  const match = /^(\d{1,4})h$/.exec(value ?? '');
+  const hours = match ? Number(match[1]) : NaN;
+  return hours >= 1 && hours <= 8784 ? hours : null;
 }
 
 const statusOptions = [
@@ -79,6 +95,11 @@ const statusOptions = [
 
 function deliveryState(job: FaxJob): string {
   return (job.delivery_state || job.status).toLowerCase();
+}
+
+// A status from the page address, or every sent fax ('') for one the list does not offer.
+export function readSentStatus(value: string | null | undefined): string {
+  return statusOptions.some((option) => option.value === value) ? value as string : '';
 }
 
 function statusLabel(state: string): string {
@@ -214,11 +235,17 @@ export function routeText(backend: string, cost?: FaxCost | null): string {
   return earlier.length ? `${last} (after ${earlier.join(', ')})` : last;
 }
 
-function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate }: JobsListProps) {
+function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate, status = '', onStatusChange,
+  heldOnly = false, onShowAll, sinceHours = null, onShowAnyTime }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>(status);
+  useEffect(() => { setStatusFilter(status); }, [status]);
+  const changeStatus = (next: string) => {
+    setStatusFilter(next);
+    onStatusChange?.(next);
+  };
   const [total, setTotal] = useState(0);
   const [selectedJob, setSelectedJob] = useState<FaxJob | null>(null);
   const [jobDetailOpen, setJobDetailOpen] = useState(false);
@@ -250,7 +277,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
     try {
       setError(null);
       setLoading(true);
-      const params = statusFilter ? { status: statusFilter } : {};
+      const params = { ...(statusFilter ? { status: statusFilter } : {}), ...(sinceHours ? { since_hours: sinceHours } : {}) };
       const data = await client.listJobs(params);
       setJobs(data.jobs);
       setTotal(data.total);
@@ -261,15 +288,17 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
     }
   };
 
+  // The held-faxes view lists only what the rules hold, so the sent list is not read for it.
   useEffect(() => {
-    fetchJobs();
-  }, [statusFilter, client]);
+    if (!heldOnly) fetchJobs();
+  }, [statusFilter, client, heldOnly, sinceHours]);
 
   useEffect(() => {
+    if (heldOnly) return undefined;
     // Auto-refresh jobs every 10 seconds
     const interval = setInterval(fetchJobs, 10000);
     return () => clearInterval(interval);
-  }, [statusFilter, client]);
+  }, [statusFilter, client, heldOnly, sinceHours]);
 
   const getStatusColor = (status: string): 'success' | 'error' | 'warning' | 'info' | 'default' => {
     switch (status.toLowerCase()) {
@@ -486,7 +515,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
             Faxes sent from this installation, newest first. Select one to see its delivery attempts.
           </Typography>
         </Box>
-      <HeldFaxes api={rulesApiFor(client)} canApprove={canApprove} onNavigate={onNavigate} />
+      <HeldFaxes api={rulesApiFor(client)} canApprove={canApprove} onNavigate={onNavigate}
+        whenNone={heldOnly ? 'Your rules are not holding any faxes.' : undefined} />
         <Box display="flex" gap={1}>
           {onSendFax && (
             <Button variant="contained" startIcon={<SendIcon />} onClick={onSendFax}>
@@ -504,6 +534,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
         </Box>
       </Box>
 
+      {heldOnly ? (
+        <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" sx={{ mb: 3 }}>
+          <Typography variant="body2" color="text.secondary">Only the faxes your rules are holding are shown.</Typography>
+          <Button size="small" onClick={() => (onShowAll ? onShowAll() : changeStatus(''))}>Show all sent faxes</Button>
+        </Box>
+      ) : (<>
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} md={3}>
           <FormControl fullWidth>
@@ -512,7 +548,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               id="jobs-status-filter"
               labelId="jobs-status-label"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => changeStatus(e.target.value)}
               label="Show"
               displayEmpty
               renderValue={(value) => statusOptions.find(option => option.value === value)?.label ?? value}
@@ -529,6 +565,15 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           </Typography>
         </Grid>
       </Grid>
+
+      {sinceHours !== null && (
+        <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" sx={{ mb: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {`Only faxes whose state changed in the last ${sinceHours} ${sinceHours === 1 ? 'hour' : 'hours'} are shown.`}
+          </Typography>
+          {onShowAnyTime && <Button size="small" onClick={onShowAnyTime}>Show from any time</Button>}
+        </Box>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -653,6 +698,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           )}
         </CardContent>
       </Card>
+      </>)}
 
       {/* Job Detail Modal */}
       <Dialog open={jobDetailOpen} onClose={handleCloseJobDetail} maxWidth="md" fullWidth aria-labelledby="fax-job-details-title">

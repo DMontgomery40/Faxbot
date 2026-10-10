@@ -1,6 +1,6 @@
 # Setup Wizard
 
-Setup (**System → Setup**, and **Providers → Add or change a provider**) walks through the most important settings step by step. It opens with the installation's current values and never resets a configured installation to defaults.
+Setup (**Administration → Setup**, and **Delivery setup → Add or change a provider**) walks through the most important settings step by step. It opens with the installation's current values and never resets a configured installation to defaults.
 
 ## 1. Choose providers
 
@@ -8,7 +8,7 @@ Choose one provider for **Sending** and one for **Receiving**, or **No provider*
 
 **Next** saves the step. Setup never keeps unsaved choices from one step to another: each step saves its own changes when you move on with **Next** or **Back**, and a step that cannot be saved stays open with the reason. Choosing the SIP trunk for the first time, or moving away from it, takes effect after Faxbot restarts. Setup says so in one sentence with a **Restart now** button; Faxbot restarts, comes back within a few seconds, and Setup reloads and says "Faxbot restarted and is using the saved settings." on the same step. When restarting from the console is turned off, the sentence says to run `docker compose restart api` on the server.
 
-Installed provider plugins stay selectable. When Setup has no fields for a provider installed from a manifest, set it up under **System → Developer → Provider plugins**.
+Installed provider plugins stay selectable. When Setup has no fields for a provider installed from a manifest, set it up under **Administration → Developer → Provider plugins**.
 
 ## 2. Connect providers
 
@@ -51,7 +51,7 @@ Finish shows what sends and what receives faxes. Every step has already saved it
 
 ## Check a document
 
-1. Under **Providers → In use**, turn **Sending is on** off and restart if Faxbot asks for it. Confirm that sending is off before you continue.
+1. Under **Delivery setup → Providers & accounts**, turn **Sending is on** off and restart if Faxbot asks for it. Confirm that sending is off before you continue.
 2. Open **Faxes → Send a fax**, attach a test PDF or TXT within the upload limit shown, and select **Queue**.
 3. In **Faxes → Sent**, check that the fax is held and that its prepared document looks right. Held faxes are never sent, even after sending is turned back on.
 4. For a real delivery check, configure the provider, turn sending on and send to a number you control. A fax being accepted is not the same as it being delivered; check the result in Sent and in your provider account. See the [Phaxio delivery check](../tools/phaxio-e2e-test.md).

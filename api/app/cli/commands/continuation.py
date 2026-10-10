@@ -6,7 +6,7 @@ from ..client import segment
 from ..errors import CliError
 
 
-FAX_ID_HELP = "Fax ID of the sent fax whose call broke part way, from 'faxbot sent list --ids'."
+FAX_ID_HELP = "Fax ID of the sent fax whose call broke part way, from 'faxbot faxes sent list --ids'."
 
 
 def continue_fax(fax_id: str = typer.Argument(..., help=FAX_ID_HELP),
@@ -57,7 +57,7 @@ def continue_fax(fax_id: str = typer.Argument(..., help=FAX_ID_HELP),
         if not found.get('may_send'):
             out.line('Only the person who sent this fax, or someone who may confirm receipt of it, can send them.')
         elif found.get('open_item_id'):
-            out.line(f'Send them with: faxbot sent continue {fax_id} --send --reason "<how you know>"')
+            out.line(f'Send them with: faxbot faxes sent continue {fax_id} --send --reason "<how you know>"')
         else:
-            out.line(f'Send them with: faxbot sent continue {fax_id} --send')
+            out.line(f'Send them with: faxbot faxes sent continue {fax_id} --send')
     state.out().result(result, human)

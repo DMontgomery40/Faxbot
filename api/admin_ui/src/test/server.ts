@@ -703,6 +703,10 @@ const consoleHandlers = [
   // The Overview's savings map: an answer with no mechanisms draws no map.
   http.get('/routing/savings/mechanisms', () => json({ days: 30, title: 'How Faxbot saves money',
     sentence: 'Every way Faxbot saves money, in the order a fax meets them.', legend: [], stages: [] })),
+  // Savings & optimization → Capabilities: an answer with every outcome empty.
+  http.get('/routing/capabilities', () => json({ days: 30, title: 'Capabilities',
+    sentence: 'Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.',
+    legend: [], filters: [], outcomes: [] })),
   // Sending recommendations: no number has enough delivered faxes on two routes yet.
   http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),
@@ -819,6 +823,13 @@ const consoleHandlers = [
   http.get('/certainty/settings', () => json({ settle_hours: 24, version: 0, fallback: null, people: [] })),
   // Work counts for the Overview's Needs attention card: nothing waiting.
   http.get('/work/counts', () => json({ open: 0, acknowledged: 0, done: 0, unassigned: 0, mine: 0, overdue: 0 })),
+  // The Overview's value blocks: no capability yet, and no missing-fact advice.
+  http.get('/routing/capabilities', () => json({ days: 30, title: 'Capabilities', sentence: '', legend: [], filters: [],
+    outcomes: [] })),
+  http.get('/routing/recommendations/facts', () => json({ days: 90, state: 'none', estimate: true, sentence: '',
+    recipients: [], realized: '', note: '', catalogue: [], assumptions: [] })),
+  // Expected faxes for Needs attention: none overdue, none to confirm.
+  http.get('/expected-faxes/counts', () => json({ waiting: 0, overdue: 0, proposed: 0, missing: 0, conflicts: 0, matched: 0 })),
   // Sending together: no number sends faxes together until a test says otherwise.
   http.get('/batching/check', ({ request }) => json({ number: new URL(request.url).searchParams.get('to'),
     sends_together: false, wait_minutes: null, sentence: null })),

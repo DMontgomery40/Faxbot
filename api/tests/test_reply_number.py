@@ -381,7 +381,7 @@ def test_reading_and_changing_the_reply_number_need_settings_permissions(client)
     assert client.put('/numbers/reply', json={'number': DID_A}).status_code in (401, 403)
 
 
-# -- faxbot numbers reply -----------------------------------------------------------------------
+# -- faxbot delivery identity -----------------------------------------------------------------------
 
 def test_the_command_line_shows_sets_and_clears_the_reply_number(monkeypatch, tmp_path):
     from api.tests.test_cli import Cli, _serve

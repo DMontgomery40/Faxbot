@@ -1,4 +1,4 @@
-"""faxbot providers rules, providers accounts and the held-fax commands, against an in-memory server.
+"""faxbot delivery rules, providers accounts and the held-fax commands, against an in-memory server.
 
 The server below answers the provider-rules routes (design §6.2) the way the console's tests expect:
 one draft per scope with a version, 409 for a stale draft or publish, holds with versions, and accounts
@@ -508,7 +508,7 @@ def test_export_and_import_move_the_whole_draft(fake, tmp_path):
     assert imported.exit_code == 0 and 'Draft replaced with 2 rules' in flat(imported)
     assert fake.sent('PUT', '/routing/rules/draft')[-1] == {'document': document, 'expected_version': 0}
     piped = fake('providers', 'rules', 'import', '-', input='{"format": 2}')
-    assert piped.exit_code == 1 and 'is not JSON written by faxbot providers rules export' in piped.stderr
+    assert piped.exit_code == 1 and 'is not JSON written by faxbot delivery rules export' in piped.stderr
 
 
 # -- held faxes ------------------------------------------------------------------------------------------

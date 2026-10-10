@@ -345,7 +345,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
           </Typography>
         )}
         <Alert severity="info" sx={{ mt: 2, borderRadius: 2 }} data-testid="plugins-retiring">
-          Provider plugins and this page go away in the next release. Set up built-in providers in System → Setup.
+          Provider plugins and this page go away in the next release. Set up built-in providers in Administration → Setup.
         </Alert>
       </Box>
 

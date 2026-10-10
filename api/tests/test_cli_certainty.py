@@ -1,4 +1,4 @@
-"""faxbot sent uncertain, probe, settle, assign and uncertain-settings against the real application."""
+"""faxbot faxes sent uncertain, probe, settle, assign and uncertain-settings against the real application."""
 from datetime import datetime
 
 import pytest

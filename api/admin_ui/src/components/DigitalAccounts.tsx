@@ -16,8 +16,8 @@ import { DeliveryError } from './delivery/shared';
 export const DIGITAL_ACCOUNTS_HELP = 'When a recipient can take a Direct message or has a FHIR server, Faxbot can '
   + 'deliver there instead of calling. Add the HISP account and FHIR clients you use here, then confirm each '
   + 'recipient\'s address under Recipients.';
-export const PUBLIC_ADDRESS_NEEDED = 'Faxbot has a signing key. Set this Faxbot\'s public web address under System → '
-  + 'Setup, so the recipient\'s system can read its public key set from it.';
+export const PUBLIC_ADDRESS_NEEDED = 'Faxbot has a signing key. Set this Faxbot\'s public web address under Administration '
+  + '→ Setup, so the recipient\'s system can read its public key set from it.';
 const HEALTH_COLOR = { ready: 'success', not_set_up: 'warning', off: 'default' } as const;
 const KIND_WORDS: Record<DigitalKind, string> = { hisp: 'Direct messages (HISP)', fhir: 'FHIR client' };
 

@@ -631,7 +631,7 @@ def pool_advice(history, kinds, prices, carrier, choose_start, check_start, now,
         return {'state': 'unpriced', 'numbers': number_rows(), 'unpriced_numbers': without_price,
                 'sentence': (f'Faxbot has no price for some calls received on {named}, so it cannot compare shared '
                              'lines yet.'),
-                'action': f"Add {carrier}'s price for receiving faxes in Costs → Prices & plans.",
+                'action': f"Add {carrier}'s price for receiving faxes in Savings & optimization → Prices & plans.",
                 'assumptions': _assumptions(history, carrier, days, prices)}
     pool, channels, _ = choose_pool(first, eligible, prices.tiers, seconds)
     checked = evaluate({number: later.get(number, []) for number in numbers}, pool, channels, prices.tiers, seconds)
@@ -803,10 +803,10 @@ def _connections_sentence(items):
     unknown = [item['name'] for item in items if item['_fee'] is None]
     currencies = {item['_currency'] for item in known if item['_fee']}
     if len(unknown) == 1:
-        missing = f" Faxbot does not know {unknown[0]}'s monthly fee yet; enter it in Costs → Prices & plans."
+        missing = f" Faxbot does not know {unknown[0]}'s monthly fee yet; enter it in Savings & optimization → Prices & plans."
     else:
         missing = (f" Faxbot does not know the monthly fees of {' and '.join(unknown)} yet; enter them in "
-                   'Costs → Prices & plans.' if unknown else '')
+                   'Savings & optimization → Prices & plans.' if unknown else '')
     if len(currencies) > 1:
         return f'Your {len(items)} fax services charge monthly fees in different currencies.' + missing
     total = sum(item['_fee'] for item in known)
@@ -922,7 +922,7 @@ def _provider_row(provider, name, number, received, sent, first, card, since, no
     elif quiet:
         fee = (f' Your {name} plan costs {about(card.monthly_fee_micros, card.currency)} a month; that is what giving '
                'it up would save, if nothing else uses the plan (estimate).' if card else
-               f' Faxbot has no price for your {name} plan; enter it in Costs → Prices & plans.')
+               f' Faxbot has no price for your {name} plan; enter it in Savings & optimization → Prices & plans.')
         sentence = (f'{name} number {shown_number(number)} had {faxes} in the last {days} days, {received} received '
                     f'and {sent} sent.{fee}')
     else:

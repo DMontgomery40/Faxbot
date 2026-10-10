@@ -1,11 +1,11 @@
 """Sending rules: which provider account carries each fax, and the limits every fax must meet.
 
-`faxbot providers rules` edits a draft of the rules for one scope (the organization, a mailbox or a
+`faxbot delivery rules` edits a draft of the rules for one scope (the organization, a mailbox or a
 workflow), checks it and publishes it, as Providers -> Rules does in the console. Each rule reads as
 one sentence; the console builds the same sentences (ProviderRulesText.ts), and a shared fixture
 (admin_ui/src/__tests__/providerRulesSentences.json) keeps the two identical.
 
-The held-fax commands at the end (route, approve, refuse, held) belong to `faxbot sent`.
+The held-fax commands at the end (route, approve, refuse, held) belong to `faxbot faxes sent`.
 """
 import copy
 from decimal import Decimal, InvalidOperation
@@ -484,7 +484,7 @@ def save(api, scope, current, document, message):
         check = draft.get('check') or {}
         for issue in check.get('errors') or []:
             out.line('Needs fixing before you publish: ' + issue['message'])
-        out.line("Your changes are in the draft. Publish them with 'faxbot providers rules publish --note TEXT'.")
+        out.line("Your changes are in the draft. Publish them with 'faxbot delivery rules publish --note TEXT'.")
     out.result(draft, human)
     return draft
 
@@ -501,8 +501,8 @@ def _rule_lookup(document, reference):
     if len(matches) == 1:
         return matches[0]
     if not matches:
-        raise CliError(f"No rule is called '{reference}'. See 'faxbot providers rules list'.", EXIT_NOT_FOUND)
-    raise CliError(f"More than one rule is called '{reference}'. Use its id from 'faxbot providers rules list'.")
+        raise CliError(f"No rule is called '{reference}'. See 'faxbot delivery rules list'.", EXIT_NOT_FOUND)
+    raise CliError(f"More than one rule is called '{reference}'. Use its id from 'faxbot delivery rules list'.")
 
 
 def new_rule_id(document, section, name):
@@ -644,21 +644,21 @@ def conditions_from(pairs, document, choices):
                 elif field == 'to-recipient':
                     item = _resolve_named(choices, 'recipients', item, 'saved recipient', "See 'faxbot recipients list'.")
                 elif field == 'from-person':
-                    item = _resolve_named(choices, 'people', item, 'person or integration', "See 'faxbot access users list'.")
+                    item = _resolve_named(choices, 'people', item, 'person or integration', "See 'faxbot admin access users list'.")
                 elif field == 'from-key':
-                    item = _resolve_named(choices, 'keys', item, 'key', "See 'faxbot access keys list'.")
+                    item = _resolve_named(choices, 'keys', item, 'key', "See 'faxbot admin access keys list'.")
                 elif field == 'from-group':
-                    item = _resolve_named(choices, 'groups', item, 'group', "See 'faxbot access groups list'.")
+                    item = _resolve_named(choices, 'groups', item, 'group', "See 'faxbot admin access groups list'.")
                 elif field == 'from-mailbox':
-                    item = _resolve_named(choices, 'mailboxes', item, 'mailbox', "See 'faxbot numbers mailboxes list'.")
+                    item = _resolve_named(choices, 'mailboxes', item, 'mailbox', "See 'faxbot delivery mailboxes list'.")
                 elif field == 'to-list':
-                    item = _resolve_key(lists, item, 'recipient group', "See 'faxbot providers rules lists list'.")
+                    item = _resolve_key(lists, item, 'recipient group', "See 'faxbot delivery rules lists list'.")
                 elif field == 'to-region':
-                    item = _resolve_key(regions, item, 'region', "See 'faxbot providers rules regions list'.")
+                    item = _resolve_key(regions, item, 'region', "See 'faxbot delivery rules regions list'.")
                 elif field == 'from-site':
-                    item = _resolve_key(sites, item, 'site', "See 'faxbot providers rules sites list'.")
+                    item = _resolve_key(sites, item, 'site', "See 'faxbot delivery rules sites list'.")
                 elif field == 'workflow':
-                    item = _resolve_key(workflows, item, 'workflow', "See 'faxbot providers rules workflows list'.")
+                    item = _resolve_key(workflows, item, 'workflow', "See 'faxbot delivery rules workflows list'.")
                 resolved.append(item)
             target.setdefault(key, [])
             target[key] += [item for item in resolved if item not in target[key]]
@@ -695,7 +695,7 @@ def _accounts(choices, keys, hint='accounts'):
     """Account keys as typed; a label works too."""
     known = {item['key']: item['label'] for item in (choices or {}).get('accounts') or []}
     known.update({'direct': 'Direct delivery', 'local': 'Delivery inside Faxbot'})
-    return [_resolve_key(known, key.strip(), 'account', "See 'faxbot providers accounts list'.")
+    return [_resolve_key(known, key.strip(), 'account', "See 'faxbot delivery providers accounts list'.")
             for value in keys for key in value.split(',') if key.strip()]
 
 
@@ -712,7 +712,7 @@ def actions_from(*, use, try_order, cheapest, site_accounts, in_order, automatic
     if site_accounts:
         sites = {item['key']: item.get('name') for item in document.get('sites') or []}
         then['site_accounts'] = 'sender' if site_accounts.strip().casefold() == 'sender' else _resolve_key(
-            sites, site_accounts, 'site', "See 'faxbot providers rules sites list'.")
+            sites, site_accounts, 'site', "See 'faxbot delivery rules sites list'.")
         then['mode'] = 'ordered' if in_order else 'cheapest_reliable'
     if automatic:
         then['automatic'] = True
@@ -896,7 +896,7 @@ def _insert(rules_list, rule, before):
         if item.get('id') == before or (item.get('name') or '').casefold() == before.casefold():
             rules_list.insert(index, rule)
             return
-    raise CliError(f"No rule of the same kind is called '{before}'. See 'faxbot providers rules list'.", EXIT_NOT_FOUND)
+    raise CliError(f"No rule of the same kind is called '{before}'. See 'faxbot delivery rules list'.", EXIT_NOT_FOUND)
 
 
 @rules.command('add')
@@ -1106,7 +1106,7 @@ def rules_publish(note: str = typer.Option(..., '--note', help='What changed and
                             'note': note})
     state.out().result(result, lambda out: out.line(
         f"Version {result['number']} is in effect for new faxes. To send waiting faxes by it too, run "
-        "'faxbot providers rules apply-to-waiting'."))
+        "'faxbot delivery rules apply-to-waiting'."))
 
 
 @rules.command('discard')
@@ -1180,7 +1180,7 @@ def rules_restore(number: int = typer.Argument(..., metavar='N', min=1, help='Th
     api = state.api()
     result = api.post(f'/routing/rules/revisions/{number}/restore', params={'scope': scope_param(api, scope)}, json={})
     state.out().result(result, lambda out: out.line(
-        f"Version {number} is now your draft. Check it with 'faxbot providers rules check', then publish it."))
+        f"Version {number} is now your draft. Check it with 'faxbot delivery rules check', then publish it."))
 
 
 # -- try a fax, apply to waiting faxes, export, import --------------------------------------------------
@@ -1271,11 +1271,11 @@ def rules_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='Th
     choices = current.get('choices')
     sender = 'me'
     if as_sender and as_sender.strip().casefold() != 'me':
-        sender = _resolve_named(choices, 'people', as_sender, 'person or integration', "See 'faxbot access users list'.")
+        sender = _resolve_named(choices, 'people', as_sender, 'person or integration', "See 'faxbot admin access users list'.")
     body = {
         'to': to, 'pages': pages, 'size_bytes': int(size_mb * 1_000_000) if size_mb is not None else None,
         'as': sender,
-        'mailbox': _resolve_named(choices, 'mailboxes', mailbox, 'mailbox', "See 'faxbot numbers mailboxes list'.")
+        'mailbox': _resolve_named(choices, 'mailboxes', mailbox, 'mailbox', "See 'faxbot delivery mailboxes list'.")
         if mailbox else None,
         'workflow': workflow, 'urgent': urgent, 'real_call': real_call, 'labels': list(label or []),
         'at': _local_moment(at) if at else None,
@@ -1321,9 +1321,9 @@ def rules_import(file: str = typer.Argument(..., metavar='FILE', help="A JSON fi
     except OSError:
         raise CliError(f'Cannot read {file}.') from None
     except ValueError:
-        raise CliError(f'{file} is not JSON written by faxbot providers rules export.') from None
+        raise CliError(f'{file} is not JSON written by faxbot delivery rules export.') from None
     if not isinstance(document, dict) or document.get('format') != 1:
-        raise CliError(f'{file} is not JSON written by faxbot providers rules export.')
+        raise CliError(f'{file} is not JSON written by faxbot delivery rules export.')
     api = state.api()
     scope_value = scope_param(api, scope)
     current = load(api, scope_value)
@@ -1466,12 +1466,12 @@ def sites_set(key: str = _key_option('site'),
               account: list[str] = typer.Option(None, '--account', metavar='KEY',
                                                 help='An account its calls start from (repeat it).'),
               scope: str = SCOPE):
-    """Add a site, or replace one. Give an account its site with 'faxbot providers accounts update KEY --site'."""
+    """Add a site, or replace one. Give an account its site with 'faxbot delivery providers accounts update KEY --site'."""
     def change(document, choices):
         site = {'key': key, 'name': name, 'country': country.upper() if country else None, 'time_zone': time_zone,
-                'mailboxes': [_resolve_named(choices, 'mailboxes', value, 'mailbox', "See 'faxbot numbers mailboxes "
+                'mailboxes': [_resolve_named(choices, 'mailboxes', value, 'mailbox', "See 'faxbot delivery mailboxes "
                                                                                     "list'.") for value in mailbox or []],
-                'groups': [_resolve_named(choices, 'groups', value, 'group', "See 'faxbot access groups list'.")
+                'groups': [_resolve_named(choices, 'groups', value, 'group', "See 'faxbot admin access groups list'.")
                            for value in group or []],
                 'accounts': _accounts(choices, account or [])}
         sites = document.get('sites') or []
@@ -1518,7 +1518,7 @@ def workflows_set(key: str = _key_option('workflow'),
     def change(document, choices):
         workflow = {'key': key, 'name': name, 'labels': list(label or []),
                     'mailboxes': [_resolve_named(choices, 'mailboxes', value, 'mailbox',
-                                                 "See 'faxbot numbers mailboxes list'.") for value in mailbox or []]}
+                                                 "See 'faxbot delivery mailboxes list'.") for value in mailbox or []]}
         workflows = document.get('workflows') or []
         if any(item.get('key') == key for item in workflows):
             document['workflows'] = [workflow if item.get('key') == key else item for item in workflows]
@@ -1538,7 +1538,7 @@ def workflows_remove(key: str = _key_option('workflow'), scope: str = SCOPE):
     _definitions_command(state.api(), scope, change, f"Workflow '{key}' removed.")
 
 
-# -- held faxes, approvals and why a fax took its route (faxbot sent) -------------------------------------
+# -- held faxes, approvals and why a fax took its route (faxbot faxes sent) -------------------------------------
 
 def held_rows(holds):
     return [[item['job_id'], item['to_number'], item.get('pages') or '-', item.get('sender_name') or '-',
@@ -1559,7 +1559,7 @@ def _hold_for(api, fax_id):
     holds = api.get('/routing/holds', params={'state': 'open'}).get('holds') or []
     found = [item for item in holds if item['job_id'] == fax_id or item['id'] == fax_id]
     if not found:
-        raise CliError(f"Fax {fax_id} is not waiting for you. See 'faxbot sent list --held'.", EXIT_NOT_FOUND)
+        raise CliError(f"Fax {fax_id} is not waiting for you. See 'faxbot faxes sent list --held'.", EXIT_NOT_FOUND)
     return found[0]
 
 
@@ -1578,7 +1578,7 @@ def alternate_sentence(dialed, alternate):
     return sentence
 
 
-def route_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The fax id, from faxbot sent list.')):
+def route_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The fax id, from faxbot faxes sent list.')):
     """Why a sent fax took its route: the rule that chose it, and what happened on each attempt."""
     result = state.api().get('/routing/faxes/' + segment(fax_id) + '/route')
 
@@ -1605,7 +1605,7 @@ def _anyway_lines(hold):
     return '\n'.join(lines + [f'  {sentence}' for sentence in hold.get('not_offered') or []])
 
 
-def approve_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
+def approve_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot faxes sent list '
                                                                               '--held.'),
                     account: str = typer.Option(None, '--account', metavar='KEY',
                                                 help='For a fax no route your rules allow: send it by this account '
@@ -1623,7 +1623,7 @@ def approve_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='Th
     if hold['kind'] == 'no_route':
         options = {option['account']: option['label'] for option in hold.get('options') or []}
         if not options:
-            raise CliError(f"{hold['reason']} No account can take it now. Run 'faxbot sent check-again {fax_id}' later, or "
+            raise CliError(f"{hold['reason']} No account can take it now. Run 'faxbot faxes sent check-again {fax_id}' later, or "
                            'change your rules.')
         if account not in options:
             raise CliError(f"{hold['reason']} Choose an account with --account:\n{_anyway_lines(hold)}")
@@ -1636,7 +1636,7 @@ def approve_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='Th
     state.out().result(result, lambda out: out.line(result.get('sentence') or fallback))
 
 
-def check_again_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
+def check_again_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot faxes sent list '
                                                                                   '--held.')):
     """Look again for a route your rules allow for a held fax, for when an account may be back."""
     api = state.api()
@@ -1646,7 +1646,7 @@ def check_again_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help
         result.get('sentence') or f"Faxbot checked the routes for the fax to {hold['to_number']} again."))
 
 
-def refuse_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot sent list '
+def refuse_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The held fax, from faxbot faxes sent list '
                                                                              '--held.'),
                    reason: str = typer.Option(..., '--reason', help='Why, for the sender and the history, such as '
                                                                    '"wrong recipient".')):
@@ -1661,9 +1661,9 @@ def refuse_command(fax_id: str = typer.Argument(..., metavar='FAX_ID', help='The
         result.get('sentence') or f"Refused. Nothing was sent to {hold['to_number']}."))
 
 
-# -- receiving rules (faxbot numbers add, update and explain) ---------------------------------------------
+# -- receiving rules (faxbot delivery numbers add, update and explain) ---------------------------------------------
 
-# The options `faxbot numbers add` and `update` gain; access.py passes them through receiving_options().
+# The options `faxbot delivery numbers add` and `update` gain; access.py passes them through receiving_options().
 NUMBER_ACCOUNT = typer.Option(None, '--account', metavar='KEY', help='Only faxes received on this account.')
 NUMBER_FROM = typer.Option(None, '--from', metavar='NUMBER',
                            help='Only faxes from this number; end it with * for every number that starts with it '

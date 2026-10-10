@@ -13,7 +13,7 @@ Who can do what after signing in is covered in [Access Control](access-control.m
 
 The sign-in screen offers two ways in.
 
-**Username and password.** People get a username from an Owner or Administrator under **Access → Users**, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
+**Username and password.** People get a username from an Owner or Administrator under **Administration → Users**, together with a temporary password. The first sign-in asks for a new password before anything else works. Passwords need at least 12 characters. Changing a password ends every other session for that person.
 
 **API key.** Select **Sign in with API key** and paste a Faxbot API key. The console then works with exactly the permissions that key has. The session ends when the key expires or is revoked, even if the session's own time has not run out.
 
@@ -23,7 +23,7 @@ The installation key in `API_KEY` can also sign in this way. Use it to create th
 
 A console session lasts at most 12 hours. It also ends after 30 minutes without activity. Signing out, changing your password, or an administrator disabling your account or revoking the session ends it immediately.
 
-Everyone can see and end their own sessions under **Access → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
+Everyone can see and end their own sessions under **Administration → Sessions**. Seeing other people's sessions needs the `sessions:read` permission, and ending them needs `sessions:revoke`.
 
 Faxbot keeps the session in a browser cookie that scripts cannot read. Over HTTPS the cookie is also marked secure, so the browser only sends it over HTTPS. API keys and session tokens never belong in URLs or in browser storage.
 

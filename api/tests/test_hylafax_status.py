@@ -99,7 +99,7 @@ def test_the_command_line_names_its_own_command_to_try_t38_again():
     trunk._status_lines(out, {'configured': True, 'message': 'The trunk is ready.', 'engine_audio': True,
                               'engine_text': "Faxbot's fax engine is running on 2 fax lines. "
                                              + hylafax_engine.ENGINE_AUDIO})
-    assert out.lines[-1] == 'To try T.38 again, run faxbot providers trunk apply.'
+    assert out.lines[-1] == 'To try T.38 again, run faxbot delivery providers trunk apply.'
     assert not any('select Apply' in line for line in out.lines)
     quiet = Out()
     trunk._status_lines(quiet, {'configured': True, 'message': 'The trunk is ready.', 'engine_audio': False})

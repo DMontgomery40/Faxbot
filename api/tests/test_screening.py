@@ -255,7 +255,7 @@ def test_blocked_senders_need_settings_permissions(client):
     assert client.post('/screening/senders', json={'number': CALLER, 'reason': 'Junk'}).status_code in (401, 403)
 
 
-# -- faxbot numbers blocked / faxbot received block ---------------------------------------------
+# -- faxbot delivery blocked / faxbot faxes received block ---------------------------------------------
 
 def test_the_command_line_blocks_lists_and_unblocks(monkeypatch, tmp_path):
     from api.tests.test_cli import Cli, _serve

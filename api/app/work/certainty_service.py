@@ -711,7 +711,7 @@ class CertaintyService:
 
         def covers(principal):
             from .store import _target
-            context, source = _target(context_check, principal)
+            context, source = _target(context_check, principal, grants_only=True)
             return connection.execute(context_check._coverage_query(context, source, 'fax:read', 'installation')
                                       ).first() is not None
         return self._people(connection, covers)

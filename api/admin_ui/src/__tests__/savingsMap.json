@@ -1,5 +1,5 @@
 {
-  "about": "The savings map in words. The console (SavingsMap.tsx on Overview) and the faxbot command (faxbot costs mechanisms, cli/commands/delivery.py mechanism_lines) both show exactly what the server says. The response is GET /routing/savings/mechanisms evaluated on a real synthetic installation (api/tests/test_savings_mechanisms.py scenario); its catalogue fields must match app/routing/mechanisms.py.",
+  "about": "The savings map in words. The console (SavingsMap.tsx on Overview) and the faxbot command (faxbot savings mechanisms, cli/commands/delivery.py mechanism_lines) both show exactly what the server says. The response is GET /routing/savings/mechanisms evaluated on a real synthetic installation (api/tests/test_savings_mechanisms.py scenario); its catalogue fields must match app/routing/mechanisms.py.",
   "response": {
     "days": 30,
     "title": "How Faxbot saves money",
@@ -51,8 +51,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=case_packets",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": true
           },
           {
@@ -79,10 +79,10 @@
             },
             "part": "packing",
             "page": "providers/sending",
-            "page_label": "Providers → In use → Delivery routes",
+            "page_label": "Delivery setup → Providers & accounts → Delivery routes",
             "link": "costs/savings?part=packing",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -111,8 +111,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=encoding",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": true
           },
           {
@@ -139,10 +139,10 @@
             },
             "part": "fax_friendly",
             "page": "providers/sending",
-            "page_label": "Providers → In use → Delivery routes",
+            "page_label": "Delivery setup → Providers & accounts → Delivery routes",
             "link": "costs/savings?part=fax_friendly",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": true
           }
         ]
@@ -177,10 +177,10 @@
             },
             "part": "own_numbers",
             "page": "providers/sending",
-            "page_label": "Providers → In use → Delivery routes",
+            "page_label": "Delivery setup → Providers & accounts → Delivery routes",
             "link": "costs/savings?part=own_numbers",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -209,8 +209,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=direct_delivery",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -239,8 +239,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=direct_fax_images",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -269,8 +269,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=direct_bytes",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -299,8 +299,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=tunnel_calls",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -329,8 +329,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=relay",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -359,8 +359,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=toll_free",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -389,8 +389,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=cheapest_route",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -417,10 +417,10 @@
             },
             "part": "plan_first",
             "page": "costs/prices",
-            "page_label": "Costs → Prices & plans",
+            "page_label": "Savings & optimization → Prices & plans",
             "link": "costs/savings?part=plan_first",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -509,8 +509,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=digital",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           }
         ]
@@ -545,10 +545,10 @@
             },
             "part": "t38",
             "page": "providers/trunk",
-            "page_label": "Providers → Telnyx",
+            "page_label": "Delivery setup → Telnyx",
             "link": "costs/savings?part=t38",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -575,10 +575,10 @@
             },
             "part": "coding",
             "page": "providers/trunk",
-            "page_label": "Providers → Telnyx",
+            "page_label": "Delivery setup → Telnyx",
             "link": "costs/savings?part=coding",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -607,8 +607,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=sending_together",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -637,8 +637,8 @@
             "page": "recipients/list",
             "page_label": "Recipients → Details",
             "link": "costs/savings?part=separator_pages",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": true
           },
           {
@@ -665,10 +665,10 @@
             },
             "part": "sslfax",
             "page": "providers/trunk",
-            "page_label": "Providers → Telnyx",
+            "page_label": "Delivery setup → Telnyx",
             "link": "costs/savings?part=sslfax",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           }
         ]
@@ -705,8 +705,8 @@
             "page": "faxes/sent",
             "page_label": "Faxes → Sent",
             "link": "costs/savings?part=continuation",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -735,8 +735,8 @@
             "page": "recipients/partners",
             "page_label": "Recipients → Partners",
             "link": "costs/savings?part=partner_repair",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           },
           {
@@ -763,10 +763,10 @@
             },
             "part": null,
             "page": "costs/charges",
-            "page_label": "Costs → Charges",
+            "page_label": "Savings & optimization → Charges",
             "link": "costs/charges",
-            "link_label": "Costs → Charges",
-            "command": "faxbot costs charges",
+            "link_label": "Savings & optimization → Charges",
+            "command": "faxbot savings charges",
             "turn_on": false
           }
         ]
@@ -801,10 +801,10 @@
             },
             "part": "blocked_calls",
             "page": "numbers/blocked",
-            "page_label": "Numbers → Blocked senders",
+            "page_label": "Delivery setup → Blocked senders",
             "link": "costs/savings?part=blocked_calls",
-            "link_label": "Costs → Savings",
-            "command": "faxbot costs savings",
+            "link_label": "Savings & optimization → Savings results",
+            "command": "faxbot savings results",
             "turn_on": false
           }
         ]
@@ -839,10 +839,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=sending",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations sending",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities sending",
             "turn_on": false
           },
           {
@@ -869,10 +869,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=plans",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations plans",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities plans",
             "turn_on": false
           },
           {
@@ -899,10 +899,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=receiving",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations receiving",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities receiving",
             "turn_on": false
           },
           {
@@ -929,10 +929,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=carriers",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations carriers",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities carriers",
             "turn_on": false
           },
           {
@@ -959,10 +959,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=steps",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations billing-steps",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities billing-steps",
             "turn_on": false
           },
           {
@@ -989,10 +989,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=partners",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations partners",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities partners",
             "turn_on": false
           },
           {
@@ -1019,9 +1019,9 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=discovery",
-            "link_label": "Costs → Recommendations",
+            "link_label": "Savings & optimization → Opportunities",
             "command": "faxbot recipients partners discover",
             "turn_on": false
           },
@@ -1049,9 +1049,9 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=relays",
-            "link_label": "Costs → Recommendations",
+            "link_label": "Savings & optimization → Opportunities",
             "command": "faxbot recipients partners relay",
             "turn_on": false
           },
@@ -1079,10 +1079,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=tollFree",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations toll-free",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities toll-free",
             "turn_on": false
           },
           {
@@ -1109,10 +1109,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=marker",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations fax-marker",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities fax-marker",
             "turn_on": false
           },
           {
@@ -1139,10 +1139,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=pages",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations shading",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities shading",
             "turn_on": false
           },
           {
@@ -1169,10 +1169,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=trunks",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations trunks",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities trunks",
             "turn_on": false
           },
           {
@@ -1199,10 +1199,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=numbers",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations numbers",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities numbers",
             "turn_on": false
           },
           {
@@ -1229,10 +1229,10 @@
             },
             "part": null,
             "page": "costs/recommendations",
-            "page_label": "Costs → Recommendations",
+            "page_label": "Savings & optimization → Opportunities",
             "link": "costs/recommendations?section=sites",
-            "link_label": "Costs → Recommendations",
-            "command": "faxbot costs recommendations sites",
+            "link_label": "Savings & optimization → Opportunities",
+            "command": "faxbot savings opportunities sites",
             "turn_on": false
           },
           {
@@ -1259,10 +1259,10 @@
             },
             "part": null,
             "page": "providers/trunk",
-            "page_label": "Providers → Telnyx",
+            "page_label": "Delivery setup → Telnyx",
             "link": "providers/trunk",
-            "link_label": "Providers → Telnyx",
-            "command": "faxbot providers trunk telnyx names",
+            "link_label": "Delivery setup → Telnyx",
+            "command": "faxbot delivery providers trunk telnyx names",
             "turn_on": false
           },
           {
@@ -1289,10 +1289,10 @@
             },
             "part": null,
             "page": "system/setup",
-            "page_label": "System → Setup",
+            "page_label": "Administration → Setup",
             "link": "system/setup",
-            "link_label": "System → Setup",
-            "command": "faxbot system setup plan",
+            "link_label": "Administration → Setup",
+            "command": "faxbot admin setup plan",
             "turn_on": false
           }
         ]
@@ -1320,7 +1320,7 @@
     "  Lighter shading: Off · Works here · Sample data",
     "    Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
     "    Not used in 30 days",
-    "    Turn it on in Providers → In use → Delivery routes.",
+    "    Turn it on in Delivery setup → Providers & accounts → Delivery routes.",
     "",
     "Choosing the route",
     "  Faxes to your own numbers: On · Works here · Sample data",
@@ -1410,7 +1410,7 @@
     "    Not used in 30 days",
     "  Charge checks: On · Works here · Sample data",
     "    Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
-    "    See: faxbot costs charges",
+    "    See: faxbot savings charges",
     "",
     "Receiving",
     "  Junk callers turned away: On · Works here · Sample data",
@@ -1423,23 +1423,23 @@
     "  Cheaper routes per number: On · Not here · Sample data",
     "    Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
     "    Needs a second sending route to compare with; you send through Telnyx only.",
-    "    See: faxbot costs recommendations sending",
+    "    See: faxbot savings opportunities sending",
     "  Plans worth their fee: On · Not here · Sample data",
     "    Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
     "    Needs a monthly plan; none of your fax services has one.",
-    "    See: faxbot costs recommendations plans",
+    "    See: faxbot savings opportunities plans",
     "  Receiving lines and numbers: On · Works here · Sample data",
     "    Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
-    "    See: faxbot costs recommendations receiving",
+    "    See: faxbot savings opportunities receiving",
     "  Other carriers' prices: On · Works here · Sample data",
     "    Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
-    "    See: faxbot costs recommendations carriers",
+    "    See: faxbot savings opportunities carriers",
     "  Calls just past a billed minute: On · Works here · Sample data",
     "    Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
-    "    See: faxbot costs recommendations billing-steps",
+    "    See: faxbot savings opportunities billing-steps",
     "  Partner candidates: On · Works here · Sample data",
     "    Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
-    "    See: faxbot costs recommendations partners",
+    "    See: faxbot savings opportunities partners",
     "  Recipients that run Faxbot: On · Works here · Sample data",
     "    Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
     "    See: faxbot recipients partners discover",
@@ -1449,34 +1449,34 @@
     "    See: faxbot recipients partners relay",
     "  Toll-free numbers on file: On · Works here · Sample data",
     "    Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
-    "    See: faxbot costs recommendations toll-free",
+    "    See: faxbot savings opportunities toll-free",
     "  Fax marker on calls: On · Works here · Sample data",
     "    Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
-    "    See: faxbot costs recommendations fax-marker",
+    "    See: faxbot savings opportunities fax-marker",
     "  Time lighter shading would save: On · Works here · Sample data",
     "    While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
-    "    See: faxbot costs recommendations shading",
+    "    See: faxbot savings opportunities shading",
     "  Your trunks compared: On · Not here · Sample data",
     "    Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
     "    Needs two or more trunks to compare; you have one.",
-    "    See: faxbot costs recommendations trunks",
+    "    See: faxbot savings opportunities trunks",
     "  Where each number should live: On · Works here · Sample data",
     "    Says where each of your fax numbers costs least to receive on, and the steps to move it.",
-    "    See: faxbot costs recommendations numbers",
+    "    See: faxbot savings opportunities numbers",
     "  Calls by state: On · Works here · Sample data",
     "    Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
-    "    See: faxbot costs recommendations sites",
+    "    See: faxbot savings opportunities sites",
     "  Caller-name lookup: On · Not here · Sample data",
     "    Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
     "    Needs your Telnyx key saved on the Telnyx page.",
-    "    See: faxbot providers trunk telnyx names",
+    "    See: faxbot delivery providers trunk telnyx names",
     "  Suggested packs: On · Works here · Sample data",
     "    Gathers the settings and rules that would save money here into packs you review and apply.",
-    "    See: faxbot system setup plan",
+    "    See: faxbot admin setup plan",
     "",
     "On or Off: Whether it is switched on for your faxes.",
     "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
     "Live call, Test lab or Sample data: How far Faxbot has proven it: on a live carrier call, in its own test lab, or with sample data only.",
-    "What each one saved: faxbot costs savings"
+    "What each one saved: faxbot savings results"
   ]
 }

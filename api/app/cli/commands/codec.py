@@ -88,7 +88,7 @@ def received_line(api, inbound_id):
         return None
 
 
-def received_decoded(inbound_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot received list --ids'."),
+def received_decoded(inbound_id: str = typer.Argument(..., help="A received fax's ID, from 'faxbot faxes received list --ids'."),
                      output: str = typer.Option(None, '--output', '-o', help="File to write. Use '-' for standard output."),
                      force: bool = typer.Option(False, '--force', help='Replace the file if it exists.')):
     """Download the original document a received fax carried as encoded pages (experimental)."""

@@ -54,7 +54,7 @@ def show():
     result = {'path': str(profiles.config_path()), 'profiles': rows, 'in_use': state.current().profile}
     state.out().result(result, lambda out: (out.table(['Profile', 'Server', 'Key saved', 'Default'],
         [[row['profile'], row['url'], row['key_saved'], row['default']] for row in rows],
-        empty="No saved profiles. Save one with 'faxbot system profiles save'."), out.line(f"File: {result['path']}")))
+        empty="No saved profiles. Save one with 'faxbot admin profiles save'."), out.line(f"File: {result['path']}")))
 
 
 @config.command('use')

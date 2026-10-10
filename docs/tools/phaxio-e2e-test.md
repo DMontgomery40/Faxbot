@@ -21,7 +21,7 @@ ngrok http 8080
 
 ## 2. Configure the desired revision
 
-1. Open **Providers → Phaxio** or the **Setup Wizard** (**System → Setup**) and select **Reload** to load the current settings.
+1. Open **Delivery setup → Phaxio** or the **Setup Wizard** (**Administration → Setup**) and select **Reload** to load the current settings.
 2. Select Phaxio for the outbound direction. Review the default and independent inbound choice; do not change inbound handling merely to choose an outbound provider.
 3. Set the Phaxio API Key, API Secret and separate Callback Token. Leave unchanged stored masks alone.
 4. Set **Public API URL** to the HTTPS URL. Set **Status Callback URL** to its `/phaxio-callback` endpoint, or leave it empty to derive that URL. Enable **Verify outbound status signatures** for callback updates.

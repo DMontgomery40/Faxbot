@@ -23,7 +23,7 @@ On 3 and 4 October 2026, Faxbot measured four setups by asking public address-lo
 
 ## The network check
 
-Faxbot runs the network check when it starts, when you select **Apply and connect**, every few minutes (at the interval set by **Check the internet address every … minutes**) and whenever you select **Check again**. You'll find it under **Providers → your carrier → Network for fax over IP**, and on the command line:
+Faxbot runs the network check when it starts, when you select **Apply and connect**, every few minutes (at the interval set by **Check the internet address every … minutes**) and whenever you select **Check again**. You'll find it under **Delivery setup → your carrier → Network for fax over IP**, and on the command line:
 
 ```sh
 faxbot providers trunk network status   # show the last check
@@ -38,7 +38,7 @@ The check runs inside Faxbot. In the standard Docker Compose installation, Faxbo
 
 The check only reads facts about the computer and the first few routers on the way out; it doesn't change anything.
 
-**System → Diagnostics** shows the result of the same check as "Faxing over the internet". While Faxbot keeps fax over IP (T.38) off because of the network, the **Overview** shows "One network change would let faxes go over the internet; faxes still go through meanwhile".
+**Administration → System health** shows the result of the same check as "Faxing over the internet". While Faxbot keeps fax over IP (T.38) off because of the network, the **Overview** shows "One network change would let faxes go over the internet; faxes still go through meanwhile".
 
 ## What Faxbot does by itself
 

@@ -1,4 +1,4 @@
-"""faxbot costs charges and faxbot costs invoices through the real command line and API (B2, M27).
+"""faxbot savings charges and faxbot costs invoices through the real command line and API (B2, M27).
 
 The Phaxio listing is answered by an ``httpx.MockTransport`` shaped like Phaxio's documented "List faxes" answer
 (API v2.1, read 2026-10-08); any request but a read fails the test. Keys, numbers and invoices are synthetic.

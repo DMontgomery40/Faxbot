@@ -118,7 +118,7 @@ export function SitesAndRegions({ document, choices, editable, onSave }: {
   return (
     <Box>
       <Section title="Sites" editable={editable} addLabel="Add a site"
-        help="The places your organization sends from. A fax's site comes from its sending mailbox, else from the sender's groups. Give an account its site on Providers → In use."
+        help="The places your organization sends from. A fax's site comes from its sending mailbox, else from the sender's groups. Give an account its site on Delivery setup → Providers & accounts."
         onAdd={() => setSite({ original: null, value: { key: '', name: '', mailboxes: [], groups: [] } })}>
         {sites.length === 0 ? <Typography variant="body2" color="text.secondary">No sites yet.</Typography> : (
           <Paper variant="outlined" sx={{ borderRadius: 2, overflowX: 'auto' }}>

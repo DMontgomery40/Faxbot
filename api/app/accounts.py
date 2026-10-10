@@ -882,7 +882,7 @@ def _check_site(sites, site):
         return None
     site = site.strip()
     if sites is not None and site not in sites:
-        raise AccountsError(f"There is no site called {site[:40]}. Add it on Providers → Rules first.")
+        raise AccountsError(f"There is no site called {site[:40]}. Add it on Delivery setup → Routing rules first.")
     return site
 
 

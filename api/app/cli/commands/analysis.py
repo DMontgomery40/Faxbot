@@ -78,4 +78,4 @@ def analysis_configure(
     if not changes:
         raise CliError('Choose settings to change. Use --help to see the options.')
     result = write_settings(state.api(), changes)
-    state.out().result(result, lambda out: out.line('AI analysis settings saved. Run faxbot system analysis test to check the connection.'))
+    state.out().result(result, lambda out: out.line('AI analysis settings saved. Run faxbot admin analysis test to check the connection.'))

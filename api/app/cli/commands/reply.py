@@ -1,4 +1,4 @@
-"""faxbot numbers reply: the number your faxes show, so replies reach you on your cheapest number.
+"""faxbot delivery identity: the number your faxes show, so replies reach you on your cheapest number.
 
 The console's Numbers → Sender identity, Reply number. Reads need settings:read; changes need
 settings:write and are checked like the console's: the number must be yours, receive into

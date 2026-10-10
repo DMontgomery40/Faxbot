@@ -24,7 +24,7 @@ def _form(api, reference):
     items = _forms(api)
     matches = [item for item in items if item['id'] == reference or item['name'].casefold() == reference.casefold()]
     if len(matches) != 1:
-        raise CliError(f"No single form matches '{reference}'. See 'faxbot forms list'.")
+        raise CliError(f"No single form matches '{reference}'. See 'faxbot faxes forms list'.")
     return matches[0]
 
 
@@ -35,7 +35,7 @@ def _version(api, reference, number=None):
         return form, versions[-1]
     found = [version for version in versions if version['number'] == number]
     if not found:
-        raise CliError(f"{form['name']} has no version {number}. See 'faxbot forms show {form['name']}'.")
+        raise CliError(f"{form['name']} has no version {number}. See 'faxbot faxes forms show {form['name']}'.")
     return form, found[0]
 
 
@@ -170,7 +170,7 @@ def forms_send(form: str = typer.Argument(..., help='Form name.'), to: str = typ
         if result.get('detail') and result['state'] != 'delivered':
             out.line(result['detail'])
         if result.get('can_fax'):
-            out.line(f"To send the pages as a fax instead, run: faxbot forms fax {result['id']}")
+            out.line(f"To send the pages as a fax instead, run: faxbot faxes forms fax {result['id']}")
     state.out().result(result, human)
 
 
@@ -235,7 +235,7 @@ def forms_original(form: str = typer.Argument(..., help='Form name.'), version: 
 
 
 @forms.command('fax')
-def forms_fax(delivery: str = typer.Argument(..., help="The ID from 'faxbot forms sent'.")):
+def forms_fax(delivery: str = typer.Argument(..., help="The ID from 'faxbot faxes forms sent'.")):
     """Send the pages of a form that did not reach the partner as an ordinary fax. Faxbot never does this by itself."""
     result = state.api().post(f'/forms/deliveries/{segment(delivery)}/fax')
     state.out().result(result, lambda out: out.line(

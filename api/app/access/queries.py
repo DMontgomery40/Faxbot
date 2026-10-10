@@ -5,7 +5,7 @@ query, connection or ORM object escapes the lock; returned data is a snapshot,
 never authority for a later operation. Provider lifecycle work remains separate.
 """
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import uuid
 
@@ -72,9 +72,10 @@ class AuthorizedFaxQueries:
             raise AccessUnavailableError()
         return {**dict(row), **delivery_fields(row)}
 
-    def page(self, actor, *, status=None, backend=None, limit=50, offset=0):
+    def page(self, actor, *, status=None, backend=None, limit=50, offset=0, since_hours=None):
         if (type(limit) is not int or not 1 <= limit <= 100
                 or type(offset) is not int or offset < 0
+                or (since_hours is not None and (type(since_hours) is not int or not 1 <= since_hours <= 8784))
                 or any(value is not None and (type(value) is not str or len(value) > 100)
                        for value in (status, backend))):
             raise FaxAccessError('invalid_input')
@@ -85,6 +86,11 @@ class AuthorizedFaxQueries:
                 query = query.where(self.deliveries.c.state == status)
             if backend:
                 query = query.where(self.jobs.c.backend == backend)
+            if since_hours is not None:
+                # The delivery changed within the hours asked: the window of the Overview's recent counts
+                # (outbound_summary.dashboard_counts).
+                changed = self.deliveries.c.updated_at
+                query = query.where(changed >= now - timedelta(hours=since_hours), changed <= now)
             total = connection.scalar(sa.select(sa.func.count()).select_from(query.subquery()))
             rows = connection.execute(query.order_by(self.jobs.c.created_at.desc(), self.jobs.c.id.desc())
                 .offset(offset).limit(limit)).mappings().all()

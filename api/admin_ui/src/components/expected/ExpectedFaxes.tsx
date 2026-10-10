@@ -347,8 +347,19 @@ function ExpectedDetail({ api, client, code, onClose, onChanged }: {
 
 // -- Waiting -----------------------------------------------------------------------------------------
 
-function WaitingTab({ api, client, onNotice }: { api: ExpectedApi; client: AdminAPIClient; onNotice: (message: string) => void }) {
-  const [view, setView] = useState<ExpectedView>('waiting');
+function WaitingTab({ api, client, onNotice, show, onShowChange }: {
+  api: ExpectedApi;
+  client: AdminAPIClient;
+  onNotice: (message: string) => void;
+  show: ExpectedView;
+  onShowChange?: (view: ExpectedView) => void;
+}) {
+  const [view, setViewState] = useState<ExpectedView>(show);
+  useEffect(() => { setViewState(show); }, [show]);
+  const setView = (next: ExpectedView) => {
+    setViewState(next);
+    onShowChange?.(next);
+  };
   const [search, setSearch] = useState('');
   const [items, setItems] = useState<ExpectedFax[] | null>(null);
   const [counts, setCounts] = useState<ExpectedCounts | null>(null);
@@ -375,7 +386,7 @@ function WaitingTab({ api, client, onNotice }: { api: ExpectedApi; client: Admin
         <Button variant="contained" onClick={() => setAdding(true)}>Expect a fax</Button>
       </Stack>
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 2 }}>
-        <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, next) => { if (next) setView(next); }}
+        <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, next: ExpectedView | null) => { if (next) setView(next); }}
           aria-label="Which expected faxes" sx={{ flexWrap: 'wrap' }}>
           {VIEW_LABELS.map(([key, label]) => <ToggleButton key={key} value={key}>{label}</ToggleButton>)}
         </ToggleButtonGroup>
@@ -477,13 +488,23 @@ function ReportTab({ api }: { api: ExpectedApi }) {
 
 // -- The page ------------------------------------------------------------------------------------
 
-export default function ExpectedFaxes({ client, canImport, canOutage }: {
+// A view from the page address (?show=overdue), or the waiting faxes for one the page does not offer.
+export function readExpectedView(value: string | null | undefined): ExpectedView {
+  return VIEW_LABELS.some(([key]) => key === value) ? value as ExpectedView : 'waiting';
+}
+
+export default function ExpectedFaxes({ client, canImport, canOutage, show = 'waiting', onShowChange }: {
   client: AdminAPIClient;
   canImport: boolean;
   canOutage: boolean;
+  // The view in the page address (?show=overdue), and a way to keep it there.
+  show?: ExpectedView;
+  onShowChange?: (view: ExpectedView) => void;
 }) {
   const api = useMemo(() => expectedApi(client), [client]);
   const [tab, setTab] = useState<ExpectedTab>('waiting');
+  // An address naming a view opens the Expected tab on it.
+  useEffect(() => { setTab('waiting'); }, [show]);
   const [notice, setNotice] = useState<string | null>(null);
   return (
     <Box>
@@ -496,7 +517,7 @@ export default function ExpectedFaxes({ client, canImport, canOutage }: {
         {canImport && <Tab value="import" label="Import" />}
         {canOutage && <Tab value="outages" label="Outages" />}
       </Tabs>
-      {tab === 'waiting' && <WaitingTab api={api} client={client} onNotice={setNotice} />}
+      {tab === 'waiting' && <WaitingTab api={api} client={client} onNotice={setNotice} show={show} onShowChange={onShowChange} />}
       {tab === 'report' && <ReportTab api={api} />}
       {tab === 'import' && canImport && <ExpectedImport api={api} onNotice={setNotice} />}
       {tab === 'outages' && canOutage && <ExpectedOutages api={api} onNotice={setNotice} />}

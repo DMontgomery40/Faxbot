@@ -515,7 +515,7 @@ async def status(request: Request, account: str | None = Query(default=None, max
                  identity=Depends(require_permission('providers:read'))):
     """Trunk registration and carrier reachability as Asterisk reports them; never includes secrets.
 
-    ``account`` names one trunk account (``faxbot providers trunk status --account``); none is the first trunk.
+    ``account`` names one trunk account (``faxbot delivery providers trunk status --account``); none is the first trunk.
     """
     everything = configuration_values()
     values, key = _trunk_values(everything, account)
