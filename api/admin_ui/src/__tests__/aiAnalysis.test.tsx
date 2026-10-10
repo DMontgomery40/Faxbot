@@ -121,7 +121,7 @@ it('opens AI settings from the recommendations screen', async () => {
   server.use(http.get('/analysis', () => HttpResponse.json({ ...idle, enabled: false, state: 'disabled' })));
   render(<Recommendations client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} />);
   fireEvent.click(await screen.findByRole('button', { name: 'AI analysis settings' }));
-  expect(window.location.hash).toBe('#/system/analysis');
+  expect(window.location.hash).toBe('#/admin/analysis');
 });
 
 it('keeps a rejected revision visible and prevents a second blind save', async () => {

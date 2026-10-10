@@ -258,6 +258,16 @@ describe('the console shell', () => {
     expect(screen.queryByTestId('moved-notice')).toBeNull();
   });
 
+  it('never shows the moved notice for a link inside the console', async () => {
+    grant('settings:read', 'settings:write');
+    window.history.replaceState(null, '', '/#/savings/results');
+    await signIn();
+    fireEvent.click(await screen.findByRole('button', { name: 'AI analysis settings' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/admin/analysis'));
+    expect(crumbs().getByText('AI analysis').getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByTestId('moved-notice')).toBeNull();
+  });
+
   it('opens the old Work address as Received, waiting for an owner', async () => {
     window.history.replaceState(null, '', '/#/faxes/work');
     await signIn();
