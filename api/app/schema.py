@@ -227,7 +227,8 @@ def _use_write_ahead_log(cursor):
 SLOW_WRITE_SECONDS = 2.0
 _WRITE_STARTED = "faxbot_write_started"
 _clock = time.monotonic
-_WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "BEGIN IMMEDIATE", "BEGIN EXCLUSIVE")
+# The first four letters of a statement that writes, or that takes the write lock (BEGIN IMMEDIATE/EXCLUSIVE).
+_WRITES = frozenset({"INSE", "UPDA", "DELE", "REPL", "CREA", "DROP", "ALTE", "BEGI"})
 # Frames that only carry a transaction (helpers and libraries): the call site is the first frame outside them.
 _CARRIERS = frozenset({"_locked", "write_transaction", "_transaction", "_transaction_on", "guarded_migration",
                        "_write", "_finished", "do_commit", "do_rollback", "__exit__", "__aexit__", "close"})
@@ -236,23 +237,40 @@ _CARRIERS = frozenset({"_locked", "write_transaction", "_transaction", "_transac
 def _watch_slow_writes(engine):
     """Log a write transaction that held the write lock longer than ``SLOW_WRITE_SECONDS``.
 
-    The clock starts when a write statement (or the advisory lock on PostgreSQL) has run, so waiting for the lock
-    is not counted, and stops when its commit or rollback has finished. A fast write costs one dictionary lookup a
-    statement; the call site is looked up only for a slow one.
+    The clock starts once a write statement (or, on PostgreSQL, the advisory lock) has run, so waiting for the lock
+    is not counted, and stops once its commit or rollback has finished. It wraps this engine's own dialect, so no
+    SQLAlchemy event runs per statement: a statement costs one call and a four-letter comparison, and the call site
+    is looked up only for a slow write.
     """
     postgresql = engine.dialect.name == "postgresql"
+    dialect = engine.dialect
+    execute, execute_bare, execute_many = dialect.do_execute, dialect.do_execute_no_params, dialect.do_executemany
+    commit, rollback = dialect.do_commit, dialect.do_rollback
 
-    @sa.event.listens_for(engine, "after_cursor_execute")
-    def started(connection, _cursor, statement, _parameters, _context, _executemany):
-        info = connection.info
-        if _WRITE_STARTED in info:
+    def mark(statement, context):
+        if context is None:
             return
-        head = statement.lstrip()[:16].upper()
-        if head.startswith(_WRITES) or (postgresql and "pg_advisory_xact_lock" in statement):
+        if statement[:4].upper() in _WRITES:
+            if statement[:4].upper() == "BEGI" and not statement.upper().startswith(("BEGIN IMMEDIATE",
+                                                                                    "BEGIN EXCLUSIVE")):
+                return
+        elif not (postgresql and "pg_advisory_xact_lock" in statement):
+            return
+        info = context.root_connection.info
+        if _WRITE_STARTED not in info:
             info[_WRITE_STARTED] = _clock()
 
-    dialect = engine.dialect
-    commit, rollback = dialect.do_commit, dialect.do_rollback
+    def do_execute(cursor, statement, parameters, context=None):
+        execute(cursor, statement, parameters, context)
+        mark(statement, context)
+
+    def do_execute_no_params(cursor, statement, context=None):
+        execute_bare(cursor, statement, context)
+        mark(statement, context)
+
+    def do_executemany(cursor, statement, parameters, context=None):
+        execute_many(cursor, statement, parameters, context)
+        mark(statement, context)
 
     def do_commit(dbapi_connection):
         try:
@@ -266,7 +284,9 @@ def _watch_slow_writes(engine):
         finally:
             _finished(dbapi_connection, "rolled back")
 
-    # This engine's own dialect instance: Connection and the pool's reset both end transactions through it.
+    # This engine's own dialect instance: every Connection, and the pool when it resets a connection, goes through it.
+    dialect.do_execute, dialect.do_execute_no_params, dialect.do_executemany = (
+        do_execute, do_execute_no_params, do_executemany)
     dialect.do_commit, dialect.do_rollback = do_commit, do_rollback
 
 
