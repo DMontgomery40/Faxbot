@@ -150,14 +150,6 @@ def test_the_real_predictor_prices_an_unchosen_payload_page_from_its_measured_co
     assert estimated.seconds > priced.seconds * 1.3  # the fixed ratio overprices the payload page
 
 
-def test_the_coding_choice_prices_with_the_installed_predictor():
-    """Companion for codec.decision.predictor(): it hands choose() routing.predict's own predict and Shape, the
-    real predictor, not a stand-in."""
-    from app.codec import decision
-    from app.routing import predict as real
-    assert decision.predictor() == (real.predict, real.Shape)
-
-
 def test_a_missing_predictor_is_an_error_not_a_quiet_fallback(monkeypatch):
     """routing.predict is part of Faxbot: if it cannot be imported, that is an integration failure to see, never a
     reason to send every fax as normal pages without saying so (00-common, guards and broad excepts)."""

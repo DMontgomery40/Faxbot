@@ -831,6 +831,8 @@ function readOriented(page) {
   }
   if (!header && newer) return { newer: true };
   if (!header) return NO_HEADER;
+  // Cells of unequal width: the page was drawn again at another size (said if the pages then fail to decode).
+  const resized = edges.some((edge, i) => i > 1 && edge - edges[i - 1] !== edges[1] - edges[0]);
   let rowWidth = page.width; let shift = 0;
   if (EXACT_LAYOUTS.has(header.layout)) {
     // Exact rows: every cell exactly as drawn (two dots), read at the width they were drawn for and moved back to
@@ -859,7 +861,7 @@ function readOriented(page) {
       segments.set(`${bitOffset}:${s.length}`, { offset: bitOffset, bits: s });
     }
   }
-  return { header, segments: [...segments.values()] };
+  return { header, segments: [...segments.values()], resized };
 }
 
 export function assemble(reads) {
@@ -977,7 +979,15 @@ export async function decodeFiles(files, { secrets = [] } = {}) {
   if (!reads.length && pages && small) throw new DecodeError(PREVIEW);
   if (!reads.length && resized) throw new DecodeError(RESIZED);
   if (!reads.length) throw new DecodeError('No payload pages were found in this file.');
-  const { container, pagesRead, pagesExpected } = assemble(reads);
+  let assembled;
+  try {
+    assembled = assemble(reads);
+  } catch (error) {
+    if (pages && small) throw new DecodeError(PREVIEW);
+    if (reads.some((read) => read.resized)) throw new DecodeError(RESIZED);
+    throw error;
+  }
+  const { container, pagesRead, pagesExpected } = assembled;
   const document = await unpack(container, secrets.filter(Boolean));
   return { ...document, pagesRead, pagesExpected, layout: reads[0].header.layout };
 }

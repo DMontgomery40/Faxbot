@@ -1597,90 +1597,29 @@
    ]
   }
  ],
- "receipts": [
-  {
-   "file": "receipt-runs-rotated_180.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-inverted.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-rotated_inverted.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-moved_right.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-moved_left.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-padded_to_letter.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-centred_on_letter.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-trailing_row_removed.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-trailing_row_added.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-runs-resized.tiff",
-   "expect": "resized"
-  },
-  {
-   "file": "receipt-runs-preview.tiff",
-   "expect": "preview"
-  },
-  {
-   "file": "receipt-capacity-rotated_180.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-inverted.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-moved_right.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-moved_left.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-padded_to_letter.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-centred_on_letter.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-capacity-trailing_row_removed.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-grid-rotated_180.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-grid-inverted.tiff",
-   "expect": "decodes"
-  },
-  {
-   "file": "receipt-grid-centred_on_letter.tiff",
-   "expect": "decodes"
-  }
- ]
+ "receipts": {
+  "receipt-runs-rotated_180.tiff": "decodes",
+  "receipt-runs-inverted.tiff": "decodes",
+  "receipt-runs-rotated_inverted.tiff": "decodes",
+  "receipt-runs-moved_right.tiff": "decodes",
+  "receipt-runs-moved_left.tiff": "decodes",
+  "receipt-runs-padded_to_letter.tiff": "decodes",
+  "receipt-runs-centred_on_letter.tiff": "decodes",
+  "receipt-runs-trailing_row_removed.tiff": "decodes",
+  "receipt-runs-trailing_row_added.tiff": "decodes",
+  "receipt-runs-resized.tiff": "resized",
+  "receipt-runs-preview.tiff": "preview",
+  "receipt-faxbeep.pdf": "decodes",
+  "receipt-cut.tiff": "decodes",
+  "receipt-capacity-rotated_180.tiff": "decodes",
+  "receipt-capacity-inverted.tiff": "decodes",
+  "receipt-capacity-moved_right.tiff": "decodes",
+  "receipt-capacity-moved_left.tiff": "decodes",
+  "receipt-capacity-padded_to_letter.tiff": "decodes",
+  "receipt-capacity-centred_on_letter.tiff": "decodes",
+  "receipt-capacity-trailing_row_removed.tiff": "decodes",
+  "receipt-grid-rotated_180.tiff": "decodes",
+  "receipt-grid-inverted.tiff": "decodes",
+  "receipt-grid-centred_on_letter.tiff": "decodes"
+ }
 }

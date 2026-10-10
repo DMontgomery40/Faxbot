@@ -86,8 +86,8 @@ RECEIPT_TRANSFORMS = {
 
 def write_receipts(folder, document, salt, nonce):
     """Receipt fixtures: one encoded page per layout as a receiver changed it, plus a resized page of an exact layout
-    and a small preview, which are refused. Returns [{file, expect: 'decodes', 'resized' or 'preview'}] for
-    decoder.test.mjs."""
+    and a small preview, which are refused, and a page kept as Faxbeep publishes it (a PDF of CCITT images, its last
+    white row removed). Returns {file: 'decodes', 'resized' or 'preview'} for decoder.test.mjs and test_codec_decoder."""
     from app.codec import pages
     from tests import codec_receipts as receipts
     packed = container.pack(document, compression=container.DEFLATE, salt=salt, nonce=nonce)
@@ -107,6 +107,12 @@ def write_receipts(folder, document, salt, nonce):
                        for page in encoded.pages]
             (folder / 'receipt-runs-preview.tiff').write_bytes(receipts.tiff_bytes(preview))
             cases.append({'file': 'receipt-runs-preview.tiff', 'expect': 'preview'})
+            (folder / 'receipt-faxbeep.pdf').write_bytes(receipts.faxbeep_pdf(list(encoded.pages)))
+            cases.append({'file': 'receipt-faxbeep.pdf', 'expect': 'decodes'})
+            # The receiver cut 3 dots off the left edge (a ladder that starts left of where it was drawn).
+            (folder / 'receipt-cut.tiff').write_bytes(receipts.tiff_bytes([receipts.moved(page, -3)
+                                                                           for page in encoded.pages]))
+            cases.append({'file': 'receipt-cut.tiff', 'expect': 'decodes'})
     sentences = {'decodes': 'decodes', 'resized': pages.RESIZED, 'preview': pages.PREVIEW}
     for case in cases:
         # The fixture must say what the Python reader says, so the browser is tested against the reference.
@@ -118,7 +124,7 @@ def write_receipts(folder, document, salt, nonce):
             outcome = str(error)
         if outcome != sentences[case['expect']]:
             raise SystemExit(f"{case['file']}: the Python reader says {outcome!r}, expected {case['expect']!r}")
-    return cases
+    return {case['file']: case['expect'] for case in cases}
 
 
 def write_capacity_tables(target=Path(__file__).resolve().parents[1] / 'capacity-tables.js'):

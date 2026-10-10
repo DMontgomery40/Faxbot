@@ -79,7 +79,7 @@ test('a header of a newer format, layout or capacity profile is refused as made 
 // What receivers do to a page (api/tests/codec_receipts.py): the browser reads what the Python reader reads, and
 // refuses what it refuses, with the browser's own sentence. make_fixtures.py checked each against the Python reader.
 const refusals = { resized: RESIZED, preview: PREVIEW };
-for (const { file: name, expect } of expected.receipts) {
+for (const [name, expect] of Object.entries(expected.receipts)) {
   if (expect === 'decodes') {
     test(`decodes ${name} as the Python reader does`, async () => {
       const result = await decodeFiles([file(name)]);

@@ -9,7 +9,7 @@ import pytest
 from PIL import ImageFont
 
 from app import codec
-from app.codec import container
+from app.codec import container, pages
 
 TOOL = Path(__file__).resolve().parents[2] / 'tools' / 'fax-decoder'
 
@@ -44,9 +44,20 @@ def test_the_committed_fixtures_are_what_the_encoder_makes_today(tmp_path, monke
             assert images == [image.convert('1').tobytes() for image in codec.read_images(committed / name)], name
         else:
             assert (made / name).read_bytes() == (committed / name).read_bytes(), name
-    for case in expected['receipts']:
-        # Receipt fixtures: an encoded page as a receiver changed it (make_fixtures checks the Python reader agrees).
-        assert (made / case['file']).read_bytes() == (committed / case['file']).read_bytes(), case['file']
+    # Pages as receivers keep them (api/tests/codec_receipts.py): still what the encoder makes, and the Python reader
+    # gives each the outcome the browser decoder's test expects, so the two readers agree on every one.
+    refusals = {'resized': pages.RESIZED, 'preview': pages.PREVIEW}
+    for name, outcome in expected['receipts'].items():
+        fresh_images = codec.read_images(made / name)
+        assert [image.convert('1').tobytes() for image in fresh_images] == [
+            image.convert('1').tobytes() for image in codec.read_images(committed / name)], name
+        if outcome == 'decodes':
+            document, _ = codec.decode_images(fresh_images, secrets=[expected['secret']])
+            assert document.sha256 == expected['sha256'], name
+        else:
+            with pytest.raises(codec.CodecError) as refused:
+                codec.decode_images(fresh_images, secrets=[expected['secret']])
+            assert str(refused.value) == refusals[outcome], name
 
 
 @pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is not installed')
