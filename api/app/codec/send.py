@@ -84,7 +84,7 @@ def _secret(engine, seal, number):
 
 
 def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path, seal=None, exact_raster=False,
-                  resolution='fine', tools=None, usable=None):
+                  resolution='fine', tools=None, usable=None, memo=None):
     """``AttemptPages`` when the codec's own check (``decision.choose``) says encoded pages save on ``route``,
     else None. Writes nothing.
 
@@ -108,7 +108,7 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
         exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
         provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
         picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames,
-        capacity=setting.get('decoder') == 'capacity')
+        capacity=setting.get('decoder') == 'capacity', memo=memo)
     if not choice.use:
         log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
         return None
@@ -127,7 +127,7 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
     }
     if row['basis'] is not None:
         row['basis'] = str(row['basis'])[:300]
-    return AttemptPages(list(choice.pages.pages), choice.sentence, row)
+    return AttemptPages(choice.pages.pages, choice.sentence, row)  # packed (conversion.FaxFrames)
 
 
 def record_attempt(engine, job_id, row, now):

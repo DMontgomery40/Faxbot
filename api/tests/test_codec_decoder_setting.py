@@ -97,3 +97,30 @@ def test_the_command_line_sets_the_decoder(monkeypatch, tmp_path):
     refused = CliRunner().invoke(app, ['--url', 'https://faxbot.example', '--key', 'synthetic', 'recipients',
                                        'encoded', 'set', NUMBER, '--decoder', 'newest'])
     assert refused.exit_code != 0 and 'Choose --decoder any or --decoder capacity.' in refused.output
+
+
+def test_comparing_accounts_encodes_and_measures_each_candidate_once_per_attempt(monkeypatch):
+    """The joint route choice evaluates every account an attempt may use; with the attempt's memo (its raster
+    cache's ``codec``) the second account reuses the first's encoded candidates and measured codings."""
+    from app.codec import pages
+    from app.pages import coding
+    encodes, measures = [], []
+    real_encode, real_measure = pages.encode, coding.measure
+    monkeypatch.setattr(pages, 'encode', lambda *a, **k: encodes.append(k.get('layout')) or real_encode(*a, **k))
+    monkeypatch.setattr(coding, 'measure', lambda *a, **k: measures.append(1) or real_measure(*a, **k))
+    tools, _ = per_page()
+    memo = {}
+    first = decision.choose(_document(40_000), route_key='sip', destination=NUMBER, pages_original=3,
+                            page_bits_original=[40_000] * 3, exact_raster=True, ecm_and_fine_seen=True,
+                            provider_renders=False, tools=tools, capacity=True, memo=memo)
+    counted = (len(encodes), len(measures))
+    assert counted[0] == 6  # two capacity profiles, three run-coded limits, the grid
+    second = decision.choose(_document(40_000), route_key='sip', destination='+12025550199', pages_original=3,
+                             page_bits_original=[40_000] * 3, exact_raster=True, ecm_and_fine_seen=True,
+                             provider_renders=False, tools=tools, capacity=True, memo=memo)
+    assert (len(encodes), len(measures)) == counted
+    assert (second.layout, second.profile, second.pages_encoded) == (first.layout, first.profile, first.pages_encoded)
+    decision.choose(_document(40_000), route_key='sip', destination=NUMBER, pages_original=3,
+                    page_bits_original=[40_000] * 3, exact_raster=True, ecm_and_fine_seen=True,
+                    provider_renders=False, tools=tools, capacity=True)
+    assert len(encodes) == 2 * counted[0]  # without a memo, nothing is kept between calls
