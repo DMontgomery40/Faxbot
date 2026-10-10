@@ -113,6 +113,8 @@ services:
       - hylafax-settings:/faxdata/hylafax:ro
       - hylafax-out:/faxdata/hylafax-out
       - hylafax:/var/lib/faxbot-engine
+      # hfaxd needs dev/null in its spool; an unprivileged container (a Proxmox LXC) cannot create one.
+      - /dev/null:/var/spool/hylafax/dev/null
     # The fax daemons work as uucp (HylaFAX and IAXmodem switch to it themselves). Only the
     # capabilities found needed by starting the image without each one stay
     # (api/tests/test_engine_processes.py): CHOWN, DAC_OVERRIDE and FOWNER to write the uucp
