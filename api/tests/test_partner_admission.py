@@ -289,7 +289,7 @@ def test_the_retry_picture_uses_only_measured_calls(database):  # noqa: F811
 
 def test_0084_is_the_head_and_its_downgrade_keeps_what_partners_agreed(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_partner_admission.REVISION == '0084_partner_admission' == schema.HEAD
+    assert schema_partner_admission.REVISION == '0084_partner_admission' == schema.PARTNER_ADMISSION
     assert schema.COURT_PROFILE == '0083_court_profile'
     assert schema_partner_admission.TABLES <= schema.STRICT_TABLES and schema_partner_admission.TABLES <= _tables(database)
     with database.connect() as connection:
