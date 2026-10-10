@@ -112,6 +112,21 @@ def test_while_t38_has_a_route_problem_new_calls_go_by_audio_fax_and_t38_returns
     assert not engine_learning.decide(after, D4, db=db, now=now).audio
 
 
+def test_an_idle_installation_reads_no_call_records_and_a_quiet_week_still_closes(db, monkeypatch):
+    now = _now()
+    replay_broken_t38(db, now)
+    assert route_families.watch(db, now=now) == {'opened': 1, 'closed': 0}
+    reads = []
+    real = route_families.read_outcomes
+    monkeypatch.setattr(route_families, 'read_outcomes', lambda *args, **kwargs: reads.append(1) or real(*args, **kwargs))
+    assert route_families.watch(db, now=now + timedelta(minutes=1)) == {'opened': 0, 'closed': 0}
+    assert reads == []  # nothing changed: no records were read
+    later = now + route_families.QUIET + timedelta(hours=1)
+    assert route_families.watch(db, now=later) == {'opened': 0, 'closed': 1}
+    [incident] = route_families.incidents(db)
+    assert incident['closed']['reason'] == 'quiet'
+
+
 def test_without_corroboration_new_numbers_failing_are_not_a_route_problem(db):
     now = _now()
     epoch_at(db, values(), now - timedelta(days=5))

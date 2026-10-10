@@ -130,6 +130,15 @@ def test_two_accounts_on_one_number_need_a_named_receiver_and_strays_are_named()
                                         for check in view.checks)
 
 
+def test_a_failed_self_check_with_a_fax_arriving_this_week_is_attention_not_a_false_alarm():
+    view = judge(NumberView(NUMBER, [SINCH]), reached={'sinch': (False, 'no answer')}, arrivals={'sinch'})
+    assert view.status == ATTENTION
+    assert view.sentence.startswith('Faxbot could not reach its own receiving address for Sinch from this server, '
+                                    'but a fax arrived on it this week')
+    view = judge(NumberView(NUMBER, [SINCH]), reached={'sinch': (False, 'no answer')}, arrivals=())
+    assert view.status == NOT_RECEIVING
+
+
 def test_trunk_numbers_come_from_the_real_accounts():
     values = ConfigurationValues.from_environment({
         'INBOUND_ENABLED': 'true', 'FAX_INBOUND_BACKEND': 'sip', 'FAX_BACKEND': 'sip', 'SIP_TRUNK_PRESET': 'telnyx',

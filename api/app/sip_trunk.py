@@ -335,8 +335,8 @@ PRESETS: dict[str, TrunkPreset] = {preset.id: preset for preset in (
         auth_modes=('registration',), codecs=('ulaw',), dial_format='local', dial_formats=('local', 'e164'),
         t38=("NTT's interface lists TTC JT-T38 and allows fax over IP for Data Connect calls between Data "
              'Connect-capable devices; Faxbot offers T.38 as ITU-T T.38 Annex D describes it (version 0, 14,400 '
-             "bit/s, transferredTCF, redundancy). NTT's detailed interface is not published, so confirm the T.38 "
-             'settings with NTT before use.'),
+             'bit/s, transferredTCF, and redundancy unless you change its error correction). NTT\'s detailed '
+             'interface is not published, so confirm the T.38 settings with NTT before use.'),
         notes=("NTT's network gives the SIP server's address by DHCP (option 120); enter the address your line "
                'hands out, and the user ID and password NTT or your equipment vendor gives you.',
                'Faxbot signs in over IPv4, as NTT asks, by UDP or TCP, and sends G.711 mu-law, the voice codec NTT '

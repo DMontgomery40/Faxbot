@@ -333,7 +333,8 @@ def _family_candidate(family, stream_items, everything, now, generation_starts):
     if (started is not None and any(not item.failed for item in earlier)
             and not any(not item.failed and item.at >= started for item in in_generation)):
         starts.append((started, 'settings'))
-    starts += [(item.at, 'outside') for item in failures]
+    # A run that opens an incident must reach into the recent window, so only recent failures can start one.
+    starts += [(item.at, 'outside') for item in failures if item.at >= now - WINDOW]
     for change_at, cause in starts:
         since = [item for item in in_generation if item.at >= change_at]
         failed_here = [item for item in since if item.family == family]
@@ -425,6 +426,18 @@ def family_incident(db, account, transport=None, *, connection=None):
     return None
 
 
+def _open_on(db, account, transport):
+    """The newest open incident on one account and transport, read with one query (asked for every call placed)."""
+    t = _tables(db)
+    table, closures = t['route_family_incidents'], t['route_family_closures']
+    with db.connect() as connection:
+        row = connection.execute(sa.select(table).where(
+            table.c.account_key == account, table.c.transport == transport,
+            ~sa.exists().where(closures.c.incident_id == table.c.id)).order_by(table.c.opened_at.desc())
+            .limit(1)).mappings().one_or_none()
+    return dict(row) if row is not None else None
+
+
 def t38_problem(db, account='sip', *, connection=None):
     """The open T.38 incident on a trunk account, for the call's engine to use audio fax meanwhile; or None."""
     return family_incident(db, account, 't38', connection=connection)
@@ -437,7 +450,7 @@ def t38_audio_reason(db, account='sip') -> str | None:
     try:
         if not available(db):
             return None
-        row = t38_problem(db, account)
+        row = _open_on(db, account, 't38')
     except sa.exc.SQLAlchemyError:
         log.warning('Faxbot could not read its route problems; this call uses the usual settings.')
         return None
@@ -447,11 +460,37 @@ def t38_audio_reason(db, account='sip') -> str | None:
             f"{_clock(row['change_at'])}, so Faxbot sends this fax by audio fax until that route problem ends.")
 
 
+_marks = weakref.WeakKeyDictionary()
+
+
+def _changes(db):
+    """When call records, the cost ledger and the learning epochs last changed: a pass with the same marks has
+    nothing new to read (the watcher runs every minute and must stay quiet on an idle installation)."""
+    t = _tables(db)
+    found = []
+    with db.connect() as connection:
+        for name, column in (('sip_call_records', 'updated_at'), ('delivery_attempt_costs', 'updated_at'),
+                             ('fax_learning_epochs', 'started_at'), ('route_family_closures', 'closed_at')):
+            table = t.get(name)
+            found.append(tuple(connection.execute(sa.select(sa.func.max(table.c[column]), sa.func.count())
+                                                  .select_from(table)).one()) if table is not None else None)
+    return tuple(found)
+
+
 def watch(db, *, now=None) -> dict:
-    """Background: record new incidents and close finished ones; {'opened': n, 'closed': n}."""
+    """Background: record new incidents and close finished ones; {'opened': n, 'closed': n}.
+
+    When nothing changed since the last pass, only the open incidents' quiet weeks are checked (no records read).
+    """
     now = now or utcnow()
     if not available(db):
         return {'opened': 0, 'closed': 0}
+    marks = _changes(db)
+    engine = getattr(db, 'engine', db)
+    if _marks.get(engine) == marks:
+        closed = sum(1 for row in open_incidents(db) if now - row['last_failure_at'] >= QUIET
+                     and close(db, row['id'], reason='quiet', now=now))
+        return {'opened': 0, 'closed': closed}
     outcomes, epochs = read_outcomes(db, since=now - LOOKBACK, until=now)
     opened = 0
     current = open_incidents(db)
@@ -467,6 +506,10 @@ def watch(db, *, now=None) -> dict:
         reason = closing(row, outcomes, now=now, newest_generation=epochs.newest())
         if reason is not None and close(db, row['id'], reason=reason, now=now, outcomes=outcomes):
             closed += 1
+    try:
+        _marks[engine] = _changes(db)
+    except TypeError:
+        pass
     return {'opened': opened, 'closed': closed}
 
 

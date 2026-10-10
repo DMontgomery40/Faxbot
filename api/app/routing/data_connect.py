@@ -18,8 +18,10 @@ built here is only what NTT publishes, each fact with its page and the day it wa
   fax as voice ("みなし音声"); both ends need Data Connect-capable equipment.
 - **T.38** (``T38_SDP``): NTT's interface (音声利用IP通信網サービス 第2種サービス タイプ2, version 13.1) lists
   TTC JT-T38 and allows ``m=image`` for bandwidth-reserved data, but its detailed UNI (詳細版) is not published.
-  Faxbot offers T.38 exactly as ITU-T T.38 Annex D describes the SDP, with no NTT-specific value. Not yet run
-  against NTT: confirm the T.38 parameters with NTT before use.
+  Faxbot offers T.38 exactly as ITU-T T.38 Annex D describes the SDP, with no NTT-specific value: the values in
+  ``T38_SDP`` are what Faxbot's own Asterisk sent in the 2026-10-09 LAN loop capture (T38FaxVersion:0,
+  T38MaxBitRate:14400, T38FaxRateManagement:transferredTCF, T38FaxUdpEC:t38UDPRedundancy; error correction
+  follows SIP_T38_ERROR_CORRECTION). Not yet run against NTT: confirm the T.38 parameters with NTT before use.
 """
 from __future__ import annotations
 

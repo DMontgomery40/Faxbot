@@ -303,7 +303,15 @@ def judge(view, *, registration=None, auth_mode='registration', reached=None, in
                 statuses.append(ATTENTION)
         elif endpoint.provider in WEBHOOK_PROVIDERS and endpoint.key in reached:
             ok, why = reached[endpoint.key]
-            if ok:
+            if not ok and endpoint.key in arrivals:
+                # A fax arrived on it this week: receiving evidence beats a self-check this server may not be able
+                # to make (many routers do not let a server reach its own public address from inside).
+                checks.append({'title': f'{endpoint.label}: receiving address', 'status': ATTENTION,
+                               'sentence': f'Faxbot could not reach its own receiving address for {endpoint.label} '
+                                           'from this server, but a fax arrived on it this week, so it most likely '
+                                           'still receives. Check the address if faxes stop arriving.'})
+                statuses.append(ATTENTION)
+            elif ok:
                 checks.append({'title': f'{endpoint.label}: receiving address', 'status': READY,
                                'sentence': f'{endpoint.label} can reach Faxbot at its receiving address.'})
                 statuses.append(READY)

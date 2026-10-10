@@ -505,7 +505,7 @@
         "https://business.ntt-east.co.jp/service/hikari_of/charge.html"
       ],
       "advertised_on": "2026-10-10",
-      "notes": "NTT East's price page says the caller's carrier sets the call charge (通話料は、発信者側の事業者により異なります), so receiving a call costs nothing per call; the line's monthly charges are in your contract."
+      "notes": "NTT East's price page says the caller's carrier sets the call charge (通話料は、発信者側の事業者により異なります), which Faxbot reads as no charge for receiving a call (NTT does not say so in those words; check your bill). The line's monthly charges are in your contract."
     }
   ],
   "plans": [
