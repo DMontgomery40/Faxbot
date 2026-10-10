@@ -908,6 +908,11 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
         check = await run_lifecycle_step(lambda: record_check(values, probe, found, records, mapping))
         decision = await run_lifecycle_step(lambda: sip_fax_mode.network_decision(
             values, check['t38'], previous=check['changed_from'], records=records))
+        # A trunk whose media depends on its internet access (Telekom CompanyFlex; sip_access.py, N18) is
+        # requalified on every check: encrypted calls on another access, never required encryption dropped.
+        from . import sip_access
+        access = await run_lifecycle_step(lambda: sip_access.requalify(values, check))
+        encrypted = sip_fax_mode.access_decision(values, access)
         awaiting = None
         if unattended and decision and check['count'] < 2:
             awaiting, decision = decision, None
@@ -917,7 +922,17 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
                   and await run_lifecycle_step(lambda: sip_trunk.engine_managed(values)))
     # Waiting for calls to end happens after the check's lock is released, so Check again never waits on it.
     engine = None
-    if decision:
+    if encrypted:
+        engine = await sip_fax_mode.switch(runtime, encrypted == 't38', sip_fax_mode.ENCRYPTED, network=check['t38'])
+    elif access:
+        # The same T.38 setting, but the trunk now signs in and encrypts differently: write it and let Asterisk
+        # load it once no call is up.
+        await run_lifecycle_step(lambda: sip_trunk.write_asterisk_configuration(values))
+        engine = await _load_into_engine(values)
+        if engine.get('engine') == 'busy':
+            sip_fax_mode.reload_later(runtime)
+            engine = {**engine, 'waiting': True, 'message': sip_fax_mode.RELOAD_WAITING}
+    elif decision:
         engine = await sip_fax_mode.switch(runtime, decision == 't38', sip_fax_mode.NETWORK, network=check['t38'])
     elif reload:
         # Asterisk names the opened ports only after a restart, which waits until no call is up.
@@ -925,7 +940,8 @@ async def run_check(runtime, records=None, *, fresh=True, unattended=False):
         if engine.get('engine') == 'busy':
             sip_fax_mode.reload_later(runtime)
             engine = {**engine, 'waiting': True, 'message': sip_fax_mode.RELOAD_WAITING}
-    return {'check': check, 'switched': decision, 'awaiting': awaiting, 'engine': engine}
+    return {'check': check, 'switched': encrypted or decision, 'awaiting': awaiting, 'engine': engine,
+            'access': access}
 
 
 # How long the start check waits before confirming an answer that differs from the stored one.

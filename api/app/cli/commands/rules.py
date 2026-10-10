@@ -1748,3 +1748,9 @@ def numbers_explain(to: str = typer.Option(..., '--to', metavar='NUMBER', help='
         body['subaddress'] = subaddress
     result = state.api().post('/access/inbound-rules/explain', json=body)
     state.out().result(result, lambda out: out.line(result.get('sentence') or ''))
+
+
+# Where Faxbot may dial (destinations.py), beside the rules that also name countries.
+from .destinations import destinations as _destinations  # noqa: E402
+
+rules.add_typer(_destinations, name='destinations')

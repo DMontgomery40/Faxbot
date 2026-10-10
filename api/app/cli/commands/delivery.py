@@ -185,7 +185,10 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
                                shading: str = typer.Option(None, '--shading', metavar='ON|OFF|DEFAULT',
                                    help='Fax-friendly shading on documents sent to this recipient: on (always '
                                         'when it shortens the call), off (never), or default for the setting all '
-                                        'faxes use.')):
+                                        'faxes use.'),
+                               needs_cover: bool = typer.Option(None, '--needs-cover/--no-cover-needed',
+                                   help='Whether this recipient needs a cover sheet: its faxes then keep their cover '
+                                        "even when the sender sends the cover's notice in the header.")):
     """Change a number's name, notes, preferred route, calls at once, case packets, pages per sheet, blank space, shading, or how faxes sent together to it mark each document."""
     api = state.api()
     chosen = [value for flag, value in ((index_page, 'index_page'), (page_headers, 'page_headers'),
@@ -211,8 +214,11 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
             body['max_calls'] = int(calls_at_once)
         else:
             raise CliError("Use a number from 0 to 20 for --calls-at-once, or 'default'.")
-    if not body and not page_body and boundaries is None:
+    if not body and not page_body and boundaries is None and needs_cover is None:
         raise CliError('Nothing to change. Add at least one option; see --help.')
+    # Whether the recipient needs a cover sheet (header_notice.py); its own address, set before the rest.
+    cover = (api.put('/header-notice/recipients/' + segment(number), json={'needs_cover': needs_cover})
+             if needs_cover is not None else None)
     # How documents are marked is part of sending together (/batching); set it first, so a refusal changes nothing.
     together = _set_boundaries(api, number, boundaries) if boundaries is not None else None
     view = None
@@ -223,8 +229,12 @@ def routing_update_destination(number: str = typer.Argument(..., help='Fax numbe
         view = api.patch('/routing/destinations/' + segment(number),
                          json={**body, 'version': current.get('version', 0)})
     result = together if view is None else view if together is None else {**view, 'sending_together': together}
+    if cover is not None:
+        result = {**(result or {}), 'cover': cover}
 
     def human(out):
+        if cover is not None:
+            out.line(cover['sentence'])
         if view is not None:
             out.line(f"Destination {view['number']} updated.")
         if together is not None:
@@ -1028,6 +1038,15 @@ def _line_time(seconds):
     return f'about {whole // 60} min {whole % 60} s' if whole >= 60 else f'about {whole} s'
 
 
+def _pages_sent(route):
+    """'1 long page', '2 pages', '1 encoded page'; '-' when not measured."""
+    sent = route.get('sent_pages')
+    if not sent:
+        return '-'
+    noun = {'dense': 'long page', 'codec': 'encoded page'}.get(route.get('layout'), 'page')
+    return f"{sent} {noun}{'' if sent == 1 else 's'}"
+
+
 def _predicted_cost(route):
     if route.get('cost') is None:
         return 'Unknown'
@@ -1063,10 +1082,14 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
         if result.get('measured_sentence'):
             out.line(result['measured_sentence'])
         routes = result.get('routes') or []
+        # A measured document: each account's own best pages (long pages, encoded pages) as the worker would send.
+        measured_pages = any(route.get('sent_pages') for route in routes)
         if routes:
-            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within'],
+            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within']
+                      + (['Pages sent'] if measured_pages else []),
                       [[route['label'], _predicted_cost(route), _line_time(route.get('seconds')),
                         _line_time(route.get('p90_seconds')) if route.get('finish_sentence') else '-']
+                       + ([_pages_sent(route)] if measured_pages else [])
                        for route in routes])
             for route in routes:
                 out.line(f"{route['label']}: {route['basis']}")
@@ -1128,10 +1151,30 @@ def routing_rate_cards(replace: str = typer.Option(None, '--replace', metavar='F
 def routing_rate_rows(route: str = typer.Argument(..., metavar='ROUTE',
                                                   help="The sending card's route, as 'faxbot costs rate-cards' lists "
                                                        'it, such as sip-gamma or sinch-uk.'),
-                      replace: str = typer.Option(..., '--replace', metavar='FILE',
+                      replace: str = typer.Option(None, '--replace', metavar='FILE',
                                                   help='Your prices by where calls start for that card, from this JSON '
-                                                       'file ({"rows": [...]}, or \'-\' for standard input).')):
-    """Replace the prices by where calls start that you entered for one sending card. Earlier rows are kept as history."""
+                                                       'file ({"rows": [...]}, or \'-\' for standard input).'),
+                      caller_id_deck: Path = typer.Option(None, '--caller-id-deck', metavar='FILE', exists=True,
+                                                          dir_okay=False,
+                                                          help="A carrier's rate deck priced by the caller ID a call "
+                                                               "shows (CSV): Twilio's voice price file, or Faxbot's "
+                                                               'own layout.'),
+                      deck_format: str = typer.Option(None, '--deck-format', metavar='twilio|faxbot',
+                                                      help='The deck layout; Faxbot recognises Twilio\'s file by its '
+                                                           'first line.'),
+                      source: str = typer.Option(None, '--source', metavar='URL',
+                                                 help='Where the deck came from.'),
+                      published: str = typer.Option(None, '--published', metavar='DATE',
+                                                    help='The date the deck was published or read, such as '
+                                                         '2026-10-09.')):
+    """Replace the prices by where calls start that you entered for one sending card, or import a rate deck priced
+    by caller ID for it. Earlier rows and decks are kept as history."""
+    if (replace is None) == (caller_id_deck is None):
+        raise CliError('Give either --replace FILE or --caller-id-deck FILE.')
+    if caller_id_deck is not None:
+        from .countries import import_caller_id_deck
+        return import_caller_id_deck(route, caller_id_deck, deck_format=deck_format, source=source,
+                                     published=published)
     try:
         document = json.loads(_read_document(replace))
     except ValueError:

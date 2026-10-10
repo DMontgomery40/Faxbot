@@ -58,6 +58,58 @@ class DirectRefused(RuntimeError):
     """The partner definitely did not receive the document; nothing was accepted."""
 
 
+class _Planned(tuple):
+    """``(plan, job, revision)``, as ``RoutedTransport._plan`` always returned, with the accepted ``profile`` and the
+    ``prices`` it ranked by as attributes (a plan made elsewhere, such as a test's, has neither: None)."""
+
+    def __new__(cls, plan, job, revision, profile=None, prices=None):
+        found = super().__new__(cls, (plan, job, revision))
+        found.profile, found.prices = profile, prices
+        return found
+
+
+def _extras(planned):
+    return getattr(planned, 'profile', None), getattr(planned, 'prices', None)
+
+
+class _Unexpected(Exception):
+    """Carries an error measuring did not document past the route choice's fallback (its ``__cause__``)."""
+
+
+def _unexpected_raises(operation):
+    try:
+        return operation()
+    except CapacityWait:
+        raise
+    except Exception as error:
+        raise _Unexpected() from error
+
+
+class _HandedOver:
+    """An inner transport's preparation, entered while the route choice's handoff (``routing.joint.Handoff``: the
+    account the attempt was bound to and its measured pages) is visible to it."""
+
+    def __init__(self, context, handoff, record=None):
+        self.context, self.handoff, self.record = context, handoff, record
+
+    async def __aenter__(self):
+        from . import joint
+        with joint.handing_over(self.handoff):
+            operation = await self.context.__aenter__()
+        if self.record is not None and self.handoff.published.get('evaluated') is not None:
+            # The account, its pages and their price go with the attempt once its preparation succeeded, before the
+            # submission marker: a fallback to the fax's own account records that account instead.
+            try:
+                await run_lifecycle_step(lambda: self.record(self.handoff))
+            except BaseException as error:
+                await self.context.__aexit__(type(error), error, error.__traceback__)
+                raise
+        return operation
+
+    async def __aexit__(self, *exc):
+        return await self.context.__aexit__(*exc)
+
+
 class _RoutedOperation:
     def __init__(self, transport, claim, plan, direct, conventional):
         self.transport, self.claim, self.plan = transport, claim, plan
@@ -172,6 +224,21 @@ class RoutedTransport:
         except Exception:
             return profile.configuration.provider_id
 
+    def _bound_for(self, revision, profile, pinned):
+        """The fax's own account key for planning. Under sending rules, the default sending account (as before);
+        without rules, that account too when the fax was accepted with it (an extra account such as ``sinch-uk``
+        set as the default), else the accepted provider's first account, as before."""
+        if pinned is not None:
+            return self._bound_key(revision, profile)
+        provider = profile.configuration.provider_id
+        try:
+            from ..accounts import account_named, default_sending_key
+            key = default_sending_key(revision.values)
+            account = account_named(revision.values, key) if key and key != provider else None
+        except Exception:
+            return provider
+        return key if account is not None and account.provider == provider else provider
+
     def _current(self):
         """The configuration in force now (an account turned off stops new attempts at once), or None."""
         try:
@@ -179,27 +246,69 @@ class RoutedTransport:
         except Exception:
             return None
 
-    def _plan(self, claim):
+    def _plan(self, claim, measured=None):
+        """``(plan, job, revision)`` (``_Planned``, with the profile and prices). Every account is ranked by the shared predictor's price for this
+        fax (``pricing.prices_for``), never the older 30 seconds plus 30 seconds a page; ``measured`` prices the
+        accounts whose pages were measured (``routing.joint``) by those pages instead of the page count."""
         revision, profile, job = self.store.load_dispatch(claim)
         routes = self.routes()
         planner = RoutePlanner(routes, direct_ready=self.direct.ready if self.direct is not None else None,
                                local_ready=self.local.ready if self.local is not None else None)
         pinned = self._pinned(claim)
-        bound = self._bound_key(revision, profile) if pinned is not None else profile.configuration.provider_id
+        bound = self._bound_for(revision, profile, pinned)
         # The number choice kept at acceptance; a route is left out only for the number it already called.
         dial = claim_dial_state(self.store, claim, job.get('dial'))
-        prices = None
-        if pinned is not None:
-            from .pricing import prices_for
-            prices = prices_for(routes, revision.values, job['to_number'], job.get('pages'), pinned=pinned,
-                                bound=bound, dial=dial, job_id=claim.job_id)
+        from .pricing import prices_for
+        # A queued fax under sending rules sees a scarce plan's room after the faxes it is held for (plan_allocation).
+        prices = prices_for(routes, revision.values, job['to_number'], job.get('pages'), pinned=pinned,
+                            bound=bound, dial=dial, job_id=claim.job_id if pinned is not None else None,
+                            measured=measured)
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
                             pages=job.get('pages'), alternates=True, dial=dial,
                             tried=planner.tried(claim.job_id, claim.attempt_id),
                             by_call=bool(job.get('send_by_call')), pinned=pinned,
                             current=self._current() if pinned is not None else None, prices=prices,
                             job_id=claim.job_id)
-        return plan, job, revision
+        return _Planned(plan, job, revision, profile, prices)
+
+    def _measure(self, claim, plan, job, revision, profile):
+        """``routing.joint.Joint``: each account the plan may use, its pages measured and priced on its own tariff,
+        when the plan ranks several accounts by cost; otherwise only why not."""
+        from . import joint
+        why = joint.compares(claim, plan) if isinstance(plan, RoutePlan) else 'one_account'
+        if why is not None:
+            return joint.Joint(limit=why)
+        return joint.measure(self.store, revision, profile, claim, plan, job,
+                             bound=self._bound_for(revision, profile, _pinned(plan)),
+                             configuration_for=lambda key: _account_route_configuration(revision, key),
+                             ensure_artifact=ensure_route_artifact)
+
+    def _inner(self, claim, key, measured, plan=None, prices=None, record=False):
+        """``self.inner.prepare(claim)``, handed the account it sends by, that account's measured pages and what
+        the attempt's record keeps of the comparison (``routing.selections.summary``). ``record``: this operation
+        is the attempt's own send, so its selection is recorded once its preparation succeeded."""
+        from . import joint, selections
+        selected = measured.selection(key) if measured is not None and key is not None else None
+        summary = selections.summary(plan, measured, key, prices) if selected is not None else None
+        handoff = joint.Handoff(claim.attempt_id, key, selected, summary)
+        return _HandedOver(self.inner.prepare(claim), handoff,
+                           record=(lambda found: self._record_selection(claim, found)) if record else None)
+
+    def _record_selection(self, claim, handoff):
+        """Write the attempt's selection (``routing.selections.record``); a database that cannot take it stops the
+        send before anything leaves Faxbot (``PreparationFailure``), with the cause logged."""
+        import sqlalchemy as sa
+        from . import selections
+        from .database import DeliveryStoreError
+        published = handoff.published
+        try:
+            selections.record(self.store.configuration.engine, claim=claim, handoff=handoff,
+                              evaluated=published['evaluated'], prepared=published.get('prepared'),
+                              pdf=published.get('pdf'))
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError, OSError) as error:
+            logging.getLogger(__name__).warning('Fax %s: its route choice could not be recorded, so nothing is '
+                                                'sent: %s', claim.job_id, error)
+            raise PreparationFailure('preparation_failed') from None
 
     def _record_dialed(self, claim, plan, route, dial, values):
         """Record the number this attempt calls on ``route`` before its durable submission marker.
@@ -249,8 +358,13 @@ class RoutedTransport:
         """
         pinned = _pinned(plan)
         skipped = list(_skipped(plan))
+        from .sender_pins import dispatch_refusal
         for place, choice in enumerate(plan.choices):
             route = choice.route
+            # A registered-sender recipient (sender_pins, N17): only its trunk, showing its registered identity.
+            if dispatch_refusal(self.store.configuration.engine, revision.values, plan.destination, route.key):
+                skipped.append((route.key, 'pin'))
+                continue
             if route.kind in ('direct', 'local', 'relay', 'digital'):
                 return self._chosen(plan, choice, skipped), claim
             # Each trunk (and each account with a "faxes at once" limit) has its own room (capacity.py).
@@ -382,10 +496,23 @@ class RoutedTransport:
 
     @asynccontextmanager
     async def prepare(self, claim):
-        plan = choice = None
+        plan = choice = measured = prices = None
         assigned = claim
+        bound_key = None
         try:
-            plan, job, revision = await run_lifecycle_step(lambda: self._plan(claim))
+            planned = await run_lifecycle_step(lambda: self._plan(claim))
+            plan, job, revision = planned
+            profile, prices = _extras(planned)
+            if profile is not None:
+                bound_key = self._bound_for(revision, profile, _pinned(plan))
+                # Measure each account's best pages before binding one, then rank the accounts again by those prices
+                # with every rule, cap and preference as before (routing.joint).
+                measured = await run_lifecycle_step(lambda: _unexpected_raises(
+                    lambda: self._measure(claim, plan, job, revision, profile)))
+                if measured.measured:
+                    planned = await run_lifecycle_step(lambda: self._plan(claim, measured=measured.measured))
+                    plan, job, revision = planned
+                    profile, prices = _extras(planned)
             self._skipped = _skipped(plan)
             choice, assigned = await run_lifecycle_step(lambda: self._assign(claim, plan, revision))
             # What this attempt could not use, for its record and for "send anyway" on a held fax.
@@ -396,6 +523,10 @@ class RoutedTransport:
                 await run_lifecycle_step(lambda: self._record_dialed(claim, plan, choice.route, dial, revision.values))
         except CapacityWait:
             raise
+        except _Unexpected as error:
+            # Measuring refuses what it documents (a document that cannot be drawn: accounts are then ranked by page
+            # count). Anything else is a bug or an integration failure: it raises, and nothing is sent.
+            raise error.__cause__
         except Exception:
             # Route evidence is optional; the accepted provider still works (and chooses its own number), unless
             # the fax's rules exclude it: then the fax waits in Sent instead of going outside its rules.
@@ -406,7 +537,7 @@ class RoutedTransport:
                     'Faxbot could not choose a route your rules allow just now, so nothing was sent. It waits for '
                     'you in Sent; check again in a moment.')))
             logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')
-            plan = choice = None
+            plan = choice = measured = None
         if choice is None and plan is not None and _pinned(plan) is not None:
             # Nothing the rules allow can take the fax now, its own account included (owner's answer Q1).
             await run_lifecycle_step(lambda: self._hold(claim, plan))
@@ -432,7 +563,8 @@ class RoutedTransport:
                             'This fax could not be delivered inside Faxbot, and your rules allow no call for it. It '
                             'waits for you in Sent; nothing was sent.')))
                     await run_lifecycle_step(lambda: self.record_fallback(claim, plan))
-                    operation = await stack.enter_async_context(self.inner.prepare(claim))
+                    operation = await stack.enter_async_context(
+                        self._inner(claim, bound_key, measured, plan, prices, record=True))
                 yield operation
             return
         if choice is not None and plan is not None and _pinned(plan) is not None and (
@@ -451,7 +583,8 @@ class RoutedTransport:
                 conventional = None
                 if any(c.route.bound for c in plan.choices):
                     try:
-                        conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                        conventional = await stack.enter_async_context(
+                            self._inner(claim, bound_key, measured, plan, prices))
                     except PreparationFailure:
                         conventional = None
                 try:
@@ -476,7 +609,8 @@ class RoutedTransport:
                 conventional = None
                 if any(c.route.bound for c in plan.choices):
                     try:
-                        conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                        conventional = await stack.enter_async_context(
+                            self._inner(claim, bound_key, measured, plan, prices))
                     except PreparationFailure:
                         conventional = None
                 try:
@@ -496,21 +630,26 @@ class RoutedTransport:
                 yield _DigitalOperation(self, claim, plan, sending, conventional)
             return
         if choice is None or choice.route.kind != 'direct' or self.direct is None:
+            # The account this attempt goes by, handed its own measured pages when accounts were compared.
+            key = choice.route.key if choice is not None and choice.route.kind == 'provider' else bound_key
             async with AsyncExitStack() as stack:
                 try:
-                    operation = await stack.enter_async_context(self.inner.prepare(assigned))
+                    operation = await stack.enter_async_context(
+                        self._inner(assigned, key, measured, plan, prices, record=True))
                 except PreparationFailure:
                     if assigned is claim:
                         raise
                     assigned = await run_lifecycle_step(lambda: self._restore_bound(claim, plan, revision))
-                    operation = await stack.enter_async_context(self.inner.prepare(assigned))
+                    operation = await stack.enter_async_context(
+                        self._inner(assigned, bound_key, measured, plan, prices, record=True))
                 yield operation
             return
         async with AsyncExitStack() as stack:
             conventional = None
             if any(c.route.bound for c in plan.choices):
                 try:
-                    conventional = await stack.enter_async_context(self.inner.prepare(claim))
+                    conventional = await stack.enter_async_context(
+                        self._inner(claim, bound_key, measured, plan, prices))
                 except PreparationFailure:
                     conventional = None  # Direct delivery can still proceed alone.
             try:

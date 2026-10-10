@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Chip, Paper, Stack, TextField, Typography } from '@mui/material';
 import AdminAPIClient, { accessErrorMessage } from '../api/client';
+import { LineClosures } from './delivery/CountryLines';
 
 type Dependency = { question: string; label: string; answer: string; note: string | null };
 type NumberAdvice = { number: string; display: string; sentence: string; verdict_label: string; reasons: string[];
@@ -120,5 +121,6 @@ export default function NumberMoves({client, canWrite}: {client: AdminAPIClient;
         {selected === row.number && <Box><MovePlan key={row.number} client={client} number={row.number} canWrite={canWrite}/></Box>}
       </Paper>)}
     </>}
+    <LineClosures client={client} canWrite={canWrite} />
   </Stack>;
 }

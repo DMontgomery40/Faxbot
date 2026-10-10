@@ -189,7 +189,12 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                                      'patient.'),
          patient_birth_date: str = typer.Option(None, '--patient-birth-date', metavar='DAY',
                                                 help="The patient's birth date, such as 1980-04-30, for a recipient "
-                                                     'that confirms the patient.')):
+                                                     'that confirms the patient.'),
+         cover_in_header: bool = typer.Option(False, '--cover-in-header',
+                                              help='The first page is a cover sheet: print its notice in the header '
+                                                   'of every page instead and leave that page out. Needs a header '
+                                                   "notice ('faxbot numbers reply notice set'); a recipient that "
+                                                   'needs a cover sheet still gets it.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     warning = _first_send_warning(api, to, recipient)
@@ -210,6 +215,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['labels'] = list(label)
     if by:
         data['send_by'] = by
+    if cover_in_header:
+        data['cover_in_header'] = 'true'
     # The patient goes only into the request; no output repeats it.
     for name, value in (('patient_record_number', patient_record_number),
                         ('patient_record_system', patient_record_system),

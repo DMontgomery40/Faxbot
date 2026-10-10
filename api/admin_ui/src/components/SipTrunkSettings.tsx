@@ -38,6 +38,7 @@ import AdminAPIClient, { AdminAPIError, isForbidden } from '../api/client';
 import type { NumberFormat, Settings, SettingsPatch } from '../api/types';
 import type { SipCallRecord, SipPreset, SipTrunkSettings as TrunkValues, SipTrunkStatus } from '../api/sipTypes';
 import SecretInput from './common/SecretInput';
+import { CountryRules } from './delivery/CountryLines';
 import LoadFailed, { saysFailure } from './common/LoadFailed';
 import EnvSetField, { environmentManaged } from './common/EnvSetField';
 import { numberHint, numberPlaceholder, settingsNumberFormat } from './common/numbers';
@@ -78,7 +79,7 @@ const EMPTY: TrunkValues = {
   preset: '', auth: 'registration', host: '', port: 0, transport: '', username: '', password: '',
   password_set: false, outbound_proxy: '', caller_id: '', dids: [], t38_enabled: true,
   fax_preference_header: true, codecs: '', external_address: '', dial_format: '', dial_prefix: '',
-  public_address_check_minutes: 5,
+  own_access: '', public_address_check_minutes: 5,
   // Fax settings: the recommended values.
   t38_error_correction: 'redundancy', t38_max_datagram: 400, fax_max_rate: 14400, fax_ecm: true,
   fax_compression: 'jbig', fax_fine: true, fax_tune_coding: true, sslfax_enabled: true, fax_lines: 2, sslfax_listener_port: 10443,
@@ -180,6 +181,9 @@ export function audioReason(reason: string | null | undefined, at?: string | nul
   }
   if (reason === 'carrier') {
     return `Off: ${carrier || 'your carrier'} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.`;
+  }
+  if (reason === 'encrypted') {
+    return `Off: calls over ${carrier || 'this trunk'} are encrypted here, and fax over IP (T.38) cannot be encrypted, so Faxbot sends encrypted audio fax.`;
   }
   return null;
 }
@@ -322,6 +326,7 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
       ['t38_enabled', 'sip_t38_enabled'], ['fax_preference_header', 'sip_fax_preference_header'],
       ['external_address', 'sip_external_address'], ['codecs', 'sip_trunk_codecs'],
       ['dial_format', 'sip_trunk_dial_format'], ['dial_prefix', 'sip_trunk_dial_prefix'],
+      ['own_access', 'sip_trunk_own_access'],
       ['public_address_check_minutes', 'sip_public_address_check_minutes'],
       // Fax settings.
       ['t38_error_correction', 'sip_t38_error_correction'], ['t38_max_datagram', 'sip_t38_max_datagram'],
@@ -630,6 +635,26 @@ function SipTrunkSettings({ client, showCalls = true, revision: sharedRevision, 
           {!phone && <TextField size="small" fullWidth label="Outbound proxy (optional)" value={form.outbound_proxy}
             helperText="Only if your carrier asks for one."
             onChange={(event) => update('outbound_proxy', event.target.value.trim())} />}
+
+          {(preset?.encrypted_audio_only || preset?.access_rule) && saved.encryption_sentence && (
+            <Alert severity="info" data-testid="trunk-encryption">{saved.encryption_sentence}</Alert>
+          )}
+          {/* Country rules (the UAE, Saudi Arabia): shown only for accounts in those countries; the server checks writes. */}
+          <CountryRules client={client} canWrite />
+          {preset?.access_rule && (
+            <TextField size="small" fullWidth label="Your own line's internet address" value={form.own_access ?? ''}
+              placeholder="203.0.113.7"
+              helperText={status?.internet_address
+                ? `The address or range of your Telekom line. Faxbot is on ${status.internet_address} now.`
+                : 'The address or range of your Telekom line. On any other access Faxbot encrypts the calls by itself.'}
+              onChange={(event) => update('own_access', event.target.value.replace(/[^0-9A-Fa-f:./, ]/g, ''))} />
+          )}
+          {preset?.single_registration && (
+            <Typography variant="body2" color="text.secondary">
+              {preset.label} allows one registration per account: don't sign in to the same account from a second
+              trunk, phone system or standby server.
+            </Typography>
+          )}
 
           {!phone && <TextField size="small" fullWidth label="Internet address (optional)" value={form.external_address}
             placeholder="Automatic"

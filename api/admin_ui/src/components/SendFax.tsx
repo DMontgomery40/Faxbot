@@ -36,6 +36,7 @@ import type { DocumentPrediction, RecommendedRoute, RoutePrediction } from '../a
 import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
+import { CoverInHeaderChoice } from './HeaderNotice';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -160,6 +161,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [byCall, setByCall] = useState(false);
   // Urgent: before other faxes waiting for the same line, and never held to go with others.
   const [urgent, setUrgent] = useState(false);
+  // The first page is a cover sheet whose notice is printed at the top of every page instead (header_notice.py).
+  const [coverInHeader, setCoverInHeader] = useState(false);
   const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
   // Optional: the time it must be sent by, in this browser's local time (a datetime-local value).
   const [sendBy, setSendBy] = useState('');
@@ -261,10 +264,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     }, 600);
     return () => { live = false; window.clearTimeout(timer); };
   }, [client, documentNumber, file, fileError]);
-  const documentRoute = documentAnswer?.routes.find((item) => item.route === routeKey) ?? null;
-  const shown: RoutePrediction | null = documentRoute ?? prediction;
+  // With the document measured, the server names the account and pages the delivery worker would choose (each
+  // account priced on its own best pages); the page-count recommendation above is then only a first guess and is
+  // never shown with the measured account's price.
+  const chosen = documentAnswer?.selected ?? null;
+  const documentRoute = (chosen
+    ? documentAnswer?.routes.find((item) => item.route === chosen.route)
+    : documentAnswer?.routes.find((item) => item.route === routeKey)) ?? null;
+  const shown: RoutePrediction | null = documentRoute ?? (chosen ? null : prediction);
   const costSentence = shown ? `What would this cost? ${shown.headline}`
-    : (route ? routeCostSentence(route, null) : null);
+    : (route && !chosen ? routeCostSentence(route, null) : null);
   const configReady = !configLoading && !configError && typeof config?.fax_disabled === 'boolean'
     && Number.isSafeInteger(config.max_file_size_mb) && config.max_file_size_mb > 0;
   const faxDisabled = configReady && config?.fax_disabled === true;
@@ -334,7 +343,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
-          byCall: route?.route === 'local' && byCall, urgent, ...sendBody(sendOptions),
+          byCall: route?.route === 'local' && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
           sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
@@ -475,10 +484,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   icon={<DocumentIcon />}
                 />
 
-                {route && (
+                {(route || chosen) && (
                   <Box data-testid="send-route">
-                    <Typography variant="body2">Faxbot will send it through {route.label}.</Typography>
-                    <Typography variant="body2" color="text.secondary">{route.explanation}</Typography>
+                    <Typography variant="body2">Faxbot will send it through {chosen ? chosen.label : route!.label}.</Typography>
+                    {chosen ? (
+                      <Typography variant="body2" color="text.secondary" data-testid="send-plan">
+                        {documentAnswer!.sentence}
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">{route!.explanation}</Typography>
+                    )}
                     {costSentence && (
                       <Typography variant="body2" color="text.secondary" data-testid="send-cost">{costSentence}</Typography>
                     )}
@@ -504,6 +519,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   control={<Checkbox checked={urgent} onChange={(e) => setUrgent(e.target.checked)}
                     disabled={!configReady || loading} />}
                   label="Urgent: send before other faxes waiting for the same line" />
+                <CoverInHeaderChoice client={client} mailbox={sendOptions.mailbox} checked={coverInHeader}
+                  onChange={setCoverInHeader} disabled={!configReady || loading} />
 
                 {sendChoices && (
                   <ProviderRulesSendFields value={sendOptions} onChange={setSendOptions} disabled={!configReady || loading}

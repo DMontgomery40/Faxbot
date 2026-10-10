@@ -12,6 +12,11 @@ screen can say it in one sentence:
   Faxbot turns T.38 on again by itself, recorded with the same reason.
 - ``carrier``: a new trunk with a carrier that turns T.38 into audio fax inside
   its own network (BT One Voice), so audio fax is what reaches the far end.
+- ``encrypted``: the trunk's calls are encrypted (Swisscom Smart Business
+  Connect always; Telekom CompanyFlex on another provider's internet access),
+  and T.38 cannot be encrypted, so encrypted fax goes as audio
+  (``sip_access``). The access rule turns T.38 on again only when this was
+  its own decision and the trunk no longer needs encryption.
 
 Per number, Faxbot also remembers T.38 or audio fax failing (``engine_learning``):
 a call on which the far fax machine answered over T.38 and the fax did not
@@ -57,6 +62,7 @@ def t38_timeout(text) -> bool:
 NETWORK = 'network'
 CARRIER = 'carrier'
 CHOSEN = 'chosen'
+ENCRYPTED = 'encrypted'
 
 
 def record_path(values) -> Path:
@@ -140,6 +146,9 @@ def off_sentence(reason, day='', carrier=''):
                 'audio fax until the network is fixed.')
     if reason == CARRIER:
         return f'Off: {carrier or "your carrier"} turns T.38 into audio fax inside its network, so Faxbot uses audio fax.'
+    if reason == ENCRYPTED:
+        return (f'Off: calls over {carrier or "this trunk"} are encrypted here, and fax over IP (T.38) cannot be '
+                'encrypted, so Faxbot sends encrypted audio fax.')
     return None
 
 
@@ -152,6 +161,8 @@ def reason_for(values, records=None):
         return {'reason': record['reason'], 'at': record.get('at')}
     if record and record['mode'] == 'audio' and record.get('reason') == CARRIER and _carrier_prefers_audio(values):
         return {'reason': CARRIER, 'at': record.get('at')}
+    if record and record['mode'] == 'audio' and record.get('reason') == ENCRYPTED:
+        return {'reason': ENCRYPTED, 'at': record.get('at')}
     return None
 
 
@@ -194,6 +205,10 @@ def network_decision(values, verdict, *, previous=None, records=None):
     preset = sip_trunk.PRESETS.get(values.sip_trunk_preset)
     if preset is None or preset.phone_system or preset.audio_by_default or verdict not in ('open', 'blocked'):
         return None
+    from . import sip_access
+    if sip_access.encryption_required(values, preset):
+        return None  # encrypted calls carry fax only as audio: the network never turns T.38 on here
+
     if verdict == 'blocked' and values.sip_t38_enabled:
         record = read(values)
         if record is None:
@@ -315,6 +330,24 @@ async def switch(runtime, enabled, reason, *, network=None):
     except Exception:
         logging.getLogger(__name__).warning('Faxbot could not switch T.38 for new calls.')
         return None
+
+
+def access_decision(values, change):
+    """'audio' or 't38' when an access change (``sip_access.requalify``) should switch new calls, else None.
+
+    Encryption now required and T.38 on: audio fax, recorded as ``encrypted``. Back on your own line, signing in
+    over TCP, with audio fax that was this rule's own decision: T.38 again. A person's choice is left alone.
+    """
+    if not change:
+        return None
+    if change['required']:
+        return 'audio' if values.sip_t38_enabled else None
+    record = read(values)
+    transport = values.sip_trunk_transport or getattr(sip_trunk.PRESETS.get(values.sip_trunk_preset), 'transport', '')
+    if (not values.sip_t38_enabled and record and record['mode'] == 'audio' and record.get('reason') == ENCRYPTED
+            and transport != 'tls'):
+        return 't38'
+    return None
 
 
 # A saved switch that Asterisk loads once no call is up, so the screen and Asterisk never disagree for long.

@@ -384,6 +384,36 @@ describe('Before sending', () => {
     expect(posted).toEqual(['+12025550123 two.pdf file,to']);
   });
 
+  it('names the account the measured pages chose, never the page-count route with its price', async () => {
+    // By page count Telnyx is recommended; measured, the page account sends one long page for less.
+    const measuredWinner = {
+      ...documentAnswer('+12025550123', '0.005'),
+      sentence: 'Would go through Page trunk as 1 long page: about $0.004 instead of $0.005 through Telnyx as 2 pages.',
+      routes: [
+        { ...routeAnswer('0.004', 'About $0.004 for this 1-page fax.', 'Billed as 1 page at $0.004 a page.'),
+          route: 'sip-pages', label: 'Page trunk', layout: 'dense', sent_pages: 1, original_pages: 2, coding: null },
+        { ...routeAnswer('0.005', 'About $0.005 for this 2-page fax.', 'Billed as 1 minute.'),
+          layout: 'normal', sent_pages: 2, original_pages: 2, coding: null }],
+      selected: { route: 'sip-pages', label: 'Page trunk', layout: 'dense', rendering: 'as_is', coding: 'MMR',
+        original_pages: 2, sent_pages: 1, cost: { currency: 'USD', amount: '0.004' }, in_plan: false,
+        measured: true },
+      runner_up: { route: 'sip', label: 'Telnyx', layout: 'normal', rendering: 'as_is', coding: 'MMR',
+        original_pages: 2, sent_pages: 2, cost: { currency: 'USD', amount: '0.005' }, in_plan: false,
+        measured: true },
+      compared: 2, held: false, approximate: false };
+    server.use(destinationAnswer(), pageCountPrediction(),
+      http.post('/routing/predict', () => HttpResponse.json(measuredWinner)));
+    openSend();
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+12025550123' } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(screen.getByTestId('send-plan').textContent).toBe(measuredWinner.sentence),
+      { timeout: 3000 });
+    expect(screen.getByTestId('send-route').textContent).toContain('Faxbot will send it through Page trunk.');
+    expect(screen.getByTestId('send-route').textContent).not.toContain('through Telnyx.');
+    expect(screen.getByTestId('send-cost').textContent).toBe('What would this cost? About $0.004 for this 1-page fax.');
+    expect(screen.getByTestId('send-cost-basis').textContent).toBe('Billed as 1 page at $0.004 a page.');
+  });
+
   it('drops an answer for a number that changed while it was on its way', async () => {
     const answers: Array<(value: Response) => void> = [];
     server.use(destinationAnswer(), pageCountPrediction(), http.post('/routing/predict', async ({ request }) => {

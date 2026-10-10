@@ -371,6 +371,96 @@
       ],
       "advertised_on": "2026-10-03",
       "notes": "Telstra's customer terms say SIP Connect charges are set out in your application form, and calls are charged at your BusinessLine Complete or agreed rates; no price is published (section last changed June 3, 2024, read October 3, 2026). Enter your rates."
+    },
+    {
+      "provider_id": "sip-swisscom-sbc",
+      "provider": "sip",
+      "preset": "swisscom-sbc",
+      "label": "Swisscom Smart Business Connect, Switzerland, outbound",
+      "direction": "outbound",
+      "currency": "CHF",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://wiki.innovaphone.com/?i=14782",
+      "sources": [
+        "https://wiki.innovaphone.com/?i=14782",
+        "https://www.swisscom.ch/en/residential/help/fixed-network/fax.html"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No per-minute price for Smart Business Connect calls was found on Swisscom's pages or in the provider profiles (searched October 9, 2026); Swisscom prices the trunk in your contract. Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-swisscom-sbc",
+      "provider": "sip",
+      "preset": "swisscom-sbc",
+      "label": "Swisscom Smart Business Connect, Switzerland, inbound",
+      "direction": "inbound",
+      "currency": "CHF",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://wiki.innovaphone.com/?i=14782",
+      "sources": [
+        "https://wiki.innovaphone.com/?i=14782"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No receiving price for Smart Business Connect was found (searched October 9, 2026). Enter your contract's rates."
+    },
+    {
+      "provider_id": "sip-telekom-companyflex",
+      "provider": "sip",
+      "preset": "telekom-companyflex",
+      "label": "Telekom CompanyFlex, Germany, outbound",
+      "direction": "outbound",
+      "currency": "EUR",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+      "sources": [
+        "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+        "https://hilfe.companyflex.de/de/einrichtung/anschalteszenarien/fax?mode=user"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "Telekom's CompanyFlex product flyer (December 2023) includes fax in its fixed-network flat offer, with exclusions for some businesses; no per-minute price was found (searched October 9, 2026). Enter your contract's rates, or a monthly fee for the flat offer."
+    },
+    {
+      "provider_id": "sip-telekom-companyflex",
+      "provider": "sip",
+      "preset": "telekom-companyflex",
+      "label": "Telekom CompanyFlex, Germany, inbound",
+      "direction": "inbound",
+      "currency": "EUR",
+      "per_minute": null,
+      "per_page": "0",
+      "per_call": "0",
+      "number_rental_monthly": null,
+      "number_setup": null,
+      "billing_increment_seconds": null,
+      "minimum_seconds": 0,
+      "rounding": "not_published",
+      "source_url": "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer",
+      "sources": [
+        "https://geschaeftskunden.telekom.de/internet-dsl/tarife/companyflex/sip-trunk/companyflex-sip-trunk-produktflyer"
+      ],
+      "advertised_on": "2026-10-09",
+      "notes": "No receiving price for CompanyFlex was found (searched October 9, 2026). Enter your contract's rates."
     }
   ],
   "plans": [
@@ -1066,6 +1156,27 @@
       "sources": ["https://sinch.com/voice/fax-api/"],
       "advertised_on": "2026-10-07",
       "notes": "The Fax API page, read October 7, 2026, gives a flat $0.045 a page and describes coverage in the U.S.; it does not say whether that price applies abroad. Enter your contracted rate."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes to the United States and Canada",
+      "regions": ["US", "CA"],
+      "pricing": "same_as_card",
+      "reaches": "yes",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms", "https://humblefax.com/faq"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada; faxes there are priced as your HumbleFax plan prices them."
+    },
+    {
+      "route": "humblefax",
+      "label": "HumbleFax, faxes outside the United States and Canada",
+      "pricing": "not_published",
+      "reaches": "no",
+      "source_url": "https://humblefax.com/terms",
+      "sources": ["https://humblefax.com/terms"],
+      "advertised_on": "2026-10-09",
+      "notes": "HumbleFax's terms (section D.5, read October 9, 2026) limit the service to the domestic United States and Canada, so it takes no fax to any other country, including the other countries that share the +1 calling code."
     }
   ],
   "toll_free": [

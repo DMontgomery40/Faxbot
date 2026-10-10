@@ -35,9 +35,14 @@ import weakref
 import sqlalchemy as sa
 
 from .costs import InvalidRateCard, RateCard, RateTerms, parse_amount
-from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify
+from .destinations import CLASS_TEXT, INTERNATIONAL, LOCAL, PREMIUM, TOLL_FREE, classify, country_name
 from .predict import AUDIO_RATE, CODINGS, MIN_CALLS, TYPICAL_RATE, Link, RouteFacts
 from .seed import _date, _increment, default_path, load_cards
+
+
+def where_text(destination):
+    """'numbers in the United Kingdom' for an international number."""
+    return f'numbers in {country_name(destination.region)}'
 
 
 WINDOW_DAYS = 90
@@ -157,14 +162,20 @@ def terms_for(identity, destination, card, data, *, label=None):
         score = _score(destination, prefixes, entry) if destination.kind == INTERNATIONAL else 0
         if score is None:
             continue
-        if entry.get('reaches') == 'no':
-            return None, (f'{label or identity} does not call {CLASS_TEXT[destination.kind]}, so this fax cannot go '
-                          'this way')
         if best is None or score > best[0]:
-            best = (score, pricing, terms)
+            best = (score, pricing, terms, entry)
     if best is None:
         return None, None
-    _, pricing, terms = best
+    _, pricing, terms, entry = best
+    # The entry that fits the number best says whether the route takes it at all: a route that serves only some
+    # countries (HumbleFax: the US and Canada) refuses every other one, whatever its calling code ("+1" alone is
+    # not the US or Canada).
+    if entry.get('reaches') == 'no':
+        if destination.kind == INTERNATIONAL:
+            return None, (f'{label or identity} does not send faxes to {where_text(destination)}, so this fax cannot '
+                          'go this way')
+        return None, (f'{label or identity} does not call {CLASS_TEXT[destination.kind]}, so this fax cannot go '
+                      'this way')
     if pricing == 'own':
         return terms, None
     if pricing == 'same_as_card' and card is not None:
@@ -354,6 +365,71 @@ def _hour_facts(engine, number, link, moment, values):
     return replace(link, hour_factor=factor, hour_scope=timing.scope) if factor else link
 
 
+# The newest of this account's carrier records to a country that price its calls there, when nothing is published.
+LEARNED_RECORDS = 10
+
+
+def learned_terms(engine, account, identity, where, label, *, home='US'):
+    """``(RateTerms, clause)`` for a call over this trunk account to an international number whose route publishes
+    no price, from the rate its own carrier records showed for calls to that country (``carrier_charges``, the
+    amount the carrier billed over the seconds it billed); ``(None, None)`` without such records.
+
+    The rate is the middle of the newest ``LEARNED_RECORDS`` priced records in one currency, rounded up to a whole
+    micro a minute; the billing step is the coarsest one those records fit (a minute, six seconds, or a second),
+    and the minimum one step. A published price or a row you saved is always used before this (``facts_for``).
+    The clause says it was learned and when: 'the rate 4 of your Telnyx call records to numbers in the United
+    Kingdom showed, the newest on 8 October 2026'."""
+    from .database import DeliveryStoreError, reflect
+    if engine is None or where.kind != INTERNATIONAL or not where.region or not where.prefix:
+        return None, None
+    try:
+        tables = reflect(engine, ('carrier_charges', 'sip_call_records'))
+    except DeliveryStoreError:
+        return None, None
+    charges, calls = tables['carrier_charges'], tables['sip_call_records']
+    trunk = calls.c.trunk_key if 'trunk_key' in calls.c else None
+    digits = where.prefix.lstrip('+')
+    # The called number as the engine reported it: E.164, or the digits with an international prefix.
+    dialed = [f'+{digits}%', f'{digits}%', f'011{digits}%', f'00{digits}%']
+    query = (sa.select(charges.c.amount_micros, charges.c.billed_seconds, charges.c.currency, charges.c.effective_at,
+                       calls.c.called)
+             .select_from(charges.join(calls, calls.c.id == charges.c.call_record_id))
+             .where(charges.c.applied == 1, calls.c.direction == 'outbound', charges.c.billed_seconds > 0,
+                    charges.c.amount_micros > 0, sa.or_(*(calls.c.called.like(pattern) for pattern in dialed)))
+             .order_by(charges.c.effective_at.desc(), charges.c.id.desc()).limit(200))
+    if trunk is not None:
+        # The first trunk's calls carry no trunk key (or its own); a later trunk's carry its account key.
+        query = query.where(sa.or_(trunk.is_(None), trunk == 'sip') if account == 'sip' else trunk == account)
+
+    def e164(called):
+        text = str(called or '')
+        for lead in ('011', '00'):
+            if text.startswith(lead + digits):
+                return '+' + text[len(lead):]
+        return text if text.startswith('+') else '+' + text
+    with engine.connect() as connection:
+        rows = [row for row in connection.execute(query).mappings()
+                if classify(e164(row['called']), home).region == where.region]
+    if not rows:
+        return None, None
+    currency = rows[0]['currency']
+    rows = [row for row in rows if row['currency'] == currency][:LEARNED_RECORDS]
+    rates = sorted(-(-row['amount_micros'] * 60 // row['billed_seconds']) for row in rows)
+    rate = rates[len(rates) // 2]
+    billed = [row['billed_seconds'] for row in rows]
+    step = 60 if all(value % 60 == 0 for value in billed) else 6 if all(value % 6 == 0 for value in billed) else 1
+    newest = rows[0]['effective_at']
+    try:
+        card = RateCard(None, identity, 'outbound', f'{label}, rate learned from your call records'[:100], currency,
+                        min(rate, 100_000_000), 0, 0, step, step, None, newest)
+    except InvalidRateCard:
+        return None, None
+    count = len(rows)
+    clause = (f"the rate {count} of your {label} call record{'' if count == 1 else 's'} to {where_text(where)} "
+              f'showed, the newest on {newest.day} {newest:%B %Y}')
+    return RateTerms(card, INTERNATIONAL, (where.prefix,), published=False), clause
+
+
 def plan_terms(route_key, terms, card, values):
     """A plan's allowance and extra-page price from its budget (``plan_budget``) first.
 
@@ -461,6 +537,11 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         if rated is not None:
             terms, origin = rated, row.origin
             card = card or rated.card
+    learned = None
+    if terms is None and refusal is None and route_key == 'sip':
+        # Nothing published or saved prices this country on the trunk: the rate its own carrier records showed.
+        terms, learned = learned_terms(engine, account, identity, where, label,
+                                       home=getattr(values, 'fax_default_country', 'US') or 'US')
     terms = plan_terms(account, terms, card, values)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
@@ -487,4 +568,4 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
             plan = plan_use(engine, account, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
-                      origin=origin)
+                      origin=origin, learned=learned)

@@ -337,6 +337,9 @@ async def call_for(ami, values, engine, number):
     None (the fax goes by the carrier as before). Reads only; never raises for a partner that does not qualify."""
     if engine is None or not number:
         return None
+    from ..routing.sender_pins import pinned
+    if pinned(engine, number):
+        return None  # a registered-sender recipient is called over the phone network only (sender_pins, N17)
     from ..routing.numbers import stored_number
     country = getattr(values, 'fax_default_country', 'US') or 'US'
     wanted = stored_number(number, country=country)

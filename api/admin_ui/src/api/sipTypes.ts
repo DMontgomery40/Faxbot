@@ -32,6 +32,13 @@ export interface SipPreset {
   audio_by_default?: boolean;
   // What the phone system's administrator sets, in order.
   admin_steps?: string[];
+  // Encrypted audio fax: 'sdes' encrypts the audio (SRTP) when the trunk signs in over TLS.
+  media_encryption?: 'sdes' | null;
+  encrypted_audio_only?: boolean;
+  // The carrier allows one registration per account.
+  single_registration?: boolean;
+  // The trunk's media depends on the internet access it is reached over ('telekom': CompanyFlex).
+  access_rule?: 'telekom' | null;
 }
 
 // Recipients, Details: how long a page this fax machine takes (learned from calls) and this number's page
@@ -132,8 +139,14 @@ export interface SipTrunkSettings {
     sources: string[]; read_on: string } | null;
   sslfax_listener_port?: number;
   // Why Faxbot chose audio fax for new calls, and when (read only).
-  t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | null;
+  t38_off_reason?: 'no_data_back' | 'network' | 'carrier' | 'encrypted' | null;
   t38_off_at?: string | null;
+  // Your own line's internet addresses or ranges (Telekom CompanyFlex), comma-separated.
+  own_access?: string;
+  // Read only: whether the audio is encrypted now, the access Faxbot is on, and one sentence why.
+  media_encryption?: 'sdes' | null;
+  access?: 'own' | 'other' | 'unknown' | null;
+  encryption_sentence?: string | null;
 }
 
 export type SipRegistration = 'registered' | 'not_registered' | 'rejected' | 'not_used' | 'unknown';

@@ -897,7 +897,13 @@ def choose_layout(frames, *, route, destination, limit, dense_allowed, codec=Non
         if before is not None and after is not None:
             rendered = (sum(before), sum(after))
     pages, reason, details, _ = pieces[key]
-    return {"layout": chosen.layout, "pages": pages, "reason": reason,
+    # Every candidate as it was priced (``pages.sending``'s frontier for comparing accounts): its pages, shape,
+    # prediction, coding and fidelity rank. Read-only; the kept one is the one above.
+    priced_candidates = [{"rendering": name, "layout": layout, "pages": pieces[(name, layout)][0],
+                          "shape": shapes[(name, layout)], "prediction": priced[(name, layout)],
+                          "coding": choices.get((name, layout)), "faithful": pieces[(name, layout)][3]}
+                         for name, layout in keys]
+    return {"layout": chosen.layout, "pages": pages, "reason": reason, "candidates": priced_candidates,
             "seconds_saved": max(0, seconds) if seconds is not None else None,
             "predictions": {layout: prediction for (name, layout), prediction in priced.items() if name == "as_is"},
             "codec": details, "coding": choices.get(key),

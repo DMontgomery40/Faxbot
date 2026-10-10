@@ -94,11 +94,15 @@ def test_whole_minute_rounding_matches_the_research_example():
     trunk = card('sip', minute='0.005')
     assert billed_seconds(trunk, 630) == 660
     assert attempt_cost(trunk, seconds=630, pages=20, delivered=True) == parse_amount('0.055')
-    assert estimate_cost(trunk, 20) == parse_amount('0.055')
+    # Ranking no longer uses that 30 s + 30 s a page guess: estimate_cost is the shared predictor's figure. Twenty
+    # typical standard pages take about 256 s (11 s setup, 9.7 s of data and 2.6 s of handshake a page); over the
+    # default spread (15% shorter or longer a quarter of the time each) that bills 4 minutes a quarter of the time
+    # and 5 minutes otherwise: 285 s expected, $0.02375.
+    assert estimate_cost(trunk, 20) == parse_amount('0.02375')
     api = card('telnyx-fax', page='0.007', minute='0.005')
-    # 500 such documents: $97.50 through a per-page API, $27.50 over a SIP trunk.
-    assert 500 * estimate_cost(api, 20) == parse_amount('97.5')
-    assert 500 * estimate_cost(trunk, 20) == parse_amount('27.5')
+    # 500 such documents: $81.875 through a per-page API, $11.875 over a SIP trunk.
+    assert 500 * estimate_cost(api, 20) == parse_amount('81.875')
+    assert 500 * estimate_cost(trunk, 20) == parse_amount('11.875')
 
 
 def test_rounding_increments_minimums_and_failed_pages():
