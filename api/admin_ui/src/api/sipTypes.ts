@@ -313,4 +313,10 @@ export interface NegotiationSummary {
   groups: NegotiationGroup[];
   sentence: string;
   note: string;
+  // What error correction did on recent sent calls, and each trunk's fax-over-IP (T.38) protection, in sentences.
+  error_correction?: {
+    sentences: string[];
+    trunks: { trunk: string; label: string; protect: string | null; calls: number; loss_percent: number | null;
+      sentence: string }[];
+  };
 }

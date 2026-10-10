@@ -1,8 +1,8 @@
 #!/bin/sh
 # What one fax call negotiated, read from its session log (log/c<commid>), for
 # bin/notify (sent) and bin/received. Prints one base64-encoded JSON object, or
-# nothing when there is no log. Measurement only: nothing reads it to choose
-# how a fax is sent.
+# nothing when there is no log. Measurement, except the error-correction counts
+# below, which engine learning reads to choose a number's error-correction frame size.
 #
 # Whole call: rate_first (the first speed it trained at), rate_lowest (the
 # lowest speed that trained), trainings (how many times it trained),
@@ -43,6 +43,17 @@
 # machine answered with RTN, or that error correction could not get through) and tuning_unconfirmed (1 when the
 # last tuned page was never confirmed). Faxbot uses plain settings for that number afterwards when a tuned page was
 # refused (api/app/pages/tuning.py).
+# Error correction on a sent call (brief 98; Faxbot's engine learning reads these to choose the
+# error-correction frame size, api/app/engine_ecm.py), only when the log has partial page signals:
+# ecm_frame (64 when the other machine's DIS prefers 64-byte frames, "REMOTE supports T.30 Annex A,
+# 64-byte ECM"; else 256), ecm_pages, ecm_pps (partial page signals sent), ecm_blocks and ecm_frames
+# (blocks, and the frames in them the first time), ecm_ppr (requests to send frames again), ecm_bad,
+# ecm_runs and ecm_longest (the frames resent after a block's first request, how many runs of
+# neighbouring frame numbers they make, and the longest), ecm_resent (frames resent in every round),
+# ecm_ctc (continue-to-correct requests), and the turnarounds from a partial page signal to the next
+# frame sent: ecm_edges/ecm_edge_ms (a block edge: PPS-NULL answered MCF) and ecm_rounds/ecm_round_ms
+# (a round of resent frames: a PPS answered PPR). Frame numbers come from "SEND send frame number N"
+# (protocol tracing, SessionTracing 0x2) in the order sent; times from the log's own clock.
 set -u
 
 log=${1:-}
@@ -116,6 +127,39 @@ function number_after(text, pattern, skip,   found) {
   sub(/[^0-9].*$/, "", found)
   return found + 0
 }
+function clock(field,   part) {
+  split(field, part, ":")
+  return part[1] * 3600 + part[2] * 60 + part[3]
+}
+function burst_end(   i, run, runs_here, longest_here, previous) {
+  if (!burst_n) return
+  if (retrans) {
+    resent += burst_n
+    if (first_retrans) {
+      bad += burst_n
+      run = 0; runs_here = 0; longest_here = 0; previous = -2
+      for (i = 1; i <= burst_n; i++) {
+        if (burst[i] == previous + 1) run++
+        else { runs_here++; run = 1 }
+        if (run > longest_here) longest_here = run
+        previous = burst[i]
+      }
+      runs += runs_here
+      if (longest_here > longest) longest = longest_here
+      first_retrans = 0
+    }
+  } else {
+    blocks++
+    block_frames += burst_n
+  }
+  burst_n = 0
+}
+function corrections() {
+  if (!ecm_pps) return
+  printf ",\"ecm_frame\":%d,\"ecm_pages\":%d,\"ecm_pps\":%d,\"ecm_blocks\":%d,\"ecm_frames\":%d", (remote64 ? 64 : 256), ecm_pages, ecm_pps, blocks, block_frames
+  printf ",\"ecm_ppr\":%d,\"ecm_bad\":%d,\"ecm_runs\":%d,\"ecm_longest\":%d,\"ecm_resent\":%d,\"ecm_ctc\":%d", ppr, bad, runs, longest, resent, ctc
+  printf ",\"ecm_edges\":%d,\"ecm_edge_ms\":%d,\"ecm_rounds\":%d,\"ecm_round_ms\":%d", edges, edge_total * 1000 + 0.5, rounds, round_total * 1000 + 0.5
+}
 function tuning() {
   if (!tuned_lines) return
   printf ",\"tuning_jbig_pages\":%d,\"tuning_jbig_tuned\":%d,\"tuning_jbig_bytes\":%d,\"tuning_jbig_plain\":%d", jbig_pages, jbig_tuned, jbig_bytes, jbig_plain
@@ -125,6 +169,37 @@ function tuning() {
 }
 {
   text = message($0)
+  # Error correction on a sent call (see above).
+  if (text ~ /^REMOTE supports T\.30 Annex A, 64-byte ECM/) remote64 = 1
+  if (text ~ /^SEND send frame number [0-9]+$/) {
+    if (pending) {
+      wait = clock($3) - pps_at
+      if (wait < 0) wait += 86400
+      if (pending == 1) { edges++; edge_total += wait } else { rounds++; round_total += wait }
+      pending = 0
+    }
+    burst[++burst_n] = substr(text, 24) + 0
+  } else if (text ~ /^SEND send PPS /) {
+    burst_end()
+    ecm_pps++
+    pps_at = clock($3)
+    pps_null = 0
+    waiting = 1
+    pending = 0
+  } else if (waiting && text ~ /^SEND send NULL /) pps_null = 1
+  else if (waiting && text ~ /^SEND send (MPS|EOP|EOM) /) ecm_pages++
+  else if (waiting && text ~ /^SEND recv PPR /) {
+    ppr++
+    if (!retrans) first_retrans = 1
+    retrans = 1
+    waiting = 0
+    pending = 2
+  } else if (waiting && text ~ /^SEND recv MCF /) {
+    waiting = 0
+    retrans = 0
+    first_retrans = 0
+    if (pps_null) pending = 1
+  } else if (text ~ /^SEND send CTC /) ctc++
   if (text ~ /^LOSSLESS TUNING /) {
     tuned_lines++
     page_tuned = 0
@@ -234,6 +309,7 @@ END {
     printf "\"compression\":null,\"resolution\":null,\"ecm\":null,\"session\":%s", session
     answered()
     tuning()
+    corrections()
     capability()
     exit
   }
@@ -244,5 +320,6 @@ END {
   printf "\"compression\":%s,\"resolution\":%s,\"ecm\":%s,\"session\":%s", one("compression"), one("resolution"), ecm, session
   answered()
   tuning()
+  corrections()
   capability()
 }' "$log" | base64 | tr -d '\n'

@@ -1,0 +1,314 @@
+Faxbot: error correction's frame size and error shape, and T.38 protection by packet category (spandsp 0.0.6;
+builder ENG, brief 98).
+
+Three changes, the spandsp steps of each in faxbot_t38_gateway.h, which the replay proof in asterisk/tests
+compiles as well:
+
+1. Frame size. With FAXBOT_ECM_FRAME=64 on a fax the built-in engine sends, its DCS asks for 64-octet
+   error-correction frames (T.30 DCS bit 28) and spandsp sends them (octets_per_ecm_frame), set as the DCS
+   goes out (faxbot_ecm_small_frames). spandsp 0.0.6 alone always sends 256-octet frames. A DCS without
+   error correction is left alone; unset keeps 256.
+
+2. Error shape. The real-time frame handler of 0004 also keeps what error correction did: partial pages,
+   blocks and their frames, requests to send frames again and how many, the runs of neighbouring frames in a
+   block's first request, the longest run, continue-to-correct requests, and the milliseconds from each partial
+   page signal to the next image data (a block edge, or a round of resent frames). It goes on the channel at
+   the end of the session as FAXBOT_ECM, for the dialplan's FaxFrames event (engine_learning.py reads it), with
+   one NOTICE line. UDPTL marks each received packet that its redundancy recovered (AST_UDPTL_FRFLAG_REPAIRED),
+   so FAXBOT_T38_RX says how T.38 arrived: packets received, recovered, and still missing (spandsp's count).
+   The gateway (SSL Fax engine calls) sets FAXBOT_T38_RX too, for the FaxEngineCall event.
+
+3. T.38 protection by packet category. spandsp asks for each T.38 packet to be sent as many times as its
+   category's setting (indicator, control data, end of control data, image data, end of image data); Asterisk
+   ignored that count, so every packet went once. With FAXBOT_T38_PROTECT ("I.C.CE.IM.IME", 1 to 4 each;
+   engine_learning.py sets it from the loss measured on the trunk) the terminal or gateway sets those counts,
+   and ast_udptl_write sends the same datagram that many times with one UDPTL sequence number
+   (AST_UDPTL_FRFLAG_REPEAT), as spandsp's own UDPTL test harness does; a receiver drops the copies it already
+   has. Unset or malformed keeps Asterisk's behaviour.
+
+Nothing here changes a call Faxbot did not mark, beyond keeping the record.
+
+--- a/include/asterisk/udptl.h
++++ b/include/asterisk/udptl.h
+@@ -45,6 +45,15 @@
+ #endif
+ 
+ struct ast_udptl;
++
++/*!
++ * \brief Faxbot (asterisk/patches/0008): this T.38 frame goes \c seqno times (2 to 4) with one UDPTL sequence
++ * number, as spandsp's per-category count asks when Faxbot's T.38 protection is on (res_fax_spandsp.c).
++ * res_fax uses (1 << 13) for AST_FAX_FRFLAG_GATEWAY; none of these overlaps an AST_FRFLAG_* value.
++ */
++#define AST_UDPTL_FRFLAG_REPEAT (1 << 14)
++/*! \brief Faxbot (0008): UDPTL redundancy (or FEC) recovered this received frame; it did not arrive itself. */
++#define AST_UDPTL_FRFLAG_REPAIRED (1 << 15)
+ 
+ typedef int (*ast_udptl_callback)(struct ast_udptl *udptl, struct ast_frame *f, void *data);
+ 
+--- a/main/udptl.c
++++ b/main/udptl.c
+@@ -493,6 +493,8 @@
+ 					s->f[ifp_no].data.ptr = (uint8_t *) bufs[i - 1];
+ 					s->f[ifp_no].offset = 0;
+ 					s->f[ifp_no].src = "UDPTL";
++					/* Faxbot (0008): recovered from a later packet's redundancy, for the loss Faxbot measures. */
++					ast_set_flag(&s->f[ifp_no], AST_UDPTL_FRFLAG_REPAIRED);
+ 					if (ifp_no > 0)
+ 						AST_LIST_NEXT(&s->f[ifp_no - 1], frame_list) = &s->f[ifp_no];
+ 					AST_LIST_NEXT(&s->f[ifp_no], frame_list) = NULL;
+@@ -610,6 +612,12 @@
+ 				s->f[ifp_no].data.ptr = s->rx[l].buf;
+ 				s->f[ifp_no].offset = 0;
+ 				s->f[ifp_no].src = "UDPTL";
++				/* Faxbot (0008): every packet played here but the one that just arrived was recovered. */
++				if (j != seq_no) {
++					ast_set_flag(&s->f[ifp_no], AST_UDPTL_FRFLAG_REPAIRED);
++				} else {
++					ast_clear_flag(&s->f[ifp_no], AST_UDPTL_FRFLAG_REPAIRED);
++				}
+ 				if (ifp_no > 0)
+ 					AST_LIST_NEXT(&s->f[ifp_no - 1], frame_list) = &s->f[ifp_no];
+ 				AST_LIST_NEXT(&s->f[ifp_no], frame_list) = NULL;
+@@ -631,6 +639,8 @@
+ 		s->f[ifp_no].data.ptr = (uint8_t *) ifp;
+ 		s->f[ifp_no].offset = 0;
+ 		s->f[ifp_no].src = "UDPTL";
++		/* Faxbot (0008): this packet arrived itself (the frames are reused from call to call). */
++		ast_clear_flag(&s->f[ifp_no], AST_UDPTL_FRFLAG_REPAIRED);
+ 		if (ifp_no > 0)
+ 			AST_LIST_NEXT(&s->f[ifp_no - 1], frame_list) = &s->f[ifp_no];
+ 		AST_LIST_NEXT(&s->f[ifp_no], frame_list) = NULL;
+@@ -1187,6 +1197,7 @@
+ {
+ 	unsigned int seq;
+ 	unsigned int len = f->datalen;
++	int copies;
+ 	/* if no max datagram size is provided, use default value */
+ 	const int bufsize = (s->far_max_datagram > 0) ? s->far_max_datagram : DEFAULT_FAX_MAX_DATAGRAM;
+ 	uint8_t buf[bufsize];
+@@ -1227,6 +1238,15 @@
+ 		if (ast_sendto(s->fd, buf, len, 0, &s->them) < 0) {
+ 			ast_log(LOG_NOTICE, "UDPTL (%s): Transmission error to %s: %s\n",
+ 				LOG_TAG(s), ast_sockaddr_stringify(&s->them), strerror(errno));
++		}
++		/* Faxbot (0008): T.38 protection by packet category: the same datagram, the same sequence number, again
++		 * (at most 4 sends in all); the receiver keeps the first copy that arrives and drops the others. */
++		if (ast_test_flag(f, AST_UDPTL_FRFLAG_REPEAT)) {
++			for (copies = 1; copies < f->seqno && copies < 4; copies++) {
++				if (ast_sendto(s->fd, buf, len, 0, &s->them) < 0) {
++					break;
++				}
++			}
+ 		}
+ 		if (udptl_debug_test_addr(&s->them)) {
+ 			ast_verb(1, "UDPTL (%s): packet to %s (seq %u, len %u)\n",
+--- a/res/res_fax_spandsp.c
++++ b/res/res_fax_spandsp.c
+@@ -63,6 +63,8 @@
+ #include "asterisk/channel.h"
+ #include "asterisk/format_cache.h"
+ #include "asterisk/pbx.h"
++/* Faxbot (0008): the frame flags for T.38 protection and recovered packets (AST_UDPTL_FRFLAG_*). */
++#include "asterisk/udptl.h"
+ 
+ #define SPANDSP_EXPOSE_INTERNAL_STRUCTURES
+ #include <spandsp.h>
+@@ -187,6 +189,16 @@
+ 	int faxbot_csi_refuse;
+ 	/*! Faxbot (0007): "matches", "differs" or "refused" once the far end's station was checked, else NULL */
+ 	const char *faxbot_csi_result;
++	/*! Faxbot (0008): what error correction did on this session (faxbot_ecm_record), for FAXBOT_ECM at its end */
++	faxbot_ecm_t faxbot_ecm;
++	/*! Faxbot (0008): 64-octet error-correction frames on this sent fax (FAXBOT_ECM_FRAME=64) */
++	int faxbot_small_frames;
++	/*! Faxbot (0008): T.38 protection by packet category is on (FAXBOT_T38_PROTECT), with its five counts */
++	int faxbot_protect;
++	int faxbot_protect_counts[FAXBOT_T38_CATEGORIES];
++	/*! Faxbot (0008): T.38 packets received, and how many of them UDPTL redundancy recovered */
++	unsigned int faxbot_rx_ifp;
++	unsigned int faxbot_rx_repaired;
+ };
+ 
+ static int spandsp_v21_new(struct spandsp_pvt *p);
+@@ -267,6 +279,12 @@
+ 
+ 	if (!(f = ast_frisolate(f))) {
+ 		return res;
++	}
++	/* Faxbot (0008): with T.38 protection on (FAXBOT_T38_PROTECT), the packet goes as many times as its category
++	 * asks, with one UDPTL sequence number (ast_udptl_write); without it, once, as before. */
++	if (p->faxbot_protect && count > 1) {
++		f->seqno = faxbot_t38_sends(count);
++		ast_set_flag(f, AST_UDPTL_FRFLAG_REPEAT);
+ 	}
+ 
+ 	if (s->details->caps & AST_FAX_TECH_GATEWAY) {
+@@ -403,8 +421,75 @@
+ static void faxbot_frame_handler(t30_state_t *t30, void *user_data, int direction, const uint8_t msg[], int len)
+ {
+ 	struct spandsp_pvt *p = user_data;
+-
++	struct timeval now;
++
++	/* Faxbot (0008): 64-octet frames on this side's DCS when this fax asks for them, before the DCS is kept and
++	 * sent (faxbot_ecm_small_frames). */
++	if (p->faxbot_small_frames && faxbot_ecm_small_frames(t30, direction, msg, len)) {
++		p->faxbot_ecm.small_frames = 1;
++	}
+ 	faxbot_frames_record(&p->faxbot_frames, direction, msg, len);
++	/* Faxbot (0008): what error correction did, timed by the wall clock. */
++	now = ast_tvnow();
++	faxbot_ecm_record(&p->faxbot_ecm, direction, msg, len, (long long) now.tv_sec * 1000 + now.tv_usec / 1000);
++}
++
++/*!
++ * \brief Faxbot (0008): this session's error-correction frame size and T.38 protection, from the channel.
++ *
++ * FAXBOT_ECM_FRAME=64 asks for 64-octet error-correction frames on a fax this session sends (a received fax's
++ * sender chooses its own). FAXBOT_T38_PROTECT ("I.C.CE.IM.IME") sets how many times each category of T.38 packet
++ * goes (faxbot_t38_protect_parse); the T.38 setup applies it. Unset, or anything else, changes nothing.
++ */
++static void faxbot_ecm_start(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	const char *frame, *protect;
++	char asked[24] = "";
++
++	if (!s->chan) {
++		return;
++	}
++	ast_channel_lock(s->chan);
++	frame = pbx_builtin_getvar_helper(s->chan, "FAXBOT_ECM_FRAME");
++	p->faxbot_small_frames = frame && !strcmp(frame, "64") && (s->details->caps & AST_FAX_TECH_SEND);
++	protect = pbx_builtin_getvar_helper(s->chan, "FAXBOT_T38_PROTECT");
++	if (protect) {
++		ast_copy_string(asked, protect, sizeof(asked));
++	}
++	ast_channel_unlock(s->chan);
++	p->faxbot_protect = faxbot_t38_protect_parse(asked, p->faxbot_protect_counts);
++	if (p->faxbot_small_frames) {
++		ast_log(LOG_NOTICE, "Faxbot: %s asks for 64-octet error-correction frames\n", ast_channel_name(s->chan));
++	}
++	if (p->faxbot_protect) {
++		ast_log(LOG_NOTICE, "Faxbot: T.38 protection %s on %s\n", asked, ast_channel_name(s->chan));
++	} else if (asked[0]) {
++		ast_log(LOG_WARNING, "Faxbot: the T.38 protection for %s is not one Faxbot sets; none is used\n",
++			ast_channel_name(s->chan));
++	}
++}
++
++/*!
++ * \brief Faxbot (0008): how T.38 arrived on this session, on the channel: FAXBOT_T38_RX "received.recovered.missing"
++ * (packets that arrived, those UDPTL redundancy recovered, and those still missing after it, spandsp's count) and
++ * FAXBOT_T38_PROTECT_USED (the counts this session sent with, empty without protection). Nothing without T.38.
++ */
++static void faxbot_t38_rx_export(struct ast_fax_session *s, struct spandsp_pvt *p)
++{
++	char text[64] = "";
++	int *counts = p->faxbot_protect_counts;
++
++	if (!s->chan || !p->ist38 || !p->t38_core_state) {
++		return;
++	}
++	snprintf(text, sizeof(text), "%u.%u.%d", p->faxbot_rx_ifp, p->faxbot_rx_repaired,
++		p->t38_core_state->missing_packets);
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_T38_RX", text);
++	text[0] = '\0';
++	if (p->faxbot_protect) {
++		snprintf(text, sizeof(text), "%d.%d.%d.%d.%d", counts[0], counts[1], counts[2], counts[3], counts[4]);
++	}
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_T38_PROTECT_USED", text);
+ }
+ 
+ /*!
+@@ -430,6 +515,7 @@
+ 	char hex[2 * FAXBOT_ADDRESS_MAX + 1];
+ 	char rates[3 * FAXBOT_RATES_MAX + 1];
+ 	char count[12];
++	char ecm[192];
+ 	int i, first = 0, lowest = 0, rate;
+ 
+ 	if (!s->chan) {
+@@ -448,6 +534,16 @@
+ 	pbx_builtin_setvar_helper(s->chan, "FAXBOT_FTT", count);
+ 	pbx_builtin_setvar_helper(s->chan, "FAXBOT_IAF_USED",
+ 		p->faxbot_iaf == FAXBOT_IAF_PEER ? "peer" : p->faxbot_iaf == FAXBOT_IAF_ENDPOINT ? "endpoint" : "");
++	/* Faxbot (0008): what error correction did (faxbot_ecm_text), and how T.38 arrived. */
++	faxbot_ecm_text(&p->faxbot_ecm, ecm, sizeof(ecm));
++	pbx_builtin_setvar_helper(s->chan, "FAXBOT_ECM", ecm);
++	faxbot_t38_rx_export(s, p);
++	if (p->faxbot_ecm.frame_octets) {
++		ast_log(LOG_NOTICE, "Faxbot error correction on %s: %d-octet frames, %u blocks of %u frames, %u requests "
++			"for %u frames again (%u in the first, in %u runs)\n", ast_channel_name(s->chan),
++			p->faxbot_ecm.frame_octets, p->faxbot_ecm.blocks, p->faxbot_ecm.frames, p->faxbot_ecm.ppr,
++			p->faxbot_ecm.resent, p->faxbot_ecm.bad, p->faxbot_ecm.runs);
++	}
+ 	for (i = 0; i < f->rates_len; i++) {
+ 		rate = faxbot_dcs_rate(f->rates[i]);
+ 		if (!i) {
+@@ -1031,6 +1127,11 @@
+ 	}
+ 
+ 	if (p->ist38) {
++		/* Faxbot (0008): T.38 packets received, and those UDPTL redundancy recovered. */
++		p->faxbot_rx_ifp++;
++		if (ast_test_flag(f, AST_UDPTL_FRFLAG_REPAIRED)) {
++			p->faxbot_rx_repaired++;
++		}
+ 		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
+ 	} else {
+ 		return fax_rx(&p->fax_state, f->data.ptr, f->samples);
+@@ -1241,6 +1342,11 @@
+ 
+ 	t38_gateway_set_transmit_on_idle(&p->t38_gw_state, TRUE);
+ 	t38_set_sequence_number_handling(p->t38_core_state, TRUE);
++	/* Faxbot (0008): T.38 protection by packet category on the gateway's T.38 side too (FAXBOT_T38_PROTECT). */
++	faxbot_ecm_start(s, p);
++	if (p->faxbot_protect) {
++		faxbot_t38_protect_apply(p->t38_core_state, p->faxbot_protect_counts);
++	}
+ 
+ 
+ 	t38_gateway_set_supported_modems(&p->t38_gw_state, spandsp_modems(s->details));
+@@ -1279,6 +1385,11 @@
+ 
+ 	/* Process a IFP packet */
+ 	if ((f->frametype == AST_FRAME_MODEM) && (f->subclass.integer == AST_MODEM_T38)) {
++		/* Faxbot (0008): T.38 packets received, and those UDPTL redundancy recovered. */
++		p->faxbot_rx_ifp++;
++		if (ast_test_flag(f, AST_UDPTL_FRFLAG_REPAIRED)) {
++			p->faxbot_rx_repaired++;
++		}
+ 		return t38_core_rx_ifp_packet(p->t38_core_state, f->data.ptr, f->datalen, f->seqno);
+ 	} else if ((f->frametype == AST_FRAME_VOICE) &&
+ 		(ast_format_cmp(f->subclass.format, ast_format_slin) == AST_FORMAT_CMP_EQUAL)) {
+@@ -1300,6 +1411,8 @@
+ 	s->details->option.ecm = t38_stats.error_correcting_mode ? AST_FAX_OPTFLAG_TRUE : AST_FAX_OPTFLAG_FALSE;
+ 	s->details->pages_transferred = t38_stats.pages_transferred;
+ 	ast_string_field_build(s->details, transfer_rate, "%d", t38_stats.bit_rate);
++	/* Faxbot (0008): how T.38 arrived on the gateway's T.38 side, for the dialplan's FaxEngineCall event. */
++	faxbot_t38_rx_export(s, p);
+ }
+ 
+ /*! \brief */
+@@ -1346,6 +1459,9 @@
+ 	/* perhaps set_transmit_on_idle() should be called */
+ 
+ 	t30_set_phase_e_handler(p->t30_state, t30_phase_e_handler, s);
++	/* Faxbot (0008): the error-correction record starts empty; 64-octet frames and T.38 protection when asked. */
++	faxbot_ecm_init(&p->faxbot_ecm);
++	faxbot_ecm_start(s, p);
+ 	/* Faxbot (0004): keep the frames both sides send, for the channel variables at the end of the session. */
+ 	t30_set_real_time_frame_handler(p->t30_state, faxbot_frame_handler, p);
+ 	/* Faxbot (0007): the station check on the far end's DIS, and the cap on waiting for it (FAXBOT_CSI_EXPECT,
+@@ -1407,6 +1523,10 @@
+ 
+ 		if (s->details->their_t38_parameters.transcoding_jbig) {
+ 			t38_set_jbig_transcoding(p->t38_core_state, TRUE);
++		}
++		/* Faxbot (0008): T.38 protection by packet category (FAXBOT_T38_PROTECT), after the terminal's own setup. */
++		if (p->faxbot_protect) {
++			faxbot_t38_protect_apply(p->t38_core_state, p->faxbot_protect_counts);
+ 		}
+ 	} else {
+ 		/* have the fax stack generate silence if it has no data to send */

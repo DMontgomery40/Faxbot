@@ -53,6 +53,9 @@ RATE_CALLS = 2
 FAMILY_IAF = 'faxbot-iaf'
 FAMILY_INRATE = 'faxbot-inrate'
 FAMILY_INMODE = 'faxbot-inmode'
+# T.38 protection by packet category per trunk (asterisk patch 0008, engine_ecm.py): the dialplan's
+# [faxbot-t38-protect] reads it for received calls on either engine, by trunk key ("sip" for the first trunk).
+FAMILY_T38PROTECT = 'faxbot-t38protect'
 # Frames as patch 0004 keeps them: at most 32 octets, and the internet address frames (CSA, TSA) whole, up to 83
 # (address, control, FCF, then T.30 5.3.6.2.12's sequence, type and length octets and at most 77 address octets).
 FRAME_MAX, ADDRESS_MAX = 32, 83
@@ -517,7 +520,7 @@ def caller_keys(number) -> set:
 
 
 def desired_families(store, engine, values, *, now=None) -> dict:
-    """{family: {key: value}} for faxbot-iaf, faxbot-inrate and faxbot-inmode."""
+    """{family: {key: value}} for faxbot-iaf, faxbot-inrate, faxbot-inmode and faxbot-t38protect."""
     now = now or utcnow()
     iaf = {}
     for endpoint in store.endpoints_list():
@@ -545,11 +548,19 @@ def desired_families(store, engine, values, *, now=None) -> dict:
         for number in sorted(engine_learning.inbound_audio_callers(store.engine, values, now=now)):
             for key in caller_keys(number):
                 inmode[key] = 'audio'
-    return {FAMILY_IAF: iaf, FAMILY_INRATE: inrate, FAMILY_INMODE: inmode}
+    # T.38 protection for received calls, per trunk, from the loss measured on each trunk's calls (patch 0008).
+    from . import sip_trunk
+    protect = {}
+    for trunk in sip_trunk.trunk_accounts(values):
+        counts = engine_learning.t38_protection(store.engine, values, trunk.key, now=now).counts
+        if counts:
+            protect[trunk.key] = counts
+    return {FAMILY_IAF: iaf, FAMILY_INRATE: inrate, FAMILY_INMODE: inmode, FAMILY_T38PROTECT: protect}
 
 
 async def sync(ami, store, engine, values, *, now=None) -> dict:
-    """Make Asterisk's faxbot-iaf, faxbot-inrate and faxbot-inmode keys exactly what Faxbot knows; {family: changes}."""
+    """Make Asterisk's faxbot-iaf, faxbot-inrate, faxbot-inmode and faxbot-t38protect keys exactly what Faxbot knows;
+    {family: changes}."""
     import asyncio
     from .inbound.screening import _tree
     desired = await asyncio.to_thread(desired_families, store, engine, values, now=now)

@@ -24,6 +24,13 @@
  *     A paced pair as above, with error correction on both ends or neither, where the sender offers the codings
  *     0006 allows for CODING (faxbot_compressions; "-" for Asterisk's own set). Also prints "dcs <hex>", the last DCS
  *     the sender sent (the coding the pages went with).
+ *   t38_terminal_replay ecm TIFF OUT 64|256 P R SEED PROTECT|-
+ *     Patch 0008: a pair with error correction, MH, where the sender asks for 64- or 256-octet frames as
+ *     FAXBOT_ECM_FRAME does (faxbot_ecm_small_frames), packets towards the receiver go through a two-state loss
+ *     model (P: a burst starts; R: a burst ends; seeded with SEED), and PROTECT ("I.C.CE.IM.IME", or "-") sends each
+ *     packet as many times as its category asks, as FAXBOT_T38_PROTECT does. Prints "seconds", "pages", "status",
+ *     "packets", "lost", "sender_ecm" and "receiver_ecm" (faxbot_ecm_text), "dcs" and "missing" (the receiver's
+ *     count of packets still missing).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -237,6 +244,140 @@ static int pair(const char *tiff, const char *out, int iaf, const char *sub, int
 	return 0;
 }
 
+/*
+ * Patch 0008: error correction's frame size and error shape, and T.38 protection by packet category, between two
+ * terminals joined back to back. Packets from the sender to the receiver go through a two-state (Gilbert-Elliott)
+ * loss model, as tc netem's gemodel applies one per packet: from the good state a packet starts a burst with
+ * probability P, inside a burst it is lost and the burst ends with probability R. The receiver's answers (PPR, MCF)
+ * always arrive, so what error correction did depends on the image direction only. With protection, each packet goes
+ * as many times as its category asks (faxbot_t38_sends), every copy with the same sequence number and each copy
+ * through the loss model, as ast_udptl_write sends them; the receiving core drops copies it already has.
+ */
+struct ecm_side {
+	faxbot_frames_t frames;
+	faxbot_ecm_t ecm;
+	int small;
+};
+
+static struct ecm_side ecm_sender, ecm_receiver;
+static long long ecm_now_ms;
+static double loss_start, loss_end;
+static int in_burst, lost, protect_on;
+static unsigned int seed_state = 1;
+
+static double next_random(void)
+{
+	seed_state = seed_state * 1103515245u + 12345u;
+	return (double) ((seed_state >> 8) & 0xFFFFFF) / (double) 0x1000000;
+}
+
+/* One packet through the loss model: 1 when it is lost. */
+static int lose(void)
+{
+	if (in_burst) {
+		if (next_random() < loss_end) {
+			in_burst = 0;
+		}
+	} else if (next_random() < loss_start) {
+		in_burst = 1;
+	}
+	return in_burst;
+}
+
+static void ecm_handler(t30_state_t *s, void *user_data, int direction, const uint8_t msg[], int len)
+{
+	struct ecm_side *side = user_data;
+
+	if (side->small && faxbot_ecm_small_frames(s, direction, msg, len)) {
+		side->ecm.small_frames = 1;
+	}
+	faxbot_frames_record(&side->frames, direction, msg, len);
+	faxbot_ecm_record(&side->ecm, direction, msg, len, ecm_now_ms);
+}
+
+static int ecm_to_receiver(t38_core_state_t *s, void *user_data, const uint8_t *buf, int len, int count)
+{
+	static uint16_t seq;
+	int copies = protect_on ? faxbot_t38_sends(count) : 1, i;
+
+	for (i = 0; i < copies; i++) {
+		packets_sent++;
+		if (lose()) {
+			lost++;
+			continue;
+		}
+		t38_core_rx_ifp_packet(t38_terminal_get_t38_core_state(&receiver), buf, len, seq);
+	}
+	seq++;
+	return 0;
+}
+
+static int ecm_to_sender(t38_core_state_t *s, void *user_data, const uint8_t *buf, int len, int count)
+{
+	static uint16_t seq;
+	int copies = protect_on ? faxbot_t38_sends(count) : 1, i;
+
+	for (i = 0; i < copies; i++) {
+		packets_sent++;
+		t38_core_rx_ifp_packet(t38_terminal_get_t38_core_state(&sender), buf, len, seq);
+	}
+	seq++;
+	return 0;
+}
+
+static int ecm_pair(const char *tiff, const char *out, int frame, double start, double end, unsigned int seed,
+	const char *protect)
+{
+	t30_state_t *a, *b;
+	char text[192], hex[2 * FAXBOT_ADDRESS_MAX + 1];
+	int counts[FAXBOT_T38_CATEGORIES];
+	int tick;
+
+	loss_start = start;
+	loss_end = end;
+	seed_state = seed ? seed : 1;
+	protect_on = faxbot_t38_protect_parse(protect, counts);
+	faxbot_ecm_init(&ecm_sender.ecm);
+	faxbot_ecm_init(&ecm_receiver.ecm);
+	ecm_sender.small = frame == 64;
+	t38_terminal_init(&sender, TRUE, ecm_to_receiver, NULL);
+	t38_terminal_init(&receiver, FALSE, ecm_to_sender, NULL);
+	a = t38_terminal_get_t30_state(&sender);
+	b = t38_terminal_get_t30_state(&receiver);
+	t30_set_tx_file(a, tiff, -1, -1);
+	t30_set_rx_file(b, out, -1);
+	t30_set_ecm_capability(a, TRUE);
+	t30_set_ecm_capability(b, TRUE);
+	/* MH only: the error-correction cost does not depend on the coding, and MH keeps a dense page large. */
+	t30_set_supported_compressions(a, T30_SUPPORT_T4_1D_COMPRESSION);
+	t30_set_supported_compressions(b, T30_SUPPORT_T4_1D_COMPRESSION | T30_SUPPORT_T4_2D_COMPRESSION
+		| T30_SUPPORT_T6_COMPRESSION);
+	t30_set_phase_e_handler(a, ended, &sender);
+	t30_set_phase_e_handler(b, ended, &receiver);
+	t30_set_real_time_frame_handler(a, ecm_handler, &ecm_sender);
+	t30_set_real_time_frame_handler(b, ecm_handler, &ecm_receiver);
+	if (protect_on) {
+		/* What 0008 does in spandsp_fax_start, after the terminal's own setup. */
+		faxbot_t38_protect_apply(t38_terminal_get_t38_core_state(&sender), counts);
+		faxbot_t38_protect_apply(t38_terminal_get_t38_core_state(&receiver), counts);
+	}
+	for (tick = 0; tick < 50 * 900 && !(done_sender && done_receiver); tick++) {
+		ecm_now_ms = (long long) tick * 20;
+		t38_terminal_send_timeout(&sender, SAMPLES);
+		t38_terminal_send_timeout(&receiver, SAMPLES);
+	}
+	printf("seconds %.2f\npages %d\nstatus %d %d\npackets %d\nlost %d\n", tick * 0.020, pages, status_sender,
+		status_receiver, packets_sent, lost);
+	faxbot_ecm_text(&ecm_sender.ecm, text, sizeof(text));
+	printf("sender_ecm %s\n", text);
+	faxbot_ecm_text(&ecm_receiver.ecm, text, sizeof(text));
+	printf("receiver_ecm %s\n", text);
+	faxbot_hex(ecm_sender.frames.dcs_last.frame, ecm_sender.frames.dcs_last.len, hex);
+	printf("dcs %s\n", hex);
+	printf("missing %d\n", t38_terminal_get_t38_core_state(&receiver)->missing_packets);
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	if (argc == 4 && !strcmp(argv[1], "replay")) {
@@ -249,6 +390,10 @@ int main(int argc, char *argv[])
 	if (argc == 6 && !strcmp(argv[1], "coded")) {
 		return pair(argv[2], argv[3], 0, NULL, 0, argv[4], !strcmp(argv[5], "ecm"));
 	}
+	if (argc == 9 && !strcmp(argv[1], "ecm")) {
+		return ecm_pair(argv[2], argv[3], atoi(argv[4]), atof(argv[5]), atof(argv[6]),
+			(unsigned int) strtoul(argv[7], NULL, 10), argv[8]);
+	}
 	if (argc == 3 && !strcmp(argv[1], "clean")) {
 		char clean[FAXBOT_SUB_MAX + 1];
 
@@ -257,6 +402,6 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 	fprintf(stderr, "usage: %s replay FILE send|receive | pair TIFF OUT paced|peer [SUB [nosub]] | clean VALUE"
-		" | coded TIFF OUT CODING ecm|noecm\n", argv[0]);
+		" | coded TIFF OUT CODING ecm|noecm | ecm TIFF OUT 64|256 P R SEED PROTECT|-\n", argv[0]);
 	return 2;
 }

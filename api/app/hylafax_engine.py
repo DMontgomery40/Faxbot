@@ -734,13 +734,16 @@ def new_tag() -> str:
     return str(secrets.randbelow(9 * 10 ** 15) + 10 ** 15)
 
 
-def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, endpoints=('trunk-endpoint',)) -> str:
+def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, endpoints=('trunk-endpoint',),
+              protect: str | None = None) -> str:
     """The plan Asterisk reads for a tag, from the same Originate fields the built-in engine uses.
 
     The sixth field says whether this call may use T.38 (1) or stays audio (0). A call over a trunk other than
     the first adds a seventh: the trunk's endpoint, which must be one of ``endpoints``, the trunks Faxbot
     rendered into Asterisk's file (``sip_trunk.rendered_endpoints``). A call that presses keys after answer
     (``routing/after_answer.py``) always has the seventh and adds an eighth: the keys, for ``Dial``'s ``D()``.
+    A call with T.38 protection by packet category (``protect``, patch 0008) has the seventh and eighth (either may
+    be empty) and adds a ninth: the counts, for the gateway on the engine's channel.
     """
     from .ami import FAX_PREFERENCE_VARIABLE, requested_keys
     channel = fields['Channel']
@@ -757,6 +760,11 @@ def call_plan(fields: dict, job_id: str, attempt_id: str, *, t38: bool = True, e
     preference = '1' if FAX_PREFERENCE_VARIABLE in fields.get('Variable', '') else '0'
     plan = f'{match.group(1)}/{caller}/{job_id}/{attempt_id}/{preference}/{"1" if t38 else "0"}'
     keys = requested_keys(fields)
+    if protect is not None:
+        if not t38 or not re.fullmatch(r'[1-4](?:\.[1-4]){4}', protect):
+            raise ValueError('Unsupported engine call plan')
+        endpoint = '' if match.group(2) == 'trunk-endpoint' and not keys else match.group(2)
+        return f'{plan}/{endpoint}/{keys or ""}/{protect}'
     if keys:
         return f'{plan}/{match.group(2)}/{keys}'
     return plan if match.group(2) == 'trunk-endpoint' else f'{plan}/{match.group(2)}'
@@ -874,6 +882,11 @@ def create_job(values, *, tag: str, job_id: str, attempt_id: str, tiff_path: str
             commands += [f'JPARM BEGBR {_RATE_CODES[settings.max_rate]}',
                          f'JPARM USEECM {"YES" if settings.ecm else "NO"}',
                          f'JPARM DATAFORMAT {_quote(_DATA_FORMATS[settings.compression])}']
+            # 64-byte error-correction frames, when engine learning chose them for this number (engine_ecm.py):
+            # hfaxd keeps ECMTYPE as the job's desiredec, and faxsend then sends 64-byte frames (FaxSend.c++).
+            # Only after USEECM YES: ECMTYPE alone would turn error correction on.
+            if settings.ecm and getattr(getattr(settings, 'learned', None), 'ecm_frame', None) == 64:
+                commands.append('JPARM ECMTYPE 64BIT')
             if settings.tuning and re.fullmatch(r'faxbot-tuning mr=(?:on|off) jbig=(?:sslfax|always|never)',
                                                 settings.tuning):
                 # Lossless tuning for this call (pages/tuning.py); HylaFAX+ uses comments only for cover pages.
@@ -917,7 +930,10 @@ async def prepare_job(values, ami, *, job_id, attempt_id, dest, tiff_path, setti
     fields = originate_fields_for(full_values, job_id, dest, tiff_path, attempt_id=attempt_id, choice=choice,
                                   trunk=trunk)
     tag = new_tag()
-    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38, endpoints=endpoints)
+    # T.38 protection by packet category for the gateway on this call (patch 0008), from this trunk's measured loss.
+    from .ami import t38_protect_for
+    protect = await asyncio.to_thread(t38_protect_for, full_values, trunk) if settings.t38 else None
+    plan = call_plan(fields, job_id, attempt_id, t38=settings.t38, endpoints=endpoints, protect=protect)
     await ami.db_put(ENGINE_FAMILY, tag, plan)
     try:
         job = await asyncio.to_thread(create_job, values, tag=tag, job_id=job_id, attempt_id=attempt_id,

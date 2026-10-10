@@ -334,7 +334,7 @@ except (urllib.error.URLError, OSError) as error:
 
 def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listener, peer_sslfax=True,
              carrier_t38=None, carrier_drops_t38=False, carrier_nat_standin=False, carrier_receives=False,
-             carrier_empty_preambles=False, peer_ecm=True, api_extra=None):
+             carrier_empty_preambles=False, peer_ecm=True, api_extra=None, carrier_asserts=False):
     """Start the whole loopback; returns (docker, context dict). ``made`` collects it for cleanup at once.
 
     ``api_extra`` adds settings to Faxbot's own (case o: a second trunk number for the reply number).
@@ -416,6 +416,10 @@ def bring_up(tmp_path, label, made, *, faxbot_t38, carrier_gateway, peer_listene
         # seconds of answer tone, then asks Faxbot for T.38 itself, and Faxbot answers the re-INVITE.
         assert CARRIER_RELAY in dialplan
         dialplan = dialplan.replace(CARRIER_RELAY, CARRIER_RECEIVES)
+    if carrier_asserts:
+        # Brief 98: the carrier asserts the caller it verified on the calls it hands Faxbot.
+        assert CARRIER_DIAL in dialplan
+        dialplan = dialplan.replace(CARRIER_DIAL, CARRIER_ASSERTS)
     docker.put(carrier, '/etc/asterisk/extensions.conf',
                dialplan.replace('@GATEWAY@', 'yes' if carrier_gateway else 'no'))
     # Proof only: SIP messages on the console (container log), to see whether T.38 was offered.
@@ -2129,3 +2133,134 @@ def test_w_an_ecm_partial_page_boundary_measured_on_the_line(tmp_path, loopback)
     for found in proof.values():
         assert str(found['status']).upper() == 'SUCCESS' and found['engine'][0]['compression'] == 'MH', proof
         assert found['engine'][0]['ecm'] == 'on', proof
+
+
+# Brief 98 (builder ENG): the SSL Fax engine's half of items 1, 3 and 4 ----------------------------------------
+
+CARRIER_DIAL = ' same => n(dial),Dial(PJSIP/+${EXTEN}@trunk-endpoint,60)\n same => n,Hangup()'
+# The carrier asserts who called, as a STIR/SHAKEN carrier passes its verdict (3GPP TS 24.229 verstat), on the call
+# it hands Faxbot from the peer.
+CARRIER_ASSERTS = (' same => n(dial),Dial(PJSIP/+${EXTEN}@trunk-endpoint,60,b(proof-asserted^s^1))\n'
+                   ' same => n,Hangup()\n\n'
+                   '[proof-asserted]\n'
+                   'exten => s,1,Set(PJSIP_HEADER(add,P-Asserted-Identity)="Clinic (fax) Inc" '
+                   '<sip:+15555550199@carrier.example;user=phone;verstat=TN-Validation-Passed>)\n'
+                   ' same => n,Return()')
+
+
+@pytest.mark.parametrize('engine', ['hylafax', 'builtin'])
+def test_brief98_both_engines_receives_get_the_caller_check_stamp(tmp_path, loopback, engine):
+    """Item 3: the peer faxes Faxbot; the carrier says it verified the caller number (verstat on
+    P-Asserted-Identity), and Faxbot lists that number as a registered sender. Asterisk keeps the headers and the
+    call's start beside them ([faxbot-sip-headers]); the hand-over stamps the fax "verified and registered" through
+    the same code on either engine: the SSL Fax engine's (after the last page), and the built-in engine's (with the
+    SSL Fax engine stopped, as in case n). The header file is gone afterwards."""
+    context = loopback('cc' + engine[0], faxbot_t38=False, carrier_gateway=False,
+                       peer_listener=f'{ADDRESS["peer"]}:{LISTENER_PORT}' if engine == 'hylafax' else '',
+                       peer_sslfax=engine == 'hylafax', carrier_asserts=True)
+    docker, key = context['docker'], context['key']
+    if engine == 'builtin':
+        docker.run('stop', context['engine'])
+        wait_for(lambda: ' OK ' not in docker.asterisk(context['asterisk'], 'iax2 show peers'), 180,
+                 "Faxbot's Asterisk to see the engine's lines gone")
+    saved = api(docker, 'PUT', '/caller-check/registered', key=key, body={'numbers': [PEER_NUMBER]})
+    assert saved['status'] == 200, saved
+    docker.put(context['peer'], '/tmp/inbound.ps', PEER_DOCUMENT)
+    sent = docker.run('exec', context['peer'], 'sendfax', '-n', '-d', FAXBOT_NUMBER.lstrip('+'), '/tmp/inbound.ps',
+                      check=False)
+    assert sent.returncode == 0, sent.stderr
+
+    def arrived():
+        return database(context, fax="SELECT id, from_number FROM inbound_faxes")['fax'] or None
+    faxes = wait_for(arrived, 300, 'the fax in Received')
+    stamp = api(docker, 'GET', f'/caller-check/faxes/{faxes[0]["id"]}', key=key)
+    leftover = docker.sh(context['asterisk'], 'ls /faxdata/inbound/*.sip 2>/dev/null').stdout.strip()
+    calls = database(context, call="SELECT call_id FROM sip_call_records WHERE direction = 'inbound'")['call']
+    proof = {'fax': faxes[0], 'stamp': stamp.get('json'), 'header_files_left': leftover, 'calls': calls}
+    print(f'\nSSLFAX_PROOF_CALLER_CHECK_{engine.upper()} ' + json.dumps(proof, indent=2, default=str))
+    found = (stamp.get('json') or {}).get('stamp') or {}
+    assert stamp['status'] == 200 and found.get('stamp') == 'verified_registered', proof
+    assert found.get('verstat') == 'TN-Validation-Passed' and found.get('registered') is True, proof
+    assert "the carrier's STIR/SHAKEN check passed" in found.get('sentence', ''), proof
+    # The engine that took the call: the SSL Fax engine's calls are keyed engine.<token>, the built-in engine's by
+    # Asterisk's own call ID.
+    assert any(call['call_id'].startswith('engine.') == (engine == 'hylafax') for call in calls), proof
+    assert not leftover, proof
+
+
+def header_line(page, rows=40):
+    """What Tesseract reads in the top ``rows`` rows of a received page (the sending engine's tag line)."""
+    import shutil
+    import subprocess
+    from PIL import ImageOps
+    if not shutil.which('tesseract'):
+        return None
+    strip = page.convert('L').crop((0, 0, page.size[0], rows))
+    ink = ImageOps.invert(strip).getbbox() or (0, 0, strip.size[0], rows)
+    strip = strip.crop((max(0, ink[0] - 10), 0, min(strip.size[0], ink[2] + 10), rows))
+    strip = ImageOps.expand(strip.resize((strip.size[0] * 2, strip.size[1] * 4), Image_NEAREST()), border=20,
+                            fill=255)
+    with tempfile.TemporaryDirectory() as folder:
+        picture = Path(folder) / 'header.png'
+        strip.save(picture)
+        result = subprocess.run(['tesseract', str(picture), 'stdout', '--psm', '7'], capture_output=True, text=True,
+                                timeout=60)
+    return ' '.join(result.stdout.split()).lower()
+
+
+def Image_NEAREST():
+    from PIL import Image
+    return Image.NEAREST
+
+
+def test_brief98_the_ssl_fax_engine_prints_the_jobs_own_header_and_station_and_uses_64_octet_frames(
+        tmp_path, loopback):
+    """Items 4 and 1 on the SSL Fax engine. The job carries its header text and station ID (JPARM TAGLINE with %l
+    and TSI), the path a relayed fax's true sender takes (``ami.sender_identity`` feeds ``prepare_job``; proven
+    with the real relay records in test_partner_relay): the peer's received page reads it in its tag line and the
+    peer records it as the sender. Engine learning has three earlier calls to the peer that lost many scattered
+    frames (records written as the engine's reports leave them), so this job asks for 64-octet error-correction frames
+    (JPARM ECMTYPE 64BIT): the peer's session log shows it received them, the pages arrive pixel for pixel, and
+    Faxbot keeps what error correction did from its own engine's session log."""
+    context = loopback('hd', faxbot_t38=False, carrier_gateway=False, peer_listener=None, peer_sslfax=False,
+                       api_extra={'FAX_HEADER': 'Leeds HQ', 'SIP_FAX_COMPRESSION': 'mh'})
+    docker = context['docker']
+    seeded = docker.run('exec', '--interactive', context['api'], 'python', '-c', ECM_SEED, input_text=PEER_NUMBER)
+    assert 'seeded 3' in seeded.stdout, seeded.stdout + seeded.stderr
+    outcome = send_and_collect(tmp_path, context)
+    proof = evidence(outcome)
+    text = header_line(outcome['received_pages'][0]) if outcome['received_pages'] else None
+    digits = ''.join(character for character in (text or '') if character.isdigit())
+    ecm = database(context, rows="SELECT source, frame_octets, small_frames, pps, blocks, frames, ppr, edges, "
+                                 "edge_ms FROM fax_call_ecm WHERE source = 'hylafax'")['rows']
+    peer_wants = [line.split(']: ', 1)[-1] for line in outcome['peer_log'].splitlines() if 'REMOTE wants' in line]
+    proof.update(header_line_read=text, ecm_rows=ecm, peer_wants=peer_wants[:6],
+                 faxbot_ecm_lines=[line.split(']: ', 1)[-1] for line in outcome['faxbot_log'].splitlines()
+                                   if 'PPS' in line or 'PPR' in line][:12])
+    print('\nSSLFAX_PROOF_BRIEF98 ' + json.dumps(proof, indent=2, default=str))
+    assert_delivered(outcome, proof)
+    assert proof['received_info'].get('Sender') == FAXBOT_NUMBER, proof
+    if text is not None:
+        assert 'leeds' in text and FAXBOT_NUMBER.lstrip('+') in digits, text
+    assert any('64-byte ECM' in line for line in peer_wants), proof
+    assert ecm and ecm[-1]['frame_octets'] == 64 and ecm[-1]['small_frames'] == 1 and ecm[-1]['pps'], proof
+
+
+# Three earlier calls to the peer whose receiving machine asked for many scattered frames again: written as the
+# built-in engine's FaxFrames reports leave them (engine_ecm.frames_row), inside the API container's own database.
+ECM_SEED = r'''
+import sys, uuid
+from app import engine_ecm
+from app.schema import create_database_engine
+number = sys.stdin.read().strip()
+engine = create_database_engine('sqlite:////faxdata/faxbot.db')
+store = engine_ecm.EcmStore(engine)
+kept = 0
+for _ in range(3):
+    key = uuid.uuid4().hex
+    row = engine_ecm.frames_row({'Direction': 'out', 'AttemptID': key, 'JobID': '', 'Endpoint': 'trunk-endpoint',
+                                 'Ecm': '256.2.1.60.1.40.40.1.40.0.0.0.1.3300.0.1', 'T38Rx': '', 'T38Protect': ''})
+    row['number'] = number
+    kept += store.record(row)
+print('seeded', kept)
+'''

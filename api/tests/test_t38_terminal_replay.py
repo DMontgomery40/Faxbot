@@ -11,6 +11,11 @@ with the steps 0004 adds from asterisk/patches/faxbot_t38_gateway.h, the file th
 - Internet Aware Fax: two terminals back to back send the same three pages paced (as Asterisk runs spandsp) and
   as two Faxbots with 0004's IAF ("peer"). IAF must finish sooner, with the same pages, pixel for pixel.
 
+Patch 0008 (brief 98): two terminals with error correction send a dense document with 64- or 256-octet frames
+(the pages must arrive pixel for pixel, and the error record count the blocks), through a bursty loss model (both
+sides' records must agree on the requests to send frames again), and with T.38 protection by packet category (the
+receiver drops the copies, and fewer packets stay missing over the same loss).
+
 Runs only with FAXBOT_NATIVE_PROOF=1 (it builds a small image with Docker).
 """
 import base64
@@ -202,6 +207,7 @@ def replay():
         (context / 'data' / 'answer-address.ifp').write_text(answer_with_address_sequence())
         (context / 'data' / 'sender.ifp').write_text(sender_sequence())
         (context / 'data' / 'proof.tif').write_bytes(tiff)
+        (context / 'data' / 'dense.tif').write_bytes(dense_tiff()[0])
         for capture in CAPTURES:
             (context / 'data' / (capture.stem + '.ifp')).write_text(lines_of(udptl_from_far_end(capture)))
         (context / 't38_terminal_replay.c').write_text((ROOT / 'asterisk' / 'tests' / 't38_terminal_replay.c').read_text())
@@ -383,3 +389,115 @@ def test_a_spandsp_other_than_the_pinned_one_still_stops_the_build(replay):
              'other-builds; fi')
     output = replay(script=probe)
     assert 'pinned-builds' in output and 'other-builds' not in output
+
+
+# -- patch 0008: error-correction frame size, error record and T.38 protection ----------------------------------
+
+def dense_tiff(seed=5):
+    """Two pages of scattered dots in a band, about 24 KB each in MH: past one 64-octet-frame block (16 KB), inside
+    one 256-octet-frame block (64 KB)."""
+    import random
+    from PIL import Image
+    rng = random.Random(seed)
+    pages = []
+    for _ in range(2):
+        page = Image.new('1', (1728, 1100), 1)
+        pixels = page.load()
+        for y in range(100, 170):
+            for x in range(0, 1728, 2):
+                if rng.random() < 0.35:
+                    pixels[x, y] = 0
+        pages.append(page)
+    output = io.BytesIO()
+    pages[0].save(output, format='TIFF', save_all=True, append_images=pages[1:], compression='group4', dpi=(204, 196))
+    return output.getvalue(), pages
+
+
+ECM_NAMES = ('frame', 'pps', 'blocks', 'frames', 'ppr', 'bad', 'runs', 'longest', 'resent', 'ctc', 'edges',
+             'edge_ms', 'rounds', 'round_ms', 'small', 'pages')
+
+
+def ecm_pair(replay, frame, start, end, seed, protect='-'):
+    from PIL import Image
+    # A call the loss broke leaves no image: the summary still comes back.
+    script = (f'/replay ecm /data/dense.tif /tmp/ecm.tif {frame} {start} {end} {seed} {protect}; echo image; '
+              f'base64 -w0 /tmp/ecm.tif 2>/dev/null; echo')
+    summary, image = replay(script=script).split('image\n', 1)
+    found = kept(summary)
+    for side in ('sender_ecm', 'receiver_ecm'):
+        found[side] = dict(zip(ECM_NAMES, (int(value) for value in found[side].split('.'))))
+    found['received'] = Image.open(io.BytesIO(base64.b64decode(image.strip()))) if image.strip() else None
+    return found
+
+
+def same_pages(received, pages):
+    for number, page in enumerate(pages):
+        received.seek(number)
+        if received.convert('1').tobytes() != page.tobytes():
+            return False
+    return True
+
+
+def test_64_octet_error_correction_frames_carry_the_same_pages_in_more_blocks(replay):
+    """Patch 0008: FAXBOT_ECM_FRAME=64 makes the sender's DCS ask for 64-octet frames (bit 28) and spandsp send
+    them; spandsp's receiver takes them, and the pages arrive pixel for pixel. A page of about 25 KB is one block at
+    256 octets and two at 64 (a partial page holds 256 frames); the error record counts the blocks each side saw."""
+    from app import engine_frames
+    _, pages = dense_tiff()
+    found = {frame: ecm_pair(replay, frame, 0, 1, 1) for frame in (256, 64)}
+    for frame, run in found.items():
+        assert run['status'] == '0 0' and run['pages'] == '2', run
+        assert same_pages(run['received'], pages), frame
+        dcs = bytes.fromhex(run['dcs'])
+        assert bool(dcs[6] & 0x08) is (frame == 64) and bool(dcs[6] & 0x04), run['dcs']  # bit 28, and ECM (27)
+        assert engine_frames.decode_dcs(run['dcs'])['ecm'] is True
+        sender, receiver = run['sender_ecm'], run['receiver_ecm']
+        assert sender['frame'] == receiver['frame'] == frame and sender['small'] == (frame == 64)
+        assert sender['pages'] == receiver['pages'] == 2 and sender['blocks'] == receiver['blocks']
+        assert sender['ppr'] == receiver['ppr'] == 0 and sender['bad'] == 0
+    usual, small = found[256]['sender_ecm'], found[64]['sender_ecm']
+    assert usual['blocks'] == 2 and small['blocks'] == 4, (usual, small)
+    assert small['frames'] >= 4 * usual['frames'] - 8  # the same octets in four times the frames
+    print({frame: {'seconds': run['seconds'], 'sender_ecm': run['sender_ecm']} for frame, run in found.items()})
+
+
+def test_the_error_record_counts_the_requests_a_bursty_loss_causes_on_both_sides(replay):
+    """Bursts of lost packets towards the receiver (two-state model: 2% start a burst, half end each packet) spoil
+    frames; the receiver asks for them again (PPR) and the sender resends them. Both sides' records agree on the
+    requests and the frames they named, the runs are counted, and the pages still arrive whole."""
+    found = ecm_pair(replay, 256, 0.02, 0.5, 7)
+    _, pages = dense_tiff()
+    sender, receiver = found['sender_ecm'], found['receiver_ecm']
+    assert found['status'] == '0 0' and same_pages(found['received'], pages), found
+    assert sender['ppr'] > 0 and sender['bad'] > 0 and 0 < sender['runs'] <= sender['bad'], sender
+    assert (sender['ppr'], sender['bad'], sender['runs'], sender['resent']) == (
+        receiver['ppr'], receiver['bad'], receiver['runs'], receiver['resent']), found
+    assert sender['rounds'] >= 1 and sender['round_ms'] > 0
+    print({'lost': found['lost'], 'seconds': found['seconds'], 'sender_ecm': sender})
+
+
+def test_protection_by_category_sends_copies_the_receiver_drops_and_loses_fewer_packets(replay):
+    """Patch 0008's protection: each packet goes as many times as its category asks, with one sequence number. Over
+    the same loss model and seeds (no UDPTL redundancy in this harness: a lost packet is lost), every protected fax
+    arrives whole and sooner, where unprotected ones fail or wait out T.30 timeouts; a delivered fax matches pixel
+    for pixel, so no copy was taken twice."""
+    _, pages = dense_tiff()
+    results = {'plain': [], 'protected': []}
+    for seed in (3, 5, 9, 13):
+        unprotected = ecm_pair(replay, 256, 0.02, 0.5, seed)
+        both = ecm_pair(replay, 256, 0.02, 0.5, seed, '4.3.4.1.4')
+        assert int(both['packets']) > int(unprotected['packets'])  # the copies went
+        for name, found in (('plain', unprotected), ('protected', both)):
+            delivered = found['status'] == '0 0'
+            # A fax that arrives arrives whole: no copy was taken twice.
+            assert not delivered or same_pages(found['received'], pages), (name, seed)
+            results[name].append({'seed': seed, 'delivered': delivered, 'status': found['status'],
+                                  'missing': int(found['missing']), 'seconds': float(found['seconds']),
+                                  'ppr': found['sender_ecm']['ppr'], 'resent': found['sender_ecm']['resent']})
+    print({'protection_replay': results})
+    delivered = {name: sum(row['delivered'] for row in rows) for name, rows in results.items()}
+    assert delivered['protected'] == 4 and delivered['protected'] >= delivered['plain'], delivered
+    # Where both delivered, protection made the call shorter: a lost control packet costs a T.30 timeout.
+    both = [(plain, protected) for plain, protected in zip(results['plain'], results['protected'])
+            if plain['delivered'] and protected['delivered']]
+    assert both and sum(row[1]['seconds'] for row in both) < sum(row[0]['seconds'] for row in both), both

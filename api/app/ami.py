@@ -132,6 +132,8 @@ def prepare_originate_fields(
     csi_expect: Optional[str] = None,
     csi_refuse: bool = False,
     dtmf: Optional[str] = None,
+    ecm_frame: Optional[int] = None,
+    t38_protect: Optional[str] = None,
 ) -> Dict[str, str]:
     """Prepare one direct PJSIP call before a durable marker or any I/O.
 
@@ -153,6 +155,9 @@ def prepare_originate_fields(
     (``routing/stations.py``): FAXBOT_T0_MS, FAXBOT_CSI_EXPECT (digits separated by dots) and FAXBOT_CSI_REFUSE.
     ``dtmf`` is the keys pressed once the call is answered, before the fax starts (``routing/after_answer.py``,
     FAXBOT_DTMF): 0-9, * and #, with w and W pauses.
+    ``ecm_frame`` (64) and ``t38_protect`` ("I.C.CE.IM.IME") are patch 0008's error-correction frame size and T.38
+    protection by packet category (``engine_ecm.py``, chosen by ``engine_learning.decide``): FAXBOT_ECM_FRAME and
+    FAXBOT_T38_PROTECT. None changes nothing.
     ``peer`` is a partner's peer fax call endpoint (``peer-<id>-endpoint``,
     direct/peer_call.py): the call goes there, inside the tunnel, instead of
     over ``endpoint``. The caller checked the tunnel first.
@@ -217,6 +222,15 @@ def prepare_originate_fields(
         if iaf not in ("peer", "endpoint"):
             raise ValueError("Unsupported AMI fax mode")
         variables["FAXBOT_IAF"] = iaf
+    # Patch 0008: 64-octet error-correction frames, and T.38 protection by packet category (engine_ecm.py).
+    if ecm_frame is not None:
+        if ecm_frame != 64:
+            raise ValueError("Unsupported AMI error-correction frame")
+        variables["FAXBOT_ECM_FRAME"] = "64"
+    if t38_protect is not None:
+        if not isinstance(t38_protect, str) or not re.fullmatch(r"[1-4](?:\.[1-4]){4}", t38_protect):
+            raise ValueError("Unsupported AMI T.38 protection")
+        variables["FAXBOT_T38_PROTECT"] = t38_protect
     # Audio fax for this call only: fax over IP (T.38) failed to this number and audio has not (engine_learning).
     if not isinstance(audio, bool):
         raise ValueError("Unsupported AMI fax mode")
@@ -335,10 +349,9 @@ def sender_identity(job_id):
     FAXSTATION64, the SSL Fax engine in the job's tag line and TSI (``hylafax_engine.prepare_job``). The relay's
     lookup logs its documented store errors and gives None; anything else raises."""
     from .direct.relay import sender_identity_for
-    engine = _database()
-    if engine is None or not job_id:
+    if not job_id:
         return None
-    found = sender_identity_for(engine, job_id)
+    found = sender_identity_for(_database(), job_id)
     if found is None:
         return None
     header, station = found
@@ -374,7 +387,8 @@ def fax_subaddress(job_id) -> Optional[str]:
 
 def learned_options(learned):
     """Originate keyword arguments for what Faxbot learned about the number (engine_learning.Decision):
-    audio fax, T.38 at once and Internet Aware Fax. Speed and error correction come with the call."""
+    audio fax, T.38 at once, Internet Aware Fax and the error-correction frame size (patch 0008). Speed and error
+    correction come with the call."""
     found = {}
     if getattr(learned, "audio", False):
         found["audio"] = True
@@ -382,7 +396,25 @@ def learned_options(learned):
         found["t38_now"] = True
     if getattr(learned, "iaf", None):
         found["iaf"] = learned.iaf
+    if getattr(learned, "ecm_frame", None) == 64:
+        found["ecm_frame"] = 64
     return found
+
+
+def t38_protect_for(values, trunk=None):
+    """The T.38 protection by packet category for a call over ``trunk`` (patch 0008, ``engine_ecm.py``), or None.
+    A database that cannot be read now gives none, logged; anything else raises."""
+    import sqlalchemy as sa
+    from .engine_learning import t38_protection
+    database = _database()
+    if database is None:
+        return None
+    try:
+        return t38_protection(database, values, trunk or "sip").counts
+    except sa.exc.SQLAlchemyError as error:
+        logging.getLogger(__name__).warning("The T.38 loss on this trunk could not be read (%s); its packets go "
+                                            "once.", type(error).__name__)
+        return None
 
 
 def frame_options(values, dest, max_rate=None):
@@ -479,6 +511,11 @@ def originate_fields_for(values, job_id, dest, tiff_path, *, attempt_id=None, ca
     subaddress = fax_subaddress(job_id)
     if subaddress:
         limits["subaddress"] = subaddress
+    if peer is None and not limits.get("audio"):
+        # Patch 0008: T.38 protection by packet category, from the loss measured on this trunk's calls.
+        protect = t38_protect_for(values, trunk)
+        if protect:
+            limits["t38_protect"] = protect
     if peer is not None:
         # A peer fax call (direct/peer_call.py): to the partner's Asterisk inside the tunnel, never a carrier. Its
         # number as you know it reaches the partner's own receiving rules; both ends are Faxbot, so IAF is on.

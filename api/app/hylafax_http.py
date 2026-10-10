@@ -121,6 +121,18 @@ def _record_engine(request, job_id, attempt_id, payload, row):
     hylafax_records.safely(records.record_negotiation, direction='outbound', call_key=attempt_id, engine='hylafax',
                            values=engine_values(payload.get('negotiation_b64')), job_id=job_id,
                            number=(row or {}).get('called'))
+    # What error correction did on the call (engine_ecm.py): engine learning reads it to choose the frame size.
+    from . import engine_ecm
+    try:
+        engine_ecm.record_engine_report(engine, direction='outbound', call_key=attempt_id,
+                                        negotiation_b64=payload.get('negotiation_b64'),
+                                        small=payload.get('ecm_small') is True, number=(row or {}).get('called'),
+                                        trunk=(row or {}).get('trunk') or 'sip', job_id=job_id,
+                                        attempt_id=attempt_id)
+    except engine_ecm.EcmStoreError as error:
+        import logging
+        logging.getLogger(__name__).warning('What error correction did on a fax call could not be kept (%s).',
+                                            error)
     # The other machine's answer to each page, for sending only the rest of a broken fax (routing/continuation.py).
     from .routing.continuation import record_engine_report
     hylafax_records.safely(record_engine_report, engine, job_id=job_id, attempt_id=attempt_id,
@@ -289,9 +301,15 @@ async def negotiation_summary(request: Request, days: int = 30):
     if days not in fax_negotiation.DAYS:
         raise HTTPException(400, detail='Choose 7, 30 or 90 days.')
     try:
-        return await run_lifecycle_step(lambda: fax_negotiation.summary(_engine_for(request), days=days))
+        found = await run_lifecycle_step(lambda: fax_negotiation.summary(_engine_for(request), days=days))
     except Exception:
         raise HTTPException(503, detail='Call measurements are unavailable. Try again.') from None
+    # Error correction on recent calls and each trunk's T.38 protection (engine_ecm.py, patch 0008).
+    from . import engine_ecm
+    values = request.scope['faxbot.configuration'].active.values
+    found['error_correction'] = await run_lifecycle_step(
+        lambda: engine_ecm.trunk_view(_engine_for(request), values, days=days))
+    return found
 
 
 @router.get('/admin/sip/negotiation/received/{inbound_id}')

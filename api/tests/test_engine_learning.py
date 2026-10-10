@@ -542,9 +542,14 @@ def relayed(monkeypatch):
     return module
 
 
-def test_without_the_relay_every_fax_carries_its_own_header_and_station(monkeypatch):
-    monkeypatch.setitem(sys.modules, 'app.direct.relay', None)  # an import that fails, as before AS merges
-    assert ami.sender_identity('job1') is None
+def test_without_the_relay_every_fax_carries_its_own_header_and_station(monkeypatch, sqlite):
+    # The relay is merged (direct/relay.py) and imported for real: a fax it does not carry keeps its own header and
+    # station, and a database without the relay's records (or none) is logged, never a failed fax.
+    monkeypatch.setattr(ami, '_database', lambda: sqlite)
+    assert ami.sender_identity('a' * 32) is None
+    for engine in (sa.create_engine('sqlite://'), None):
+        monkeypatch.setattr(ami, '_database', lambda: engine)
+        assert ami.sender_identity('a' * 32) is None
 
 
 def test_a_relayed_fax_carries_the_partners_header_and_station_on_the_built_in_engine(relayed, monkeypatch):

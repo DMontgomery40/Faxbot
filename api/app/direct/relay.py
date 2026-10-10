@@ -1706,6 +1706,8 @@ def sender_identity_for(engine, job_id):
     """
     import sqlalchemy as sa
     from ..routing.database import read_connection
+    if engine is None:
+        return None  # no installation database: nothing is relayed
     try:
         store = RelayStore(engine)
         fax = store.fax_for_job(job_id, role='relay')

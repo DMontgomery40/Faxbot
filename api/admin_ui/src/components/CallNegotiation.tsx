@@ -140,6 +140,17 @@ export default function NegotiationSummary({ client }: { client: AdminAPIClient 
         </Typography>
       )}
       {summary && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{summary.note}</Typography>}
+      {summary?.error_correction && (
+        <Box data-testid="negotiation-error-correction" sx={{ mt: 2 }}>
+          <Typography variant="subtitle2">Error correction and fax-over-IP protection</Typography>
+          {summary.error_correction.sentences.map((text) => (
+            <Typography key={text} variant="body2">{text}</Typography>
+          ))}
+          {summary.error_correction.trunks.map((trunk) => (
+            <Typography key={trunk.trunk} variant="body2" color="text.secondary">{trunk.sentence}</Typography>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

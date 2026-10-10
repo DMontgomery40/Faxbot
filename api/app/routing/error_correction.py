@@ -133,6 +133,12 @@ def fact_for(engine, values, number, *, recipient=None, settings=None, views=Non
     limit = (recipient or {}).get('ecm')
     limit = None if limit is None else bool(limit)
     frame = {}
+    if engine is not None and settings.ecm:
+        try:
+            frame = _frame(engine, values, number, settings, now)
+        except sa.exc.SQLAlchemyError as error:
+            logging.getLogger(__name__).warning('The error-correction records could not be read (%s); the call is '
+                                                'priced with 256-octet frames.', type(error).__name__)
     if not settings.ecm or engine is None:
         return decide(settings.ecm, limit=limit, capability=capability, **frame)
     if views is None or capability is None:
@@ -151,6 +157,19 @@ def fact_for(engine, values, number, *, recipient=None, settings=None, views=Non
                                                 'correction is priced by the coding.', type(error).__name__)
             views = views or ()
     return decide(True, views=views or (), capability=capability, limit=limit, **frame)
+
+
+def _frame(engine, values, number, settings, now):
+    """The frame size this call uses (engine learning's decision on the call's own settings) and, from the same
+    records (``engine_ecm.learned``), its sentence and the measured turnaround of a partial page."""
+    from .. import engine_ecm, engine_learning as learning
+    moment = now or learning.utcnow()
+    epoch = learning.current_epoch(engine, values, now=moment, write=False)
+    found = engine_ecm.learned(engine, number, since=learning.evidence_since(epoch, moment, learning.LEARN_DAYS),
+                               rate=settings.max_rate, now=moment)
+    frame = 64 if getattr(getattr(settings, 'learned', None), 'ecm_frame', None) == 64 else 256
+    return {'frame_octets': frame, 'frame_why': found.frame_why if frame == found.frame_octets == 64 else None,
+            'block_seconds': found.block_seconds, 'block_calls': found.block_calls}
 
 
 def frame_seconds(page_bits, frame_octets, rate):

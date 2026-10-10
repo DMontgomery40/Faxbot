@@ -94,6 +94,26 @@ describe('How fax calls went, on the trunk page', () => {
     expect(asked).toEqual(['30', '7']);
   });
 
+  it('says what error correction did and how each trunk protects its fax-over-IP packets', async () => {
+    const PROTECTED = 'Telnyx: Fax-over-IP calls on this trunk lost 1.2% of their packets (8 calls recently), so Faxbot '
+      + 'sends the short packets that carry the fax handshake up to three times; page data still goes once, as error '
+      + 'correction repairs it.';
+    const correction = {
+      sentences: ['On 5 sent calls with error correction in the last 30 days, the receiving machines asked for 34 '
+        + 'damaged frames again, in 20 stretches.', 'Each block of a page after the first took about 3.4 seconds more '
+        + 'on the line (4 calls).'],
+      trunks: [{ trunk: 'sip', label: 'Telnyx', protect: '3.2.3.1.3', calls: 8, loss_percent: 1.2, sentence: PROTECTED }],
+    };
+    server.use(http.get('/admin/sip/negotiation', () => HttpResponse.json({
+      days: 30, calls: 0, measured_calls: 0, note: MEASURE_ONLY, groups: [], error_correction: correction,
+      sentence: 'No fax call in the last 30 days has reported what it negotiated yet.',
+    })));
+    render(<NegotiationSummary client={client()} />);
+    const block = await screen.findByTestId('negotiation-error-correction');
+    expect(within(block).getByText('Error correction and fax-over-IP protection')).toBeTruthy();
+    for (const text of [...correction.sentences, PROTECTED]) expect(within(block).getByText(text)).toBeTruthy();
+  });
+
   it('says when it cannot be read', async () => {
     server.use(http.get('/admin/sip/negotiation', () => HttpResponse.json({ detail: 'x' }, { status: 403 })));
     render(<NegotiationSummary client={client()} />);

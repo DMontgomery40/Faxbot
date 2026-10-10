@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .access.http import require_identity
 from .access.route_policy import require_permission
 from .config_runtime import run_lifecycle_step
-from . import engine_frames, engine_learning
+from . import engine_ecm, engine_frames, engine_learning
 from .routing.background import installation_engine, lifespan_tasks, repeat_async
 
 SYNC_EVERY_SECONDS = 600.0
@@ -36,6 +36,8 @@ class FramesWork:
         self.synced_at = 0.0
         self.learned_at = 0.0
         ami.on_frames(self.heard)
+        # How T.38 arrived at the gateway on the SSL Fax engine's calls (engine_ecm.py, patch 0008).
+        ami.on_engine_call(self.gateway)
         # What each placed call used (both engines' Submission events), and new results to learn from.
         ami.on_submission(self.submitted)
         for listen in (ami.on_fax_result, ami.on_inbound_call, ami.on_engine_call):
@@ -54,12 +56,39 @@ class FramesWork:
         if row is None:
             return
 
+        ecm = engine_ecm.frames_row(event)
+
         def record():
             try:
                 if engine_frames.FrameStore(engine).record(row):
                     self.dirty = True
             except Exception:
                 logging.getLogger(__name__).warning("A fax call's far-end details could not be recorded.")
+            # What error correction and T.38 did on the call (patch 0008), for engine learning.
+            if ecm is not None:
+                try:
+                    engine_ecm.EcmStore(engine).record(ecm)
+                except engine_ecm.EcmStoreError as error:
+                    logging.getLogger(__name__).warning('What error correction did on a fax call could not be '
+                                                        'kept (%s).', error)
+        try:
+            asyncio.get_running_loop().run_in_executor(None, record)
+        except RuntimeError:
+            record()
+
+    def gateway(self, event):
+        """Keep how T.38 arrived at the gateway on an SSL Fax engine call (a FaxEngineCall event), off the event
+        loop; a record that cannot be kept is logged."""
+        row = engine_ecm.gateway_row(event)
+        engine, _ = installation_engine(self.app)
+        if row is None or engine is None:
+            return
+
+        def record():
+            try:
+                engine_ecm.EcmStore(engine).record(row)
+            except engine_ecm.EcmStoreError as error:
+                logging.getLogger(__name__).warning('How T.38 arrived on a fax call could not be kept (%s).', error)
         try:
             asyncio.get_running_loop().run_in_executor(None, record)
         except RuntimeError:

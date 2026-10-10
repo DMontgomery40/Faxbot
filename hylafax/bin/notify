@@ -49,6 +49,9 @@ status_code=$(field statuscode | tr -cd 'A-Za-z0-9')
 csi=$(field csi)
 signalrate=$(field signalrate)
 dataformat=$(field dataformat)
+# The job asked for 64-byte error-correction frames (hfaxd JPARM ECMTYPE 64BIT keeps desiredec 1; engine_ecm.py).
+ecm_small=false
+[ "$(digits desiredec)" = 1 ] && ecm_small=true
 
 # What the call's session log says about SSL Fax and the page transfer.
 log=''
@@ -96,11 +99,11 @@ case $offered in true|false) ;; *) offered=null ;; esac
 # What the call negotiated over the whole call (bin/negotiation; base64 JSON), for measurement only.
 negotiation=''
 [ -n "$log" ] && negotiation=$(sh "$(dirname "$0")/negotiation" "$log" | tr -cd 'A-Za-z0-9+/=')
-body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s,"negotiation_b64":"%s","remote_address_b64":"%s"}' \
+body=$(printf '{"tag":"%s","engine_id":"%s","commid":"%s","engine_job":%s,"why":"%s","state":%s,"pages":%s,"total_pages":%s,"dials":%s,"total_dials":%s,"total_tries":%s,"status_b64":"%s","status_code":"%s","remote_station_b64":"%s","signal_rate_b64":"%s","data_format_b64":"%s","job_time":"%s","sslfax":%s,"sslfax_offered":%s,"sslfax_refused":%s,"transfer_seconds":%s,"session_seconds":%s,"negotiation_b64":"%s","remote_address_b64":"%s","ecm_small":%s}' \
   "$tag" "$engine" "$commid" "$(number "$jobid")" "$why" "$(number "$state")" "$(number "$npages")" "$(number "$totpages")" \
   "$(number "$ndials")" "$(number "$totdials")" "$(number "$tottries")" "$(b64 "$status_text")" "$status_code" \
   "$(b64 "$csi")" "$(b64 "$signalrate")" "$(b64 "$dataformat")" "$jobtime" "$sslfax" "$offered" "$refused" \
-  "$(number "$transfer")" "$(number "$session")" "$negotiation" "$(b64 "$remote_address")")
+  "$(number "$transfer")" "$(number "$session")" "$negotiation" "$(b64 "$remote_address")" "$ecm_small")
 
 # Keep the report, then send it once now; the engine sends whatever is left every few seconds.
 temporary=$(mktemp "$outbox/.report.XXXXXX") || fail 'report not kept'

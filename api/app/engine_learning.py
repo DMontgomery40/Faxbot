@@ -529,14 +529,17 @@ class Decision:
     engine: str = 'builtin'
     epoch_id: str | None = None
     notes: tuple = field(default=(), compare=False)
+    # 64 when the number's error shape makes 64-octet error-correction frames shorter (engine_ecm.py); else None.
+    ecm_frame: int | None = None
 
     def changed(self) -> bool:
-        return bool(self.audio or self.t38_now or self.max_rate or self.compression or self.ecm_on or self.iaf)
+        return bool(self.audio or self.t38_now or self.max_rate or self.compression or self.ecm_on or self.iaf
+                    or self.ecm_frame)
 
     def payload(self) -> dict:
         """What the call record keeps (``record_choice``)."""
         return {'engine': self.engine, 'audio': self.audio, 't38_now': self.t38_now, 'max_rate': self.max_rate,
-                'compression': self.compression, 'ecm_on': self.ecm_on, 'iaf': self.iaf,
+                'compression': self.compression, 'ecm_on': self.ecm_on, 'iaf': self.iaf, 'ecm_frame': self.ecm_frame,
                 'reasons': list(self.reasons), 'epoch_id': self.epoch_id}
 
 
@@ -664,6 +667,16 @@ def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_
         if reason:
             ecm_on = True
             reasons.append(reason)
+    # The error-correction frame size (brief 98): 64-octet frames when this number's error shape (else the
+    # trunk's) makes them shorter on a typical page, from calls in this epoch only (engine_ecm.py).
+    ecm_frame = None
+    if (base_ecm or ecm_on) and recipient.get('ecm') is not False:
+        from . import engine_ecm
+        found = engine_ecm.learned(db, number, since=evidence_since(epoch, now, LEARN_DAYS),
+                                   rate=base or engine_frames.STEP_RATES[0], now=now)
+        if found.frame_octets == 64:
+            ecm_frame = 64
+            reasons.append(found.frame_why)
     iaf = None
     if engine == 'builtin' and not audio:
         iaf = engine_frames.iaf_for(engine_frames.FrameStore(db), db, number)
@@ -674,7 +687,17 @@ def _decide(values, number, *, engine, t38, base_rate, rate_for, base_ecm, base_
     if answered < MIN_CALLS:
         notes.append(sample_sentence(answered))
     return Decision(audio=audio, t38_now=t38_now, max_rate=max_rate, compression=compression, ecm_on=ecm_on,
-                    iaf=iaf, reasons=tuple(reasons), engine=engine, epoch_id=epoch['id'], notes=tuple(notes))
+                    iaf=iaf, reasons=tuple(reasons), engine=engine, epoch_id=epoch['id'], notes=tuple(notes),
+                    ecm_frame=ecm_frame)
+
+
+def t38_protection(db, values, trunk, *, now=None):
+    """T.38 protection by packet category for calls over ``trunk`` ('sip': the first trunk), from the loss measured
+    on its calls in this learning epoch (``engine_ecm.protection_for``). Reads only."""
+    from . import engine_ecm
+    now = now or utcnow()
+    epoch = current_epoch(db, values, now=now, write=False)
+    return engine_ecm.protection_for(db, trunk or 'sip', since=evidence_since(epoch, now, LEARN_DAYS))
 
 
 def sample_sentence(answered):

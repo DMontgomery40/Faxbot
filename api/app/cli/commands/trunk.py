@@ -168,6 +168,13 @@ def trunk_negotiation(days: int = typer.Option(30, '--days', metavar='DAYS',
                      'only that. Seconds per page: the time of every call in the row, divided by the pages they '
                      'confirmed. Calls per delivered fax: sent faxes only.')
         out.line(result['note'])
+        correction = result.get('error_correction') or {}
+        if correction.get('sentences') or correction.get('trunks'):
+            out.line('Error correction and fax-over-IP protection:')
+            for text in correction.get('sentences') or []:
+                out.line('  ' + text)
+            for trunk in correction.get('trunks') or []:
+                out.line('  ' + trunk['sentence'])
     state.out().result(result, human)
 
 

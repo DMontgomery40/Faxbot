@@ -1,6 +1,7 @@
 /*
  * Faxbot: what its changes add to spandsp 0.0.6, in one place: the two T.38 gateway steps (patches 0002 and
- * 0003), the far-end frame capture and Internet Aware Fax steps of patch 0004, and patch 0005's subaddress check.
+ * 0003), the far-end frame capture and Internet Aware Fax steps of patch 0004, patch 0005's subaddress check, and
+ * patch 0008's error-correction frame size, error-shape record and T.38 protection by packet category.
  *
  * res_fax_spandsp.c includes this file (the image build copies it next to that file), and so do the replay
  * proofs asterisk/tests/t38_gateway_replay.c and t38_terminal_replay.c, so the proofs run exactly the steps
@@ -514,6 +515,288 @@ static inline long long faxbot_answered_at(const char *value, long long now_s)
 static inline int faxbot_t0_reached(int cap_ms, int phase_b, long long elapsed_ms)
 {
 	return cap_ms > 0 && !phase_b && elapsed_ms >= cap_ms;
+}
+
+/*
+ * Patch 0008 (builder ENG, brief 98): error correction's frame size and the shape of its errors, and T.38 protection
+ * by packet category.
+ *
+ * Frame size. With error correction (ITU-T T.30 Annex A) the sender chooses 256- or 64-octet frames in its DCS (bit
+ * 28: set for 64; spandsp's own decoder, t30_logging.c, reads it so). spandsp 0.0.6 always sends 256:
+ * process_rx_dis_dtc sets octets_per_ecm_frame to 256 and build_dcs never sets bit 28. With FAXBOT_ECM_FRAME=64
+ * (engine_learning.py asks for it for a number whose errors smaller frames repair more cheaply),
+ * faxbot_ecm_small_frames sets both as the sender's DCS goes out: spandsp's real-time frame handler sees the DCS
+ * (t30->dcs_frame, after prune_dcs) before it is sent, so the DCS and the frames agree. A DCS without error
+ * correction is left alone. spandsp's own receiver keeps frames by their length, so it takes either size.
+ *
+ * Error shape. faxbot_ecm_record keeps, from the frames the handler sees in both directions: partial page signals
+ * (PPS), blocks (each page and block number once) and the frames in them, partial page requests (PPR) and the frames
+ * each asked for again, the runs of neighbouring frames a block's first request asked for (a burst of line errors
+ * spoils neighbours; scattered errors spoil single frames), the longest such run, continue-to-correct requests (CTC),
+ * and the milliseconds from each PPS to the next frame of image data: a block edge (PPS-NULL answered with MCF) or a
+ * round of resent frames (a PPS answered with PPR). The milliseconds are the caller's clock: Asterisk's wall clock,
+ * or the replay proof's simulated one. A PPR's map holds frame 8i+j in bit j of octet i (spandsp's process_rx_ppr).
+ */
+#define FAXBOT_DCS_BIT_ECM 27
+#define FAXBOT_DCS_BIT_64_OCTETS 28
+#define FAXBOT_FCF_FCD 0x06
+#define FAXBOT_ECM_EDGE 1
+#define FAXBOT_ECM_ROUND 2
+
+typedef struct {
+	int frame_octets;		/* 64 or 256, from the session's last DCS with error correction; 0 without */
+	int small_frames;		/* 1 when Faxbot asked for 64-octet frames on its own DCS */
+	unsigned int pps, blocks, frames, ppr, bad, runs, longest, resent, ctc;
+	unsigned int pages;		/* pages with error correction: page numbers the PPS frames named */
+	unsigned int edges, rounds;	/* timed block edges and rounds of resent frames */
+	long long edge_ms, round_ms;	/* their total milliseconds */
+	int page, block;		/* the last PPS's page and block numbers; -1 before the first */
+	int block_frames;		/* frames in the current block, from its first PPS */
+	int pps_from;			/* who sent the PPS, in spandsp's direction (1: received) */
+	int waiting;			/* 1 after a PPS until its answer */
+	int first_answer;		/* 1 until the current block's first answer */
+	int pps_null;			/* the last PPS was PPS-NULL (more blocks follow on the page) */
+	int pending;			/* FAXBOT_ECM_EDGE or FAXBOT_ECM_ROUND: the next image frame ends a turnaround */
+	long long pps_at;		/* when the last PPS went, in the caller's milliseconds */
+} faxbot_ecm_t;
+
+static inline void faxbot_ecm_init(faxbot_ecm_t *ecm)
+{
+	memset(ecm, 0, sizeof(*ecm));
+	ecm->page = -1;
+	ecm->block = -1;
+}
+
+/*! \brief Whether T.30 control bit \p bit (1-based, as T.30 Table 2 numbers it) is set in a DIS/DTC/DCS frame. */
+static inline int faxbot_ctrl_bit(const uint8_t *msg, int len, int bit)
+{
+	int octet = 3 + (bit - 1) / 8;
+
+	return octet < len && ((msg[octet] >> ((bit - 1) & 7)) & 1);
+}
+
+/*!
+ * \brief Patch 0008: fill the current page's first partial page again at the frame size now set, as spandsp 0.0.6's
+ * own get_partial_ecm_page (t30.c, static) does: up to 256 frames of address, control, FCD, the frame number and the
+ * image data, the last one padded to a whole frame. The page image is coded in memory, so it is rewound first
+ * (t4_tx_restart_page).
+ */
+static inline void faxbot_ecm_refill(t30_state_t *t30)
+{
+	int i, len;
+
+	t4_tx_restart_page(&t30->t4.tx);
+	t30->ppr_count = 0;
+	t30->ecm_progress = 0;
+	t30->ecm_block = 0;
+	for (i = 3; i < 32 + 3; i++) {
+		t30->ecm_frame_map[i] = 0xFF;
+	}
+	for (i = 0; i < 256; i++) {
+		t30->ecm_len[i] = -1;
+		t30->ecm_data[i][0] = 0xFF;	/* ADDRESS_FIELD */
+		t30->ecm_data[i][1] = 0x03;	/* CONTROL_FIELD_NON_FINAL_FRAME */
+		t30->ecm_data[i][2] = FAXBOT_FCF_FCD;
+		t30->ecm_data[i][3] = (uint8_t) i;
+		if ((len = t4_tx_get_chunk(&t30->t4.tx, &t30->ecm_data[i][4], t30->octets_per_ecm_frame))
+			< t30->octets_per_ecm_frame) {
+			if (len > 0) {
+				memset(&t30->ecm_data[i][4 + len], 0, t30->octets_per_ecm_frame - len);
+				t30->ecm_len[i++] = (int16_t) (t30->octets_per_ecm_frame + 4);
+			}
+			t30->ecm_frames = i;
+			t30->ecm_at_page_end = TRUE;
+			return;
+		}
+		t30->ecm_len[i] = (int16_t) (4 + len);
+	}
+	t30->ecm_frames = 256;
+	t30->ecm_at_page_end = ((t4_tx_check_bit(&t30->t4.tx) & 2) != 0);
+}
+
+/*!
+ * \brief Patch 0008: 64-octet error-correction frames on the DCS this side sends now.
+ *
+ * spandsp fills the page's first partial page when it starts sending the document, before it builds the DCS, at 256
+ * octets a frame; so the first time a DCS asks for 64, that partial page is filled again at 64 (faxbot_ecm_refill).
+ * A later DCS (after a failed training) finds the frames already 64 octets and changes nothing more.
+ * \retval 1 the DCS (and the frames that follow it) now use 64-octet frames
+ * \retval 0 not this side's DCS, or no error correction on it: nothing changed
+ */
+static inline int faxbot_ecm_small_frames(t30_state_t *t30, int received, const uint8_t *msg, int len)
+{
+	if (received || !t30 || msg != t30->dcs_frame || len < 7 || (msg[2] & 0xFE) != 0x82
+		|| !faxbot_ctrl_bit(msg, len, FAXBOT_DCS_BIT_ECM)) {
+		return 0;
+	}
+	t30->dcs_frame[3 + (FAXBOT_DCS_BIT_64_OCTETS - 1) / 8] |= (uint8_t) (1 << ((FAXBOT_DCS_BIT_64_OCTETS - 1) & 7));
+	if (t30->octets_per_ecm_frame != 64) {
+		t30->octets_per_ecm_frame = 64;
+		faxbot_ecm_refill(t30);
+	}
+	return 1;
+}
+
+/*! \brief Patch 0008: keep what one T.30 frame says about error correction; \p received is 1 for the far end's. */
+static inline void faxbot_ecm_record(faxbot_ecm_t *ecm, int received, const uint8_t *msg, int len, long long now_ms)
+{
+	int i, page, block, count, bad = 0, run = 0, runs = 0, longest = 0;
+
+	if (!ecm || !msg || len < 3) {
+		return;
+	}
+	if (msg[2] == FAXBOT_FCF_FCD) {
+		if (ecm->pending && received == ecm->pps_from) {
+			if (ecm->pending == FAXBOT_ECM_EDGE) {
+				ecm->edges++;
+				ecm->edge_ms += now_ms - ecm->pps_at;
+			} else {
+				ecm->rounds++;
+				ecm->round_ms += now_ms - ecm->pps_at;
+			}
+			ecm->pending = 0;
+		}
+		return;
+	}
+	switch (msg[2] & 0xFE) {
+	case 0x82:	/* DCS */
+		ecm->frame_octets = !faxbot_ctrl_bit(msg, len, FAXBOT_DCS_BIT_ECM) ? 0
+			: faxbot_ctrl_bit(msg, len, FAXBOT_DCS_BIT_64_OCTETS) ? 64 : 256;
+		break;
+	case 0xBE:	/* PPS: FCF2, page, block, frames in this burst less one */
+		if (len < 7) {
+			break;
+		}
+		page = msg[4];
+		block = msg[5];
+		count = msg[6] + 1;
+		ecm->pps++;
+		if (page != ecm->page) {
+			ecm->pages++;
+		}
+		if (page != ecm->page || block != ecm->block) {
+			ecm->blocks++;
+			ecm->frames += count;
+			ecm->block_frames = count;
+			ecm->page = page;
+			ecm->block = block;
+			ecm->first_answer = 1;
+		}
+		ecm->pps_from = received;
+		ecm->waiting = 1;
+		ecm->pps_at = now_ms;
+		ecm->pps_null = (msg[3] & 0xFE) == 0x00;
+		ecm->pending = 0;
+		break;
+	case 0xBC:	/* PPR: the frames to send again, a 256-bit map */
+		if (!ecm->waiting || received == ecm->pps_from || len < 3 + 32) {
+			break;
+		}
+		ecm->ppr++;
+		for (i = 0; i < ecm->block_frames && i < 256; i++) {
+			if ((msg[3 + i / 8] >> (i & 7)) & 1) {
+				bad++;
+				if (!run) {
+					runs++;
+				}
+				if (++run > longest) {
+					longest = run;
+				}
+			} else {
+				run = 0;
+			}
+		}
+		ecm->resent += bad;
+		if (ecm->first_answer) {
+			ecm->bad += bad;
+			ecm->runs += runs;
+			if ((unsigned int) longest > ecm->longest) {
+				ecm->longest = longest;
+			}
+		}
+		ecm->first_answer = 0;
+		ecm->waiting = 0;
+		ecm->pending = FAXBOT_ECM_ROUND;
+		break;
+	case 0x8C:	/* MCF: the block arrived whole */
+		if (!ecm->waiting || received == ecm->pps_from) {
+			break;
+		}
+		ecm->waiting = 0;
+		ecm->first_answer = 0;
+		ecm->pending = ecm->pps_null ? FAXBOT_ECM_EDGE : 0;
+		break;
+	case 0x12:	/* CTC: after four requests for one block, the sender asks to go on (and may train down) */
+		if (received == ecm->pps_from) {
+			ecm->ctc++;
+		}
+		break;
+	}
+}
+
+/*! \brief Patch 0008: the record as FAXBOT_ECM: "frame.pps.blocks.frames.ppr.bad.runs.longest.resent.ctc.edges.
+ * edge_ms.rounds.round_ms.small.pages", whole numbers separated by dots (no comma: the value goes in a manager
+ * event; engine_ecm.py reads it). */
+static inline void faxbot_ecm_text(const faxbot_ecm_t *ecm, char *out, size_t size)
+{
+	snprintf(out, size, "%d.%u.%u.%u.%u.%u.%u.%u.%u.%u.%u.%lld.%u.%lld.%d.%u", ecm->frame_octets, ecm->pps,
+		ecm->blocks, ecm->frames, ecm->ppr, ecm->bad, ecm->runs, ecm->longest, ecm->resent, ecm->ctc, ecm->edges,
+		ecm->edge_ms, ecm->rounds, ecm->round_ms, ecm->small_frames, ecm->pages);
+}
+
+/*
+ * T.38 protection by packet category. spandsp's T.38 core gives every packet it sends a category (indicator,
+ * low-speed control data, the end of control data, image data, the end of image data) and asks for it to be sent
+ * as many times as its category's setting (t38_set_redundancy_control, the count passed to the packet handler).
+ * Asterisk ignores that count ("count is ignored at the moment", res_fax_spandsp.c), so every packet goes once, and
+ * only UDPTL redundancy (each packet carrying the previous ones, udptl.conf udptlfecentries) protects it; a burst
+ * longer than that, or the last packets of a control exchange (no later packet carries them), is lost, and T.30
+ * waits seconds and tries again. With FAXBOT_T38_PROTECT ("I.C.CE.IM.IME": each category's sends, 1 to
+ * FAXBOT_T38_SEND_MAX; engine_learning.py sets it from the loss measured on the trunk), the session sets those
+ * counts and every packet goes that many times with the same UDPTL sequence number (ast_udptl_write), as spandsp's
+ * own UDPTL test harness sends repeats; a receiver drops the copies it already has (T.38 sequence numbers; Asterisk's
+ * udptl_rx_packet and spandsp's t38_core_rx_ifp_packet both do). Unset or malformed keeps Asterisk's behaviour.
+ */
+#define FAXBOT_T38_CATEGORIES 5
+#define FAXBOT_T38_SEND_MAX 4
+
+/*! \brief The five counts in \p value ("3.2.3.1.3") into \p counts; 1 when every one is a count from 1 to 4. */
+static inline int faxbot_t38_protect_parse(const char *value, int counts[FAXBOT_T38_CATEGORIES])
+{
+	int i;
+
+	if (!value) {
+		return 0;
+	}
+	for (i = 0; i < FAXBOT_T38_CATEGORIES; i++) {
+		if (*value < '1' || *value > '0' + FAXBOT_T38_SEND_MAX) {
+			return 0;
+		}
+		counts[i] = *value++ - '0';
+		if (*value != (i == FAXBOT_T38_CATEGORIES - 1 ? '\0' : '.')) {
+			return 0;
+		}
+		if (*value) {
+			value++;
+		}
+	}
+	return 1;
+}
+
+/*! \brief Set spandsp's per-category counts on \p core (the T.38 core of a terminal or a gateway). */
+static inline void faxbot_t38_protect_apply(t38_core_state_t *core, const int counts[FAXBOT_T38_CATEGORIES])
+{
+	int i;
+
+	for (i = 0; i < FAXBOT_T38_CATEGORIES; i++) {
+		t38_set_redundancy_control(core, i, counts[i]);
+	}
+}
+
+/*! \brief How many times a packet goes for spandsp's \p count while Faxbot's protection is on (1 to 4). */
+static inline int faxbot_t38_sends(int count)
+{
+	return count < 1 ? 1 : count > FAXBOT_T38_SEND_MAX ? FAXBOT_T38_SEND_MAX : count;
 }
 
 #endif /* FAXBOT_T38_GATEWAY_H */
