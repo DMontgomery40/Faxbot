@@ -211,3 +211,29 @@ def test_the_command_line_sets_the_check_for_a_recipient_and_a_mailbox(client): 
     assert boxed.exit_code == 0, (boxed.stdout, boxed.stderr)
     assert 'on a fax from Billing, Faxbot hangs up before any page.' in ' '.join(boxed.stdout.split())
     assert run('recipients', 'set', TO, '--station-check', 'maybe').exit_code != 0
+    # Without a mode it says what the mailbox does now, and who chose it.
+    shown = run('numbers', 'reply', 'station-check', '--mailbox', 'Billing')
+    assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    text = ' '.join(shown.stdout.split())
+    assert 'on a fax from Billing, Faxbot hangs up before any page.' in text
+    assert "A recipient's own choice comes first" in text
+    assert run('numbers', 'reply', 'station-check', 'refuse').exit_code != 0  # a choice needs its mailbox
+
+
+def test_a_mailbox_choice_can_be_read_where_it_is_set(client):  # noqa: F811
+    from api.tests.test_access_management_http import B
+    from api.tests.test_work_http import mailbox
+    billing = mailbox(client, 'Billing', DID_B)
+    found = client.get('/routing/stations/mailboxes', headers=B)
+    assert found.status_code == 200, found.text
+    (row,) = [item for item in found.json()['mailboxes'] if item['mailbox_id'] == billing['id']]
+    assert row['mode'] == 'warn' and not row['chosen']
+    assert row['sentence'] == ('When a number answers as another fax machine on a fax from Billing, the fax goes on '
+                               "and Sent details say so. This is Faxbot's default.")
+    assert client.put(f"/routing/stations/mailboxes/{billing['id']}", headers=B,
+                      json={'mode': 'refuse'}).status_code == 200
+    (row,) = [item for item in client.get('/routing/stations/mailboxes', headers=B).json()['mailboxes']
+              if item['mailbox_id'] == billing['id']]
+    assert row['mode'] == 'refuse' and row['chosen']
+    assert row['sentence'].startswith('When a number answers as another fax machine on a fax from Billing, Faxbot '
+                                      'hangs up before any page.')

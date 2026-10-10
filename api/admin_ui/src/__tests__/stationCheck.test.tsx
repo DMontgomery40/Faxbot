@@ -6,6 +6,7 @@ import { AdminAPIError } from '../api/client';
 function fakeClient() {
   const requests: Array<{ method: string; path: string; body?: unknown }> = [];
   let mode = 'warn';
+  let mailboxMode = 'warn';
   const stations: Array<{ station: string; source: string; seen_at: string | null; actor_name: string | null }> = [
     { station: '+1 720-555-0199', source: 'call', seen_at: '2026-10-09T15:00:00', actor_name: null }];
   const client = {
@@ -15,7 +16,15 @@ function fakeClient() {
       if (request.path.startsWith('/routing/stations/faxes/')) {
         return { sentences: ['The number answered as +1 720-555-0199, a fax machine Faxbot did not expect there, so Faxbot hung up before any page. Check the number with the recipient.'] } as T;
       }
+      if (request.path === '/routing/stations/mailboxes') {
+        return { mailboxes: [{ mailbox_id: 'm-billing', label: 'Billing', mode: mailboxMode, chosen: mailboxMode === 'refuse',
+          actor_name: mailboxMode === 'refuse' ? 'Ada Admin' : null,
+          sentence: mailboxMode === 'refuse'
+            ? 'When a number answers as another fax machine on a fax from Billing, Faxbot hangs up before any page. Chosen by Ada Admin.'
+            : "When a number answers as another fax machine on a fax from Billing, the fax goes on and Sent details say so. This is Faxbot's default." }] } as T;
+      }
       if (request.path.startsWith('/routing/stations/mailboxes/')) {
+        mailboxMode = body.mode;
         return { sentence: 'Saved. When a number answers as another fax machine on a fax from Billing, Faxbot hangs up before any page.' } as T;
       }
       if (request.path.startsWith('/routing/stations/')) {
@@ -49,17 +58,25 @@ describe('the station check', () => {
       .toEqual([{ mode: 'refuse' }, { station: '+1 303 555 0177' }]));
   });
 
-  it('saves a mailbox choice, and shows nothing without settings changes', async () => {
+  it('shows what each mailbox does where it is set, saves a choice, and only shows it without settings changes', async () => {
     const fake = fakeClient();
     const { unmount } = render(<MailboxStationCheck client={fake.client} canWrite mailboxes={[{ id: 'm-billing', label: 'Billing' }]} />);
     const region = screen.getByRole('region', { name: 'Station check for mailboxes' });
+    expect((await within(region).findByTestId('station-mode-m-billing')).textContent).toContain("This is Faxbot's default.");
     fireEvent.mouseDown(within(region).getByRole('combobox', { name: 'Mailbox' }));
     fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Billing' }));
+    // Choosing the mailbox shows what it does now; you change it to hang up.
+    expect(within(region).getByRole('combobox', { name: 'What Faxbot does' }).textContent).toBe('Send anyway and say so in Sent');
+    fireEvent.mouseDown(within(region).getByRole('combobox', { name: 'What Faxbot does' }));
+    fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Hang up before any page' }));
     fireEvent.click(within(region).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText(/on a fax from Billing, Faxbot hangs up before any page/)).toBeTruthy();
+    expect(await screen.findByText(/^Saved\. When a number answers as another fax machine on a fax from Billing/)).toBeTruthy();
+    await waitFor(() => expect(within(region).getByTestId('station-mode-m-billing').textContent).toContain('Chosen by Ada Admin.'));
     unmount();
-    const { container } = render(<MailboxStationCheck client={fake.client} canWrite={false} mailboxes={[{ id: 'm-billing', label: 'Billing' }]} />);
-    expect(container.textContent).toBe('');
+    render(<MailboxStationCheck client={fake.client} canWrite={false} mailboxes={[{ id: 'm-billing', label: 'Billing' }]} />);
+    const readOnly = screen.getByRole('region', { name: 'Station check for mailboxes' });
+    expect((await within(readOnly).findByTestId('station-mode-m-billing')).textContent).toContain('Chosen by Ada Admin.');
+    expect(within(readOnly).queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
   it('says in Sent details which station answered', async () => {
