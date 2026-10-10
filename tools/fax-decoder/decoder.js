@@ -748,7 +748,60 @@ function decodeRunLine(page, y, limit, tag) {
   return { offset, payload };
 }
 
-export function readPage(page) {
+// Received pages as real receivers keep them (api/app/codec/pages.py read_page): a page that arrived inverted is
+// turned the right way round (every payload page has white margins at both sides), one upside down the right way up
+// (the ladder reads either way, the header only the right way up), and the rows of a run-coded or capacity page that
+// was moved sideways or padded to another width are moved back to where the ladder says they started. Those layouts
+// need every dot as it arrived, so a page drawn again at another size is refused (RESIZED), and so is a small preview
+// instead of the fax (PREVIEW).
+export const RESIZED = 'This page was resized after it arrived, and these encoded pages can be read only from the '
+  + 'fax image exactly as received, such as the PDF a fax service offers for download.';
+export const PREVIEW = 'This is a small preview of the fax rather than the fax itself, so decode the full-size fax '
+  + 'file, such as the PDF a fax service offers for download.';
+const PREVIEW_WIDTH = 1000;
+const EXACT_LAYOUTS = new Set(['runs', 'capacity']);
+// {ladder columns: [page width, first cell's dot on an unmoved page]} for the exact layouts (2-dot cells).
+const EXACT_WIDTHS = new Map([[1728, 204], [2592, 300], [3456, 400]].map(([width, xdpi]) => {
+  const quiet = Math.max(1, Math.round((3 * xdpi) / 25.4));
+  let columns = Math.floor((width - 2 * quiet) / 2) - 8;
+  if (columns % 2 === 0) columns -= 1;
+  return [columns, [width, quiet + 8]];
+}));
+
+function paperWhite(page) {
+  const edge = Math.max(1, Math.min(Math.floor(page.width / 50), 16));
+  let dark = 0;
+  for (let y = 0; y < page.height; y += 1) {
+    const row = y * page.width;
+    for (let x = 0; x < edge; x += 1) {
+      if (page.gray[row + x] < 128) dark += 1;
+      if (page.gray[row + page.width - 1 - x] < 128) dark += 1;
+    }
+  }
+  return dark * 2 > 2 * edge * page.height ? { ...page, gray: page.gray.map((value) => 255 - value) } : page;
+}
+
+function alignedRow(page, y, shift, width) {
+  const start = y * page.width;
+  const out = new Uint8Array(width);
+  for (let x = 0; x < width; x += 1) {
+    const from = x + shift;
+    if (from < 0) out[x] = 255; // the receiver cut the left edge: white, as a row starts
+    else if (from < page.width) out[x] = page.gray[start + from];
+    else out[x] = x > 0 ? out[x - 1] : 255; // past the right edge: the row's padding run goes on
+  }
+  return { width, height: 1, gray: out };
+}
+
+export function readPage(source) {
+  const page = paperWhite(source);
+  const read = readOriented(page);
+  if (!read || !read.noHeader) return read;
+  const turned = readOriented({ ...page, gray: page.gray.slice().reverse() });
+  return turned && !turned.noHeader ? turned : null;
+}
+
+function readOriented(page) {
   const ladder = findLadder(page);
   if (!ladder) return null;
   const { edges } = ladder;
@@ -766,12 +819,22 @@ export function readPage(page) {
     }
   }
   if (!header && newer) return { newer: true };
-  if (!header) return null;
+  if (!header) return { noHeader: true };
+  const gaps = edges.slice(1).map((edge, i) => edge - edges[i]);
+  const resized = new Set(gaps).size !== 1;
+  let rowWidth = page.width; let shift = 0;
+  if (EXACT_LAYOUTS.has(header.layout)) {
+    const exact = EXACT_WIDTHS.get(columns);
+    if (!exact || gaps.some((gap) => gap !== 2)) return { resized: true };
+    [rowWidth] = exact;
+    shift = edges[0] - exact[1];
+  }
   const segments = new Map();
   for (let y = ladder.y; y < page.height; y += 1) {
-    if (header.layout === 'runs' || header.layout === 'capacity') {
-      const line = header.layout === 'runs' ? decodeRunLine(page, y, header.runLimit, header.tag)
-        : decodeCapacityLine(page, y, header.profile, header.tag);
+    if (EXACT_LAYOUTS.has(header.layout)) {
+      const row = alignedRow(page, y, shift, rowWidth);
+      const line = header.layout === 'runs' ? decodeRunLine(row, 0, header.runLimit, header.tag)
+        : decodeCapacityLine(row, 0, header.profile, header.tag);
       if (line && line.payload.length) segments.set(`${line.offset}:${line.payload.length}`, { offset: line.offset, bits: line.payload });
       continue;
     }
@@ -785,7 +848,7 @@ export function readPage(page) {
       segments.set(`${bitOffset}:${s.length}`, { offset: bitOffset, bits: s });
     }
   }
-  return { header, segments: [...segments.values()] };
+  return { header, segments: [...segments.values()], resized };
 }
 
 export function assemble(reads) {
@@ -887,17 +950,31 @@ export async function unpack(container, secrets = []) {
 // ---------------------------------------------------------------- everything together
 export async function decodeFiles(files, { secrets = [] } = {}) {
   const reads = [];
-  let newer = false;
+  let newer = false; let resized = false;
+  const widths = [];
   for (const { bytes, type } of files) {
     for (const page of await readFile(bytes, type)) {
+      widths.push(page.width);
       const read = readPage(page);
       if (read && read.newer) newer = true;
-      else if (read) reads.push(read);
+      else if (read && read.resized && !read.header) resized = true;
+      else if (read) { reads.push(read); resized = resized || read.resized; }
     }
   }
+  const small = widths.length > 0 && widths.every((width) => width < PREVIEW_WIDTH);
   if (!reads.length && newer) throw new DecodeError(NEWER);
+  if (!reads.length && small) throw new DecodeError(PREVIEW);
+  if (!reads.length && resized) throw new DecodeError(RESIZED);
   if (!reads.length) throw new DecodeError('No payload pages were found in this file.');
-  const { container, pagesRead, pagesExpected } = assemble(reads);
+  let assembled;
+  try {
+    assembled = assemble(reads);
+  } catch (error) {
+    if (small) throw new DecodeError(PREVIEW);
+    if (resized) throw new DecodeError(RESIZED);
+    throw error;
+  }
+  const { container, pagesRead, pagesExpected } = assembled;
   const document = await unpack(container, secrets.filter(Boolean));
   return { ...document, pagesRead, pagesExpected, layout: reads[0].header.layout };
 }

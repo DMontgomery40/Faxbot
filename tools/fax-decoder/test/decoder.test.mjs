@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError } from '../decoder.js';
+import { decodeFiles, rsCorrect, crc16, readTiff, readPage, DecodeError, RESIZED, PREVIEW } from '../decoder.js';
 
 const folder = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const expected = JSON.parse(readFileSync(join(folder, 'expected.json'), 'utf8'));
@@ -27,6 +27,18 @@ for (const name of expected.files.filter((item) => item !== 'encrypted.tiff')) {
     assert.equal(result.name, expected.name);
     assert.equal(result.contentType, 'text/plain');
     assert.equal(result.pagesRead, result.pagesExpected);
+  });
+}
+
+for (const [name, outcome] of Object.entries(expected.receipts)) {
+  test(`reads ${name} as a receiver keeps it: ${outcome}`, async () => {
+    if (outcome === 'decodes') {
+      const result = await decodeFiles([file(name)]);
+      assert.equal(result.sha256, expected.sha256);
+    } else {
+      await assert.rejects(decodeFiles([file(name)]), (error) => error instanceof DecodeError
+        && error.message === (outcome === 'resized' ? RESIZED : PREVIEW));
+    }
   });
 }
 

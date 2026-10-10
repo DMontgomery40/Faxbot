@@ -67,9 +67,34 @@ def make(folder):
         if name.endswith('.pdf'):
             tiff_to_pdf(str(tiff), str(folder / name))
             tiff.unlink()
+    expected['receipts'] = write_receipts(folder, document, salt, nonce)
     (folder / 'expected.json').write_text(json.dumps(expected, indent=1) + '\n')
     write_capacity_tables()
     return folder
+
+
+def write_receipts(folder, document, salt, nonce):
+    """Encoded pages as real receivers keep them (api/tests/codec_receipts.py), as TIFF or PDF (the browser decoder
+    reads PNG and JPEG only in a browser): {file: 'decodes', 'resized' or 'preview'}."""
+    sys.path.insert(0, str(ROOT / 'api'))
+    from tests import codec_receipts as receipts
+    from app.codec import pages
+    packed = container.pack(document, compression=container.DEFLATE, salt=salt, nonce=nonce)
+    runs = list(pages.encode(packed, layout='runs', fec='medium').pages)
+    capacity = list(pages.encode(packed, layout='capacity', fec='medium').pages)
+    files = {
+        'receipt-faxbeep.pdf': (receipts.faxbeep_pdf(runs), 'decodes'),
+        'receipt-rotated.tiff': (receipts.tiff_bytes([receipts.rotated(page) for page in runs]), 'decodes'),
+        'receipt-inverted.tiff': (receipts.tiff_bytes([receipts.inverted(page) for page in capacity]), 'decodes'),
+        'receipt-moved.tiff': (receipts.tiff_bytes([receipts.moved(page, 3) for page in capacity]), 'decodes'),
+        'receipt-padded.tiff': (receipts.tiff_bytes([receipts.centred(page) for page in runs]), 'decodes'),
+        'receipt-resized.tiff': (receipts.tiff_bytes([receipts.resampled(page, 200, 200) for page in runs]),
+                                 'resized'),
+        'receipt-preview.tiff': (receipts.tiff_bytes([receipts.thumbnail(runs[0]).convert('1')]), 'preview'),
+    }
+    for name, (data, _) in files.items():
+        (folder / name).write_bytes(data)
+    return {name: outcome for name, (_, outcome) in files.items()}
 
 
 def write_capacity_tables(target=Path(__file__).resolve().parents[1] / 'capacity-tables.js'):
