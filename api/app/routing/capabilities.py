@@ -19,6 +19,7 @@ Console addresses here are the six-area addresses of spec #48 (``delivery/trunk`
 catalogue still names the older ones, so ``MOVED`` translates each page and link it emits.
 """
 from dataclasses import dataclass
+import logging
 from typing import Callable
 
 import sqlalchemy as sa
@@ -27,6 +28,7 @@ from . import mechanisms
 from .database import read_connection, reflect
 from .store import WINDOW_DAYS
 
+log = logging.getLogger(__name__)
 
 TITLE = 'Capabilities'
 SENTENCE = 'Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.'
@@ -65,7 +67,7 @@ KINDS = {
 FILTERS = (
     ('on', 'On', 'Switched on for your faxes.'),
     ('off', 'Off', 'Switched off for now.'),
-    ('ready', 'Ready to turn on', 'Off, but this installation already has what it needs.'),
+    ('ready', 'Ready to turn on', 'Off, and works on this installation.'),
     ('needs', 'Needs something', "Missing something it needs, such as a connection, prices or a recipient's agreement."),
     ('experimental', 'Experimental', 'Still being proven; its evidence and limits are shown with it.'),
 )
@@ -92,7 +94,7 @@ PAGES = {
     'delivery/identity': 'Delivery setup → Sender identity',
     'delivery/connections': 'Delivery setup → Connections',
     'delivery/trunk': 'Delivery setup → Carrier trunk',
-    'recipients/list': 'Recipients → Details',
+    'recipients/list': 'Recipients',
     'recipients/partners': 'Recipients → Partners',
     'admin/setup': 'Administration → Setup',
 }
@@ -113,6 +115,16 @@ MOVED = {
 }
 
 
+# How a prerequisite stands here. Only "missing" counts as missing; the other two are said as they are, so a
+# prerequisite Faxbot has not seen working, or that nothing needs yet, never reads as in place.
+STATES = {
+    'in_place': 'In place',
+    'missing': 'Missing',
+    'not_needed': 'Not needed yet',
+    'not_checked': 'Not checked yet',
+}
+
+
 @dataclass(frozen=True)
 class Prerequisite:
     kind: str
@@ -120,6 +132,7 @@ class Prerequisite:
     sentence: str
     # The console address where it is satisfied.
     address: str
+    # True (in place) or False (missing), or one of STATES' keys.
     met: Callable
 
 
@@ -128,14 +141,15 @@ class Capability:
     outcome: str
     # A concrete use of it, in one or two sentences; never an amount of money.
     example: str
-    # The faxbot command that changes its setting; None for the catalogue entry's own command (advice and charge
-    # checks, whose command prints what they found).
+    # The faxbot command that changes what its check reads, exactly as a person runs it; {number}-style words are
+    # the values they fill in, as in the command reference. None when no command changes it (it is automatic).
     command: str | None
     prerequisites: tuple = ()
     # Still being proven: the README roadmap lists it under "Later and experimental".
     experimental: bool = False
-    # When the catalogue sends its setting to another page this time: (that page, the command there).
-    elsewhere: tuple = ()
+    # Advice and charge checks: nothing to switch; their home is the page with what they found, and the catalogue's
+    # command prints it.
+    findings: bool = False
 
 
 def address(old):
@@ -202,12 +216,16 @@ def _engine(here):
 
 
 def _network_passes_t38(here):
+    """Missing when Faxbot switched to audio fax because the network or carrier cannot carry T.38; in place once a
+    T.38 call went through; otherwise not checked yet."""
     from .. import sip_fax_mode
-    if getattr(here.values, 'sip_t38_enabled', True):
-        return True
-    record = sip_fax_mode.read(here.values)
-    reason = record.get('reason') if record and record.get('mode') == 'audio' else None
-    return reason not in (sip_fax_mode.NETWORK, sip_fax_mode.CARRIER)
+    if not getattr(here.values, 'sip_t38_enabled', True):
+        record = sip_fax_mode.read(here.values)
+        reason = record.get('reason') if record and record.get('mode') == 'audio' else None
+        if reason in (sip_fax_mode.NETWORK, sip_fax_mode.CARRIER):
+            return False
+    carried = here.count('sip_call_records', lambda c: c.t38 == 'yes', lambda c: c.fax_status == 'SUCCESS')
+    return True if carried else 'not_checked'
 
 
 def _partner(here):
@@ -247,10 +265,13 @@ def _agreed_marks(here):
 
 
 def _header_ready(here):
-    """Met unless a recipient chose page marks and the header text does not name the sender yet."""
+    """Missing when a recipient chose page marks and the header text does not name the sender yet; not needed while
+    no recipient chose page marks."""
     from ..batching.policy import header_identifies_sender
+    if header_identifies_sender(here.values):
+        return True
     marks = here.count('batching_numbers', lambda c: c.enabled == 1, lambda c: c.boundaries == 'page_headers')
-    return not marks or header_identifies_sender(here.values)
+    return False if marks else 'not_needed'
 
 
 def _toll_free_approved(here):
@@ -308,7 +329,8 @@ TRUNK_RECEIVES = Prerequisite('connection', 'Faxes received over your own SIP tr
                               lambda here: here.trunk_receives)
 RECEIVING_NUMBER = Prerequisite('connection', 'A number this Faxbot receives faxes on.', 'delivery/numbers',
                                 _receiving_number)
-RECEIVES = Prerequisite('connection', 'A number this Faxbot receives faxes on.', 'delivery/numbers', _receives)
+RECEIVES = Prerequisite('connection', 'A fax service account or SIP trunk that receives faxes for this Faxbot.',
+                        'delivery/connections', _receives)
 SECOND_ROUTE = Prerequisite('connection', 'A second sending route, such as another fax service account or your own '
                                           'SIP trunk.', 'delivery/connections', _second_route)
 PRICED_ROUTES = Prerequisite('prices', 'Prices for at least two sending routes that charge for each fax.',
@@ -325,7 +347,7 @@ DIRECT_ON = Prerequisite('setting', 'Direct delivery switched on.', 'recipients/
 
 def advice(outcome, example, *prerequisites):
     """Advice: it lives in its section of Opportunities and changes nothing until you act on it."""
-    return Capability(outcome, example, None, prerequisites)
+    return Capability(outcome, example, None, prerequisites, findings=True)
 
 
 # -- the capabilities, one per catalogue key ------------------------------------------------------------------------
@@ -343,12 +365,12 @@ CAPABILITIES = {
         'shorter_calls',
         'A two-page lab result with half-empty pages goes as one long fax page to a machine that takes long pages, '
         'so the call carries one page instead of two.',
-        'faxbot providers long-pages', (SENDS,)),
+        'faxbot providers long-pages {route} --long-pages on', (SENDS,)),
     'encoded_pages': Capability(
         'shorter_calls',
         "A long report goes as a few dense fax pages to a recipient that runs Faxbot and agreed, and the "
         "recipient's Faxbot turns them back into the exact original file.",
-        'faxbot recipients encoded set {number}',
+        'faxbot recipients encoded set {number} --recipient-agreed',
         (SENDS, Prerequisite('agreement', 'A recipient that runs Faxbot and agrees to encoded pages; you record that '
                                           'on their page.', 'recipients/list', _agreed_encoded)),
         experimental=True),
@@ -372,17 +394,17 @@ CAPABILITIES = {
         'no_repeats',
         "A partner's intake files every fax as an image. Faxbot sends it the exact fax pages over the internet, so "
         'its records look like a received fax, with no call.',
-        'faxbot recipients partners fax-images', (PARTNER_IMAGES, DIRECT_ON)),
+        'faxbot system settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON)),
     'reuse': Capability(
         'no_repeats',
         "The same consent form goes to three of a partner's numbers. Faxbot sends it once, and next month sends "
         'only a reference to the copy the partner already holds.',
-        'faxbot recipients partners send-once', (PARTNER, DIRECT_ON), experimental=True),
+        'faxbot system settings set direct_delivery_enabled=true', (PARTNER, DIRECT_ON), experimental=True),
     'partner_tunnel': Capability(
         'relationships',
         "Your Faxbot and a partner's Faxbot share a private tunnel. A fax to the partner is a fax call inside that "
         'tunnel, with no carrier and nothing charged per minute.',
-        'faxbot recipients partners tunnel-calls',
+        'faxbot recipients partners tunnel-calls {partner} on --address {address}',
         (PARTNER, Prerequisite('partner', 'A verified partner that takes fax calls over a private tunnel you both set '
                                           'up.', 'recipients/partners', _partner_takes_tunnel_calls), DIRECT_ON),
         experimental=True),
@@ -390,14 +412,14 @@ CAPABILITIES = {
         'relationships',
         'A partner in another country relays your faxes to numbers there as local calls, instead of you placing '
         'international calls.',
-        'faxbot recipients partners relay accept',
+        'faxbot recipients partners relay accept {partner}',
         (PARTNER, Prerequisite('agreement', 'A relay agreement: the partner offers to relay your faxes from its '
                                             'Faxbot, and you accept it.', 'recipients/partners', _relay_agreed))),
     'toll_free': Capability(
         'spend_less',
         'A pharmacy approves its toll-free fax number in writing. Your faxes to it dial that number, and the '
         'pharmacy pays for those calls.',
-        'faxbot recipients toll-free approve {number}',
+        'faxbot recipients toll-free approve {number} {toll_free} --by {who} --on {date} --evidence {evidence}',
         (SENDS, Prerequisite('agreement', "The recipient's written approval of its toll-free fax number; you record it "
                                           'on their page.', 'recipients/list', _toll_free_approved))),
     'cheapest_route': Capability(
@@ -409,14 +431,14 @@ CAPABILITIES = {
         'spend_less',
         'Your fax service plan includes a set number of pages each month. Faxbot sends through it while it has room '
         'under its budget, and then uses routes that charge per fax.',
-        'faxbot costs plans budget',
+        'faxbot costs plans budget {plan} --pages {count}',
         (Prerequisite('prices', 'A monthly plan among your sending routes, with its fee and allowance entered.',
                       'savings/prices', _plan_on_sending),)),
     'busy_hours': Capability(
         'recover',
         "A clinic's line is busy every weekday from 9 to 10. A routine fax to it waits until 10 instead of placing "
         'calls that fail and may be charged.',
-        'faxbot recipients schedule {number}', (SENDS,)),
+        'faxbot recipients schedule {number} --learn', (SENDS,)),
     'free_line': Capability(
         'recover',
         'Three faxes for the same small office are ready at once. Faxbot calls one at a time, so the others wait for '
@@ -426,15 +448,15 @@ CAPABILITIES = {
         'relationships',
         "A hospital lists a Direct address in the national provider directory. Once you confirm it, referrals to "
         'that hospital go as Direct messages instead of fax calls.',
-        'faxbot recipients digital add {number}',
-        (Prerequisite('connection', 'A Direct messaging (HISP) or FHIR account.', 'delivery/connections',
+        'faxbot recipients digital add {number} --direct {address} --confirm',
+        (Prerequisite('connection', 'A Direct messaging provider account or a FHIR account.', 'delivery/connections',
                       _digital_account),
          Prerequisite('agreement', "A recipient's Direct address or FHIR server that you confirmed on their page.",
                       'recipients/list', _digital_confirmed))),
     'fax_over_ip': Capability(
         'shorter_calls',
         'A ten-page fax over your SIP trunk goes as fax data (T.38) instead of audio, so the call takes less time.',
-        'faxbot providers trunk mode',
+        'faxbot providers trunk mode t38',
         (TRUNK, Prerequisite('connection', 'A network and carrier that carry T.38. Faxbot checks this itself and '
                                            'switches T.38 back on when they do.', 'delivery/trunk',
                              _network_passes_t38))),
@@ -442,12 +464,12 @@ CAPABILITIES = {
         'shorter_calls',
         'Before a call, Faxbot measures a scanned page in each coding the receiving machine accepts, and sends the '
         'smallest, so the page takes less time on the line.',
-        'faxbot system settings set sip_fax_compression=jbig', (TRUNK_SENDS,)),
+        None, (TRUNK_SENDS,)),
     'sending_together': Capability(
         'no_repeats',
         'Five short faxes for the same lab within a few minutes go in one call instead of five, on a trunk that '
         'charges for each call.',
-        'faxbot recipients together set {number}',
+        'faxbot recipients together set {number} --recipient-agreed',
         (TRUNK_SENDS, CALLS_BILLED_WHOLE,
          Prerequisite('agreement', 'A recipient that agrees to receive several faxes in one call; you record that on '
                                    'their page.', 'recipients/list', _agreed_together))),
@@ -460,8 +482,7 @@ CAPABILITIES = {
          Prerequisite('agreement', 'A recipient that shares calls and agrees to an index page or page marks; you '
                                    'record that on their page.', 'recipients/list', _agreed_marks),
          Prerequisite('setting', 'For marks at the top of every page: your header text and sending number.',
-                      'delivery/identity', _header_ready)),
-        elsewhere=(('delivery/identity', 'faxbot system settings set fax_header=... fax_station_id=...'),)),
+                      'delivery/identity', _header_ready))),
     'sslfax': Capability(
         'shorter_calls',
         'When the receiving fax server offers SSL Fax, the pages go over an encrypted internet connection during '
@@ -472,24 +493,24 @@ CAPABILITIES = {
     'continuation': Capability(
         'recover',
         'A 30-page fax broke after page 22 was confirmed. You send only pages 23 to 30 instead of all 30 again.',
-        'faxbot sent continue {fax}', (SENDS,)),
+        'faxbot sent continue {fax_id} --send', (SENDS,)),
     'partner_repair': Capability(
         'recover',
         'A call to a partner broke after 12 of 20 pages. Faxbot asks the partner which pages it holds, and sends the '
         'other 8 over the internet with no new call.',
-        'faxbot recipients partners repairs', (PARTNER_IMAGES, DIRECT_ON), experimental=True),
+        'faxbot system settings set direct_delivery_enabled=true', (PARTNER_IMAGES, DIRECT_ON), experimental=True),
     'charge_checks': Capability(
         'explain',
         "Your carrier's invoice lists three more calls than Faxbot recorded. Charges lists those three calls, so you "
         'can ask the carrier about them.',
         None,
         (Prerequisite('connection', 'A fax service account or your own SIP trunk.', 'delivery/connections',
-                      _sending_or_receiving),)),
+                      _sending_or_receiving),), findings=True),
     'blocked_senders': Capability(
         'receiving',
         'A number keeps sending junk faxes at night. Once you block it, its calls are declined before Faxbot '
         'answers, so nothing is received or stored.',
-        'faxbot numbers blocked add {number}',
+        'faxbot numbers blocked add {number} --reason {reason}',
         (TRUNK_RECEIVES, Prerequisite('setting', 'A number on your blocked list.', 'delivery/blocked',
                                       _blocked_listed))),
     'advice_sending': advice(
@@ -577,6 +598,10 @@ CAPABILITIES = {
 }
 
 
+# A catalogue key with no entry above, listed with the catalogue's own facts only (see evaluate).
+UNMAPPED = Capability('explain', '', None)
+
+
 # -- the read -----------------------------------------------------------------------------------------------------
 
 def _labels(values):
@@ -586,7 +611,8 @@ def _labels(values):
 
     def label(where):
         page = where.partition('?')[0]
-        return trunk if page == 'delivery/trunk' else PAGES[page]
+        # A page this module has no name for (a new catalogue page): its address, until PAGES names it.
+        return trunk if page == 'delivery/trunk' else PAGES.get(page, page)
     return label
 
 
@@ -609,10 +635,11 @@ def _improvement(ready, experimental, prerequisites):
 def _view(key, capability, item, here, label):
     prerequisites = []
     for prerequisite in capability.prerequisites:
-        met = bool(prerequisite.met(here))
+        found = prerequisite.met(here)
+        state = found if isinstance(found, str) else 'in_place' if found else 'missing'
         prerequisites.append({
-            'kind': prerequisite.kind, 'kind_label': KINDS[prerequisite.kind], 'met': met,
-            'label': 'In place' if met else 'Missing', 'sentence': prerequisite.sentence,
+            'kind': prerequisite.kind, 'kind_label': KINDS[prerequisite.kind], 'met': state != 'missing',
+            'state': state, 'label': STATES[state], 'sentence': prerequisite.sentence,
             'address': prerequisite.address, 'address_label': label(prerequisite.address)})
     missing = sum(1 for prerequisite in prerequisites if not prerequisite['met'])
     ready = bool(item['turn_on'])
@@ -620,12 +647,14 @@ def _view(key, capability, item, here, label):
     results = None
     if item['link']:
         results = {'address': address(item['link']), 'label': label(address(item['link'])), 'command': item['command']}
-    if capability.command is None:
-        # Advice and charge checks: their home is the page with what they found, and its command prints it.
-        setting, command = results['address'], results['command']
+    if capability.findings:
+        # Advice and charge checks: their home is the page with what they found; its command is under results.
+        setting, command = results['address'], None
     else:
         setting = address(item['page'])
-        command = dict(capability.elsewhere).get(setting, capability.command)
+        # When the catalogue sends its setting to another page this time (separator pages → Sender identity), what
+        # changes there is not this command.
+        command = capability.command if setting == address(mechanisms.BY_KEY[key].page) else None
     filters = [name for name, matches in (('on', on), ('off', not on), ('ready', ready), ('needs', missing > 0),
                                           ('experimental', capability.experimental)) if matches]
     return {
@@ -659,7 +688,12 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
     label = _labels(values)
     grouped = {key: [] for key, _, _ in OUTCOMES}
     for mechanism in mechanisms.CATALOGUE:
-        capability = CAPABILITIES[mechanism.key]
+        capability = CAPABILITIES.get(mechanism.key)
+        if capability is None:
+            # A catalogue entry added without its line here: still listed, with what the catalogue says, rather than
+            # taking the whole read down. api/tests/test_capabilities.py fails until the line is added.
+            log.warning('Capability %s has no entry in routing/capabilities.py; listing it without one', mechanism.key)
+            capability = UNMAPPED
         grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label))
     return {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,

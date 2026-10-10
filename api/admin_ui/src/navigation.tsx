@@ -4,8 +4,8 @@
 // and links work. Every address the console had before the six areas still opens
 // the page that now does that job (MOVED_ADDRESSES). Visibility here is a display
 // hint only; the server checks every request again.
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import { Alert, Box, CircularProgress, Typography } from '@mui/material';
+import type { ReactElement, ReactNode } from 'react';
+import { Alert, Box, Typography } from '@mui/material';
 import FolderCopyIcon from '@mui/icons-material/FolderCopy';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import FaxIcon from '@mui/icons-material/Fax';
@@ -103,9 +103,7 @@ import ExpectedFaxes, { readExpectedView } from './components/expected/ExpectedF
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import TuneIcon from '@mui/icons-material/Tune';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import SavingsMap from './components/SavingsMap';
-import { ScreenHeader } from './components/access/AccessViews';
-import type { SavingsMechanisms } from './api/deliveryTypes';
+import Capabilities from './components/capabilities/Capabilities';
 
 export type AreaId = 'overview' | 'savings' | 'faxes' | 'delivery' | 'recipients' | 'admin';
 
@@ -312,27 +310,6 @@ function providerPage(id: string, label: string, section: SettingsSection, provi
   return { id, label, icon, provider, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, render: settingsPage([section], label) };
 }
 
-// Capabilities until its own page arrives (#50): the map of every way Faxbot saves money,
-// with each mechanism's status here. The same read and sentences as the Overview map.
-function CapabilitiesMap({ client, onNavigate }: { client: AdminAPIClient; onNavigate: PageContext['navigate'] }) {
-  const [state, setState] = useState<{ data?: SavingsMechanisms; failed?: boolean }>({});
-  useEffect(() => {
-    let current = true;
-    client.getSavingsMechanisms()
-      .then((data) => { if (current) setState({ data }); })
-      .catch(() => { if (current) setState({ failed: true }); });
-    return () => { current = false; };
-  }, [client]);
-  return (
-    <Box>
-      <ScreenHeader title="Capabilities" />
-      {!state.data && !state.failed && <CircularProgress size={24} aria-label="Loading" />}
-      {state.failed && <Alert severity="error">Could not load the capabilities. Try again.</Alert>}
-      {state.data && <SavingsMap data={state.data} onNavigate={onNavigate} />}
-    </Box>
-  );
-}
-
 // Group headings inside an area.
 const NUMBERS_AND_MAILBOXES = 'Numbers & mailboxes';
 const DOCUMENTS = 'Documents in and out';
@@ -356,7 +333,8 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       // Every way Faxbot can save money or improve delivery, on or off (the mechanism catalogue).
       { id: 'capabilities', label: 'Capabilities', icon: <AutoAwesomeIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <CapabilitiesMap client={ctx.client} onNavigate={ctx.navigate} /> },
+        render: (ctx) => <Capabilities client={ctx.client} show={ctx.params.get('show')} capability={ctx.params.get('key')}
+          onNavigate={ctx.navigate} /> },
       { id: 'opportunities', label: 'Opportunities', icon: <LightbulbIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Recommendations client={ctx.client} canWrite={ctx.permissions.has('settings:write')}
           onNavigate={ctx.navigate} focus={ctx.params.get('section')} /> },

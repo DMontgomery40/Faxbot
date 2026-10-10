@@ -4,33 +4,41 @@ The capabilities module (app/routing/capabilities.py) must keep up with the mech
 - a catalogue key has no capability entry, or an entry names an unknown outcome or prerequisite kind;
 - an address it emits is not a page of the six-area navigation in spec #48, or does not open in the console once
   that navigation has merged;
-- a command it names is not in the command reference.
+- a command it shows does not run as shown: it must reach a command of the faxbot app (a visible path or a hidden
+  older name) and parse there, with only the {number}-style values a person fills in.
 
 The rest evaluates GET /routing/capabilities on a real installation (SQLite and PostgreSQL) and checks that every
 key appears exactly once, carries the map's own facts, names something missing whenever it does not work here, and
-never carries money. The shared fixture (admin_ui/src/__tests__/capabilities.json) is one such answer; the console's
-and the command's tests read it. All numbers and names are synthetic.
+never carries money; and that `faxbot costs capabilities` prints the shared fixture's lines
+(admin_ui/src/__tests__/capabilities.json), which the console's test renders too. All numbers and names are synthetic.
 """
 from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
+import click
 import pytest
 import sqlalchemy as sa
+from typer.main import get_command
 
+from app.cli.commands import capabilities as capability_commands
 from app.routing import capabilities, mechanisms
+from api.tests.test_cli import cli, server  # noqa: F401 (fixtures)
 from api.tests.test_config_env_secrets import (  # noqa: F401 (fixtures)
     ADMIN, database_url, installation)
 from api.tests.test_savings_mechanisms import AGREED, DID, JUNK, TOLL_FREE_FOR, _fax, _navigation_pages, _record
 
 API_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = API_ROOT / 'admin_ui' / 'src' / '__tests__' / 'capabilities.json'
-REFERENCE = API_ROOT.parent / 'docs' / 'reference' / 'cli.md'
 MODULE = 'api/app/routing/capabilities.py'
 # FAXBOT_WRITE_FIXTURES=1 rewrites the shared fixture from the scenario below (SQLite run) instead of checking it.
 WRITE = os.environ.get('FAXBOT_WRITE_FIXTURES') == '1'
+# The capabilities the fixture also prints one by one (faxbot costs capabilities show KEY).
+SHOWN = ('sending_together', 'fax_friendly', 'encoded_pages', 'direct_delivery', 'separator_pages', 'advice_plans',
+         'measured_coding', 'busy_hours')
 
 # Spec #48's navigation table: every page of the six areas, as 'area/page'.
 SPEC_PAGES = {
@@ -47,19 +55,17 @@ SPEC_PAGES = {
                                    'terminal', 'scripts', 'plugins')),
 }
 
+# The values a person fills in, as the commands name them, with a synthetic value each to check that they parse.
+FILL_IN = {
+    '{number}': AGREED, '{partner}': 'Synthetic partner', '{route}': 'sip', '{address}': '10.20.0.2',
+    '{toll_free}': '+18005550100', '{who}': 'Synthetic intake lead', '{date}': '2026-10-03',
+    '{evidence}': 'Synthetic letter', '{plan}': 'sip', '{count}': '100', '{fax_id}': 'a' * 32,
+    '{reason}': 'Synthetic junk sender',
+}
+
 
 def _page(where):
     return where.partition('?')[0]
-
-
-def _heading(command):
-    """The command a line names, without its arguments: '{number}', '--option' and 'name=value' end it."""
-    words = []
-    for word in command.split():
-        if word.startswith(('{', '-')) or '=' in word:
-            break
-        words.append(word)
-    return ' '.join(words)
 
 
 def _static_addresses():
@@ -72,11 +78,25 @@ def _static_addresses():
             found.append((mechanism.key, 'results', capabilities.address(mechanism.destination)))
         for prerequisite in capability.prerequisites if capability else ():
             found.append((mechanism.key, 'prerequisite', prerequisite.address))
-        for page, _ in capability.elsewhere if capability else ():
-            found.append((mechanism.key, 'setting elsewhere', page))
     # Pages the catalogue's evaluation may send a setting to this time (separator pages → Sender identity).
     found.append(('separator_pages', 'setting', capabilities.address('numbers/identity')))
     return found
+
+
+def _parse(command):
+    """Parse a command line as faxbot would, hidden older names included; raises click.UsageError if it would not
+    run as shown. Returns the command reached and its words."""
+    from app.cli.main import app
+    words = command.split()
+    assert words[0] == 'faxbot', command
+    node, path, rest = get_command(app), ['faxbot'], words[1:]
+    while rest and isinstance(node, click.Group) and rest[0] in node.commands:
+        path.append(rest[0])
+        node, rest = node.commands[rest[0]], rest[1:]
+    unknown = [word for word in rest if word.startswith('{') and word not in FILL_IN]
+    assert unknown == [], f'{command}: no synthetic value for {unknown} in FILL_IN'
+    node.make_context(' '.join(path), [FILL_IN.get(word, word) for word in rest])
+    return node, path
 
 
 # -- the module keeps up with the catalogue ------------------------------------------------------------------------
@@ -98,26 +118,53 @@ def test_every_catalogue_key_has_one_capability_in_a_known_outcome():
         for prerequisite in capability.prerequisites:
             assert prerequisite.kind in capabilities.KINDS, f'{key}: unknown prerequisite kind {prerequisite.kind!r}'
             assert prerequisite.sentence.endswith('.') and callable(prerequisite.met), key
-        # Advice and charge checks keep the catalogue's own command, the one that prints what they found.
-        assert (capability.command is None) == (mechanisms.BY_KEY[key].stage == 'advice' or key == 'charge_checks'), key
-    # Every outcome serves something.
+        # Advice and charge checks have nothing to switch: their home is what they found.
+        assert capability.findings == (mechanisms.BY_KEY[key].stage == 'advice' or key == 'charge_checks'), key
+        assert not (capability.findings and capability.command), key
+    # Every outcome serves something; the four the README calls experimental are marked.
     assert {capability.outcome for capability in capabilities.CAPABILITIES.values()} == set(outcomes)
-    assert capabilities.CAPABILITIES['encoded_pages'].experimental
+    assert sorted(key for key, capability in capabilities.CAPABILITIES.items() if capability.experimental) == [
+        'encoded_pages', 'partner_repair', 'partner_tunnel', 'reuse']
+    # Measured coding is automatic: no command, only its page.
+    assert capabilities.CAPABILITIES['measured_coding'].command is None
 
 
-def test_every_address_is_a_six_area_page_and_every_command_is_in_the_reference():
+def test_every_address_is_a_six_area_page():
     assert set(capabilities.PAGES) <= SPEC_PAGES, sorted(set(capabilities.PAGES) - SPEC_PAGES)
     assert set(capabilities.MOVED.values()) <= set(capabilities.PAGES)
     for key, what, where in _static_addresses():
         assert _page(where) in capabilities.PAGES, (
             f'{key}: its {what} address {where} has no six-area page; add its page to MOVED or PAGES in {MODULE}')
-    reference = REFERENCE.read_text(encoding='utf-8')
-    for key, capability in capabilities.CAPABILITIES.items():
-        for command in [capability.command, *(command for _, command in capability.elsewhere)]:
-            if command is None:
-                continue
-            assert command.startswith('faxbot ') and f'### `{_heading(command)}`' in reference, (
-                f'{key}: no command {_heading(command)!r} in docs/reference/cli.md')
+
+
+def test_every_command_runs_as_shown():
+    """Each command reaches a faxbot command (a visible path or a hidden older name) and parses there, required
+    arguments and options included; the catalogue's own commands, which the read passes on, reach one too."""
+    commands = [(key, capability.command) for key, capability in capabilities.CAPABILITIES.items()
+                if capability.command]
+    commands += [(mechanism.key, mechanism.command) for mechanism in mechanisms.CATALOGUE if mechanism.command]
+    commands.append(('savings parts', 'faxbot costs savings'))
+    for key, command in commands:
+        assert '...' not in command, f'{key}: {command} has a value no one can run'
+        try:
+            _parse(command)
+        except click.UsageError as error:
+            raise AssertionError(f'{key}: {command!r} does not run as shown: {error.format_message()}') from None
+
+
+def test_every_settings_command_changes_a_real_setting(cli):
+    """Each settings command, run against a real server from the other value, is accepted and changes the setting."""
+    opposite = {'true': 'false', 'where_it_saves': 'never'}
+    commands = {capability.command for capability in capabilities.CAPABILITIES.values()
+                if capability.command and capability.command.startswith('faxbot system settings set ')}
+    assert len(commands) == 4, commands
+    for command in sorted(commands):
+        name, value = command.split()[-1].split('=')
+        before = cli('system', 'settings', 'set', f'{name}={opposite[value]}')
+        assert before.exit_code == 0, (command, before.stdout, before.stderr)
+        result = cli(*command.split()[1:])
+        assert result.exit_code == 0, (command, result.stdout, result.stderr)
+        assert 'Nothing changed' not in result.stdout, (command, result.stdout)
 
 
 def test_every_address_opens_in_the_console():
@@ -192,7 +239,7 @@ def _check_answer(body, mapped):
     assert [entry['key'] for entry in body['filters']] == [key for key, _, _ in capabilities.FILTERS]
     the_map = {item['key']: item for stage in mapped['stages'] for item in stage['mechanisms']}
     for key, item in _by_key(body).items():
-        fact = the_map[key]
+        fact, capability = the_map[key], capabilities.CAPABILITIES[key]
         assert (item['name'], item['sentence']) == (fact['name'], fact['sentence'])
         assert (item['enabled'], item['works'], item['evidence'], item['here']) == (
             fact['enabled'], fact['works'], fact['evidence'], fact['here']), key
@@ -209,9 +256,15 @@ def _check_answer(body, mapped):
         assert item['filters'] == expected, key
         assert (item['improvement'] is None) == (not item['ready']), key
         for prerequisite in item['prerequisites']:
-            assert prerequisite['label'] == ('In place' if prerequisite['met'] else 'Missing')
+            assert prerequisite['label'] == capabilities.STATES[prerequisite['state']]
+            assert prerequisite['met'] == (prerequisite['state'] != 'missing')
             assert prerequisite['kind_label'] == capabilities.KINDS[prerequisite['kind']]
-        assert item['setting']['address'] and item['setting']['label'] and item['setting']['command'], key
+        assert item['setting']['address'] and item['setting']['label'], key
+        # A command only where it changes this setting, on the page the setting is on this time.
+        if capability.findings or item['setting']['address'] != capabilities.address(mechanisms.BY_KEY[key].page):
+            assert item['setting']['command'] is None, key
+        else:
+            assert item['setting']['command'] == capability.command, key
         if fact['link']:
             assert item['results']['address'] == capabilities.address(fact['link'])
             assert item['results']['command'] == fact['command']
@@ -220,14 +273,27 @@ def _check_answer(body, mapped):
         assert item['affected'] is None
 
 
+def _cli_lines(body):
+    return {
+        'list': capability_commands.list_lines(body),
+        'filtered': {'ready': capability_commands.list_lines(body, 'ready')},
+        'show': {key: capability_commands.show_lines(body, key) for key in SHOWN},
+    }
+
+
 def _write_fixture(body):
     FIXTURE.write_text(json.dumps({
         'about': ('Capabilities in words. The console (components/capabilities/) and the faxbot command (faxbot '
-                  'costs capabilities) show exactly what the server says. The response is GET /routing/capabilities '
-                  'evaluated on a synthetic installation (api/tests/test_capabilities.py scenario); its catalogue and '
-                  'capability fields must match app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite '
-                  'it after either changes, run tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.'),
+                  'costs capabilities, cli/commands/capabilities.py) show exactly what the server says. The response '
+                  'is GET /routing/capabilities evaluated on a synthetic installation (api/tests/test_capabilities.py '
+                  'scenario), and cli holds the lines the command prints from it: all of them, those ready to turn '
+                  'on, and some capabilities one by one. Its catalogue and capability fields must match '
+                  'app/routing/mechanisms.py and app/routing/capabilities.py. To rewrite it after either changes, run '
+                  'tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.'),
         'response': body,
+        'cli': _cli_lines(body),
+        # Every console address the module can emit; the console's test opens each one (resolvesTo).
+        'addresses': sorted({where for _, _, where in _static_addresses()}),
     }, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 
 
@@ -243,10 +309,12 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert together['outcome'] == 'no_repeats' and together['filters'] == ['on']
     assert [(p['kind'], p['met']) for p in together['prerequisites']] == [
         ('connection', True), ('prices', True), ('agreement', True)]
-    assert together['setting'] == {'address': 'recipients/list', 'label': 'Recipients → Details',
-                                   'command': 'faxbot recipients together set {number}'}
+    assert together['setting'] == {'address': 'recipients/list', 'label': 'Recipients',
+                                   'command': 'faxbot recipients together set {number} --recipient-agreed'}
+    the_map = {item['key']: item for stage in mapped['stages'] for item in stage['mechanisms']}
     assert together['results'] == {'address': 'savings/results?part=sending_together',
-                                   'label': 'Savings & optimization → Savings', 'command': 'faxbot costs savings'}
+                                   'label': 'Savings & optimization → Savings',
+                                   'command': the_map['sending_together']['command']}
 
     # Lighter shading is off by the setting and the trunk bills by time: ready, and you can do it now.
     friendly = items['fax_friendly']
@@ -267,7 +335,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     direct = items['direct_delivery']
     assert direct['filters'] == ['off', 'needs'] and direct['improvement'] is None
     assert direct['prerequisites'] == [{
-        'kind': 'partner', 'kind_label': 'Partner', 'met': False, 'label': 'Missing',
+        'kind': 'partner', 'kind_label': 'Partner', 'met': False, 'state': 'missing', 'label': 'Missing',
         'sentence': capabilities.PARTNER.sentence, 'address': 'recipients/partners',
         'address_label': 'Recipients → Partners'}]
 
@@ -277,12 +345,23 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert [(p['kind'], p['met']) for p in cheapest['prerequisites']] == [('connection', False), ('prices', False)]
     assert items['sslfax']['setting']['label'] == 'Delivery setup → Telnyx'
     assert items['fax_over_ip']['here']['sentence'] == 'Used on 3 calls in 30 days'
+    assert items['fax_over_ip']['setting']['command'] == 'faxbot providers trunk mode t38'
+    # A T.38 call went through, so the network carries it; the header text is not needed while no recipient chose
+    # page marks.
+    assert [p['state'] for p in items['fax_over_ip']['prerequisites']] == ['in_place', 'in_place']
+    assert [p['state'] for p in items['separator_pages']['prerequisites']] == [
+        'in_place', 'in_place', 'missing', 'not_needed']
+    # Measured coding is automatic: its page, and no command.
+    assert items['measured_coding']['setting'] == {'address': 'delivery/trunk', 'label': 'Delivery setup → Telnyx',
+                                                   'command': None}
 
-    # Advice lives in its section of Opportunities and keeps the catalogue's command.
+    # Advice lives in its section of Opportunities; its command prints what it found.
     plans = items['advice_plans']
-    assert plans['setting'] == plans['results'] == {
-        'address': 'savings/opportunities?section=plans', 'label': 'Savings & optimization → Opportunities',
-        'command': 'faxbot costs recommendations plans'}
+    assert plans['setting'] == {'address': 'savings/opportunities?section=plans',
+                                'label': 'Savings & optimization → Opportunities', 'command': None}
+    assert plans['results'] == {'address': 'savings/opportunities?section=plans',
+                                'label': 'Savings & optimization → Opportunities',
+                                'command': mechanisms.BY_KEY['advice_plans'].command}
     assert items['charge_checks']['setting']['address'] == 'savings/charges'
     assert items['busy_hours']['results'] is None
 
@@ -298,11 +377,44 @@ def test_a_new_installation_names_what_each_capability_is_missing(installation):
     body = body.json()
     _check_answer(body, mapped.json())
     items = _by_key(body)
-    # No trunk, no partner: trunk and partner capabilities say exactly that.
+    # No trunk, no partner: trunk and partner capabilities say exactly that, and none is offered to turn on.
     assert [(p['kind'], p['met']) for p in items['sslfax']['prerequisites']] == [('connection', False), ('engine', False)]
     assert items['partner_tunnel']['missing'] == 3
-    # Nothing is ready to turn on that needs a trunk or a partner.
+    # No T.38 call has gone through, so the network is not said to carry it.
+    assert [p['state'] for p in items['fax_over_ip']['prerequisites']] == ['missing', 'not_checked']
     assert not items['sslfax']['ready'] and not items['direct_delivery']['ready']
+
+
+def test_settings_faxbot_changed_itself_or_set_elsewhere_are_said_with_their_own_page(installation):
+    """Page marks waiting for the header text lead to Sender identity, with no command for that page; fax over IP
+    that Faxbot switched off for the network names the network as what is missing and offers nothing to turn on."""
+    from app import sip_fax_mode
+    with installation.start(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID,
+                            SIP_T38_ENABLED='false') as client:
+        agreed = client.put(f'/batching/numbers/{AGREED}', headers=ADMIN, json={
+            'enabled': True, 'recipient_agreed': True, 'boundaries': 'page_headers', 'boundaries_agreed': True})
+        assert agreed.status_code == 200, agreed.text
+        sip_fax_mode.write(SimpleNamespace(fax_data_dir=installation.base['FAX_DATA_DIR']), 'audio',
+                           sip_fax_mode.NETWORK)
+        body = client.get('/routing/capabilities', headers=ADMIN)
+        mapped = client.get('/routing/savings/mechanisms', headers=ADMIN)
+    assert body.status_code == 200, body.text
+    body = body.json()
+    _check_answer(body, mapped.json())
+    items = _by_key(body)
+
+    marks = items['separator_pages']
+    assert marks['ready'] and marks['setting'] == {'address': 'delivery/identity',
+                                                   'label': 'Delivery setup → Sender identity', 'command': None}
+    header = marks['prerequisites'][-1]
+    assert (header['kind'], header['met'], header['address']) == ('setting', False, 'delivery/identity')
+    assert marks['improvement'] == {'kind': 'now', 'label': 'You can do this now'}
+
+    t38 = items['fax_over_ip']
+    assert (t38['enabled']['on'], t38['works']['here'], t38['ready']) == (False, False, False)
+    assert [(p['kind'], p['state']) for p in t38['prerequisites']] == [
+        ('connection', 'in_place'), ('connection', 'missing')]
+    assert t38['filters'] == ['off', 'needs']
 
 
 def test_the_fixture_is_an_answer_from_the_modules():
@@ -325,6 +437,8 @@ def test_the_fixture_is_an_answer_from_the_modules():
             capability.outcome, capability.example, capability.experimental), f'{key}: {regenerate}'
         assert [(p['kind'], p['sentence'], p['address']) for p in item['prerequisites']] == [
             (p.kind, p.sentence, p.address) for p in capability.prerequisites], f'{key}: {regenerate}'
+        if item['setting']['command']:
+            assert item['setting']['command'] == capability.command, f'{key}: {regenerate}'
     # Every state the console and the command must show is in it at least once.
     filters = {name for item in items.values() for name in item['filters']}
     assert filters == {key for key, _, _ in capabilities.FILTERS}
@@ -332,6 +446,59 @@ def test_the_fixture_is_an_answer_from_the_modules():
     assert {'now', 'agreement', 'experimental'} <= kinds
     assert any(item['here']['used'] for item in items.values())
     assert any(not p['met'] and p['kind'] == 'agreement' for item in items.values() for p in item['prerequisites'])
+    # The command prints exactly the fixture's lines from that answer.
+    assert fixture['cli'] == _cli_lines(response), regenerate
+    assert fixture['addresses'] == sorted({where for _, _, where in _static_addresses()}), regenerate
+
+
+def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
+    result = cli('costs', 'capabilities')
+    assert result.exit_code == 0, result.stdout
+    lines = result.stdout.splitlines()
+    assert lines[0] == 'Capabilities' and lines[-1] == 'One capability in full: faxbot costs capabilities show KEY'
+    for _, title, _ in capabilities.OUTCOMES:
+        assert title in lines
+    assert '  Sending together (sending_together): Off · Not here · Test lab' in lines
+    together = lines.index('  Sending together (sending_together): Off · Not here · Test lab')
+    assert '    Missing: Connection, Prices, Recipient\'s agreement' in lines[together:together + 6]
+    assert '$' not in result.stdout
+
+    ready = cli('costs', 'capabilities', '--filter', 'ready')
+    assert ready.exit_code == 0 and 'Showing: Ready to turn on' in ready.stdout.splitlines()
+    assert all(item['ready'] for outcome in cli.json('costs', 'capabilities', '--filter', 'ready')['outcomes']
+               for item in outcome['capabilities'])
+    refused = cli('costs', 'capabilities', '--filter', 'cheap')
+    assert refused.exit_code != 0 and 'Use one of on, off, ready, needs, experimental for --filter.' in (
+        refused.stdout + (refused.stderr or ''))
+
+    shown = cli('costs', 'capabilities', 'show', 'sslfax')
+    assert shown.exit_code == 0, shown.stdout
+    lines = shown.stdout.splitlines()
+    assert lines[:2] == ['Faster pages', 'On · Not here · Test lab']
+    assert 'Command line: faxbot system settings set sip_sslfax_enabled=true' in lines
+    figures = {item['key']: item for stage in cli.json('costs', 'mechanisms')['stages']
+               for item in stage['mechanisms']}
+    assert f"Its figures: Savings & optimization → Savings ({figures['sslfax']['command']})" in lines
+    assert cli.json('costs', 'capabilities', 'show', 'sslfax')['key'] == 'sslfax'
+    unknown = cli('costs', 'capabilities', 'show', 'cheapest')
+    assert unknown.exit_code != 0
+    assert 'There is no capability cheapest. List them with: faxbot costs capabilities' in (
+        unknown.stdout + (unknown.stderr or ''))
+
+
+def test_a_key_with_no_capability_line_is_still_listed_and_the_read_still_answers(installation, monkeypatch, caplog):
+    """A research entry merged without its line here must not take the read (and Overview) down; the strict test
+    above still fails until the line is added."""
+    trimmed = {key: capability for key, capability in capabilities.CAPABILITIES.items() if key != 'relay'}
+    monkeypatch.setattr(capabilities, 'CAPABILITIES', trimmed)
+    with installation.start() as client:
+        body = client.get('/routing/capabilities', headers=ADMIN)
+    assert body.status_code == 200, body.text
+    relay = _by_key(body.json())['relay']
+    assert (relay['outcome'], relay['example'], relay['prerequisites'], relay['setting']['command']) == (
+        'explain', '', [], None)
+    assert relay['setting']['label'] == 'Recipients → Partners'
+    assert 'Capability relay has no entry in routing/capabilities.py' in caplog.text
 
 
 def test_capabilities_need_settings_read(installation):

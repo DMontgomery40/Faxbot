@@ -696,6 +696,10 @@ const consoleHandlers = [
   // The Overview's savings map: an answer with no mechanisms draws no map.
   http.get('/routing/savings/mechanisms', () => json({ days: 30, title: 'How Faxbot saves money',
     sentence: 'Every way Faxbot saves money, in the order a fax meets them.', legend: [], stages: [] })),
+  // Savings & optimization → Capabilities: an answer with every outcome empty.
+  http.get('/routing/capabilities', () => json({ days: 30, title: 'Capabilities',
+    sentence: 'Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.',
+    legend: [], filters: [], outcomes: [] })),
   // Sending recommendations: no number has enough delivered faxes on two routes yet.
   http.get('/routing/recommendations/sending', () => json({ window_days: 30, min_delivered: 3, items: [],
     empty_sentence: 'Nothing to suggest yet. Faxbot compares the cost of two routes once each has delivered 3 faxes to the same number in the last 30 days.' })),

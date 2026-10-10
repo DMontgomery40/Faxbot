@@ -23,6 +23,7 @@ from .commands import digital
 from .commands import forwarded_trust
 from .commands import expected as expected_commands
 from .commands import cases as case_commands
+from .commands import capabilities as capability_commands
 from .commands import overview as overview_commands
 
 NOUNS = ('received', 'sent', 'numbers', 'recipients', 'providers', 'costs', 'access', 'system')
@@ -204,6 +205,7 @@ costs.command('savings')(delivery.routing_savings)
 costs.command('advice')(fact_advice.costs_advice)
 costs.command('portfolio')(portfolio_commands.portfolio)
 costs.command('mechanisms')(delivery.routing_mechanisms)
+costs.add_typer(capability_commands.capabilities, name='capabilities')
 costs.add_typer(delivery.recommendations, name='recommendations')
 costs.command('rate-cards')(delivery.routing_rate_cards)
 costs.command('rate-rows')(delivery.routing_rate_rows)
