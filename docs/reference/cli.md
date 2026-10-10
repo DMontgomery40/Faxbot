@@ -8721,7 +8721,8 @@ $ faxbot system codec encode [OPTIONS] {source}
 
 * `-o, --output <path>`: The fax TIFF to write.  [required]
 * `--resolution standard|fine|superfine|300|400`: The fax resolution the pages are made for.  [default: fine]
-* `--layout grid|runs|picture|enumerative`: grid survives resolution changes; runs carries the most but needs the exact image; picture hides the document in a picture; enumerative needs an unchanged image and a recipient whose Faxbot supports enumerative profile 1.  [default: grid]
+* `--layout grid|runs|picture|enumerative|capacity`: grid survives resolution changes; runs needs the exact image; picture hides the document in a picture; enumerative needs an unchanged image and a recipient whose Faxbot supports enumerative profile 1; capacity carries the most for its line time or pages and needs the exact image and a decoder from October 2026 or later.  [default: grid]
+* `--capacity-profile time|balanced|pages`: With --layout capacity: time for the shortest call (routes billed by the minute), pages for the fewest pages (routes billed by the page), or balanced.  [default: time]
 * `--error-correction low|medium|high`: How much damage the pages survive.  [default: medium]
 * `--shared-key KEY`: Encrypt with this shared key.
 * `--force`: Replace the file if it exists.

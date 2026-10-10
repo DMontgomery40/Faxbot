@@ -16,8 +16,8 @@ from api.tests import codec_receipts as receipts
 from app import codec
 from app.codec import container, pages as codec_pages
 
-LAYOUTS = ('grid', 'runs', 'picture', 'enumerative')
-EXACT_LAYOUTS = ('runs', 'enumerative')
+LAYOUTS = ('grid', 'runs', 'picture', 'enumerative', 'capacity')
+EXACT_LAYOUTS = ('runs', 'enumerative', 'capacity')
 RECEIPTS = (Path(__file__).resolve().parents[2] / 'research' / 'faxbot-nondirect-encyclopedia-2026-10-09' / 'live')
 
 

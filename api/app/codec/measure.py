@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 
-from . import pages, stream as streams
+from . import capacity, pages, stream as streams
 from .channel import lines_of
 from . import t4
 
@@ -46,6 +46,8 @@ def _variants(quick):
             yield name, 'grid (sturdy)', {'sturdy': True}
         for limit in ((15,) if quick else (7, 15, 63)):
             yield name, f'runs (limit {limit})', {'run_limit': limit}
+        for profile, (label, _) in capacity.PROFILES.items():
+            yield name, f'capacity ({label})', {'profile': profile}
         yield name, 'picture', {}
 
 
@@ -55,8 +57,8 @@ def measure(quick=False):
         layout = label.split(' ')[0]
         geo = pages.geometry(resolution, layout, sturdy=options.get('sturdy', False),
                              run_limit=options.get('run_limit', pages.DEFAULT_RUN_LIMIT))
-        if layout == 'runs':
-            probe = os.urandom(int(geo.max_data_lines * geo.resolution.width * 0.25))
+        if layout in ('runs', 'capacity'):
+            probe = os.urandom(int(geo.max_data_lines * geo.resolution.width * (0.25 if layout == 'runs' else 0.12)))
         else:
             probe = os.urandom(int(geo.row_bytes * geo.rows_per_page * 1.2))
         encoded = pages.encode(probe, resolution=resolution, layout=layout, fec=0 or 'low', **options)

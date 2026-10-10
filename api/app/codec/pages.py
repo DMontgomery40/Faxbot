@@ -40,6 +40,7 @@ import struct
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from . import capacity as capacitycode
 from . import runs as runcode
 from . import enumerative
 from . import stream as streams
@@ -71,7 +72,9 @@ RESOLUTIONS = {
     '300': Resolution('300', 300, 300, 2592, 3300),
     '400': Resolution('400', 400, 400, 3456, 4400),
 }
-LAYOUTS = {'grid': 1, 'runs': 2, 'picture': 3, 'enumerative': 4}
+LAYOUTS = {'grid': 1, 'runs': 2, 'picture': 3, 'enumerative': 4, 'capacity': 5}
+# Layouts whose rows carry their data in exact run lengths: they need the raster exactly as it was sent.
+EXACT_LAYOUTS = ('runs', 'enumerative', 'capacity')
 LAYOUT_NAMES = {value: key for key, value in LAYOUTS.items()}
 HEADER = struct.Struct('>3sBBBHH4sIIIIBB')
 HEADER_OFFSETS = (0xFFFFFFF0, 0xFFFFFFF1, 0xFFFFFFF2)
@@ -166,8 +169,10 @@ def geometry(resolution='fine', layout='grid', *, sturdy=False, run_limit=DEFAUL
     else:
         unit = 2
         height = 1 if res.ydpi < 150 else 2
-    if layout in ('runs', 'enumerative'):
+    if layout in EXACT_LAYOUTS:
         height = 1
+    if layout == 'capacity':
+        run_limit = capacitycode.CRC_LIMIT
     if layout == 'enumerative':
         run_limit = enumerative.RUN_LIMIT
         if res.width not in enumerative.WIDTHS:
@@ -249,9 +254,11 @@ def _caption_lines(geo, page_index, page_count):
     font = ImageFont.truetype(_font_path(), size, layout_engine=ImageFont.Layout.BASIC)
     caption = ('Encoded document: needs a Faxbot decoder supporting enumerative profile 1.'
                if geo.layout == 'enumerative' else CAPTION)
+    # The capacity layout needs a decoder from October 2026 or later: its pages say format 2.
+    version = 2 if geo.layout == 'capacity' else 1
     draw.text((geo.quiet, 0), caption, font=font, fill=0)
     draw.text((geo.quiet, round(size * 1.35)),
-              f'Page {page_index + 1} of {page_count} · experimental · Faxbot payload format 1',
+              f'Page {page_index + 1} of {page_count} · experimental · Faxbot payload format {version}',
               font=font, fill=0)
     scaled = canvas.resize((res.width, res.mm_lines(7)), Image.Resampling.BOX)
     return scaled.point(lambda value: 255 if value >= 160 else 0).convert('1').tobytes()
@@ -317,9 +324,14 @@ def _image(geo, lines):
 
 
 def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=False, picture=None,
-           run_limit=DEFAULT_RUN_LIMIT, max_pages=200):
-    """Payload pages for a container: a list of PIL mode "1" images with their DPI set."""
+           run_limit=DEFAULT_RUN_LIMIT, max_pages=200, profile=None):
+    """Payload pages for a container: a list of PIL mode "1" images with their DPI set. ``profile``: the capacity
+    layout's profile byte (``capacity.PROFILES``; 'time' by default)."""
     geo = geometry(resolution, layout, sturdy=sturdy, run_limit=run_limit)
+    if layout == 'capacity':
+        profile = capacitycode.PROFILE_NAMES['time'] if profile is None else int(profile)
+        if profile not in capacitycode.PROFILES:
+            raise PageError('Unknown capacity profile.')
     parity = streams.FEC_LEVELS[fec] if isinstance(fec, str) else int(fec)
     data, codewords = streams.build(container, parity)
     tag = hashlib.sha256(container).digest()[:4]
@@ -352,6 +364,12 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
             while position < total_bits and len(lines) < geo.max_data_lines:
                 if layout == 'enumerative':
                     changes, used = enumerative.encode_line(tag, position, source, position, geo.resolution.width)
+                elif layout == 'capacity':
+                    try:
+                        changes, used = capacitycode.encode_line(tag, position, source, position,
+                                                                 geo.resolution.width, profile)
+                    except capacitycode.CapacityError as error:
+                        raise PageError(str(error)) from None
                 else:
                     changes, used = runcode.encode_line(tag, position, source, position, geo.resolution.width,
                                                        geo.run_limit)
@@ -370,7 +388,8 @@ def encode(container, *, resolution='fine', layout='grid', fec='medium', sturdy=
     for index, (first, end, rows) in enumerate(plans):
         header = HEADER.pack(b'FXP', 1, LAYOUTS[layout], parity, index, len(plans), tag, codewords,
                              len(container), first, end, geo.run_limit,
-                             enumerative.PROFILE if layout == 'enumerative' else 0)
+                             enumerative.PROFILE if layout == 'enumerative' else
+                             profile if layout == 'capacity' else 0)
         lines = [b'\xff' * (geo.resolution.width // 8)] * geo.resolution.mm_lines(8)
         caption = _caption_lines(geo, index, len(plans))
         stride = geo.resolution.width // 8
@@ -531,9 +550,16 @@ def find_ladder(image, *, limit=None):
     return None
 
 
+NEWER = 'These encoded pages were made by a newer version of Faxbot; update Faxbot to decode them.'
+
+
 def _decode_header(payload):
+    """The header's fields, None when they are not a real header, or NEWER for a header (its CRC passed) of a
+    format or layout this release does not know."""
     magic, version, layout, parity, index, count, tag, codewords, length, first, end, limit, profile = \
         HEADER.unpack_from(payload)
+    if magic == b'FXP' and (version > 1 or (version == 1 and layout not in LAYOUT_NAMES)):
+        return NEWER
     if magic != b'FXP' or version != 1 or layout not in LAYOUT_NAMES or not 1 <= parity <= 128:
         return None
     if count < 1 or index >= count or length < 1 or end < first:
@@ -546,6 +572,10 @@ def _decode_header(payload):
     if layout == LAYOUTS['enumerative'] and (profile != enumerative.PROFILE
             or limit != enumerative.RUN_LIMIT or not first < end <= codewords * 255 * 8):
         return None
+    if layout == LAYOUTS['capacity'] and (limit != capacitycode.CRC_LIMIT or not first < end <= codewords * 255 * 8):
+        return None
+    if layout == LAYOUTS['capacity'] and profile not in capacitycode.PROFILES:
+        return NEWER  # a profile published after this release
     return {'layout': LAYOUT_NAMES[layout], 'parity': parity, 'page': index, 'pages': count, 'tag': tag,
             'codewords': codewords, 'container_length': length, 'first_bit': first, 'end_bit': end,
             'run_limit': limit, 'profile': profile}
@@ -581,7 +611,7 @@ def _read_oriented(gray, corrections):
     columns = len(edges) - 1
     centres = operator.itemgetter(*[(edges[i] + edges[i + 1]) // 2 for i in range(columns)])
     sizes = group_sizes(columns)
-    header = None
+    header = newer = None
     for y in range(height):
         line = data[y * width:(y + 1) * width]
         bits = _grid_bits(line, centres)
@@ -590,8 +620,13 @@ def _read_oriented(gray, corrections):
         offset, good = parse_row(bits, sizes, ZERO_TAG)
         if offset in HEADER_OFFSETS and len(good) == len(sizes):
             header = _decode_header(b''.join(chunk for _, _, chunk in good))
+            if header == NEWER:
+                newer, header = NEWER, None
+                continue
             if header is not None:
                 break
+    if header is None and newer:
+        raise PageError(NEWER)
     if header is None:
         raise _NoHeader(NO_HEADER)
     tag = header['tag']
@@ -600,7 +635,7 @@ def _read_oriented(gray, corrections):
     if len({edges[i + 1] - edges[i] for i in range(columns)}) != 1:
         # Cells of unequal width: the page was drawn again at another size (said if the page then fails to decode).
         corrections = {**corrections, 'resized': True}
-    if layout in ('runs', 'enumerative'):
+    if layout in EXACT_LAYOUTS:
         # Exact rows: every cell must be exactly as drawn (two dots), and the rows are read at the width they were
         # drawn for, moved back to where the ladder says they started.
         exact = _exact_widths().get(columns)
@@ -638,12 +673,17 @@ def _read_oriented(gray, corrections):
             lines_read += 1
             since_good = 0
             continue
-        if layout == 'runs':
+        if layout in ('runs', 'capacity'):
             changes = t4.changes_from_pixels(_aligned(line, shift, row_width))
             if len(changes) < 8:
                 continue
-            result = runcode.decode_line(changes, row_width, header['run_limit'])
-            if result is None or not runcode.check(tag, result[0], result[1], result[2]):
+            if layout == 'capacity':
+                result = capacitycode.decode_line(changes, row_width, tag, header['profile'])
+            else:
+                result = runcode.decode_line(changes, row_width, header['run_limit'])
+                if result is not None and not runcode.check(tag, result[0], result[1], result[2]):
+                    result = None
+            if result is None:
                 lines_damaged += 1 if lines_read else 0
                 since_good += 1 if lines_read else 0
                 continue
@@ -755,6 +795,8 @@ def decode(images):
     sizes = images.sizes() if hasattr(images, 'sizes') else [image.size for image in images]
     small = bool(sizes) and all(width < PREVIEW_WIDTH for width, _ in sizes)
     if not reads:
+        if NEWER in refusals:
+            raise PageError(NEWER)
         if small:
             raise PageError(PREVIEW)
         if RESIZED in refusals:

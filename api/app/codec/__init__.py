@@ -30,12 +30,14 @@ class CodecError(ValueError):
 
 
 def encode_document(document, *, resolution='fine', layout='grid', fec='medium', secret=None, picture=None,
-                    sturdy=False, salt=None, nonce=None, max_pages=200, run_limit=_pages.DEFAULT_RUN_LIMIT):
-    """Payload pages (``pages.EncodedPages``) carrying ``document``."""
+                    sturdy=False, salt=None, nonce=None, max_pages=200, run_limit=_pages.DEFAULT_RUN_LIMIT,
+                    profile=None):
+    """Payload pages (``pages.EncodedPages``) carrying ``document``. ``profile``: the capacity layout's profile
+    (``capacity.PROFILES``)."""
     try:
         packed = pack(document, secret=secret, salt=salt, nonce=nonce)
         return _pages.encode(packed, resolution=resolution, layout=layout, fec=fec, sturdy=sturdy,
-                             picture=picture, max_pages=max_pages, run_limit=run_limit)
+                             picture=picture, max_pages=max_pages, run_limit=run_limit, profile=profile)
     except (ContainerError, PageError) as error:
         raise CodecError(str(error)) from None
 
