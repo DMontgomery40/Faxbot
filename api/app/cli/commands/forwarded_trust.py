@@ -1,4 +1,4 @@
-"""faxbot numbers forwarded-trust: the certificate authorities you trust for forwarded calls."""
+"""faxbot delivery numbers forwarded-trust: the certificate authorities you trust for forwarded calls."""
 from pathlib import Path
 import sys
 

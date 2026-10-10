@@ -1,4 +1,4 @@
-"""faxbot sent continue: the pages a broken call left, their cost, and sending only those, on the real application."""
+"""faxbot faxes sent continue: the pages a broken call left, their cost, and sending only those, on the real application."""
 import pytest
 
 import app.main as main_module
@@ -26,7 +26,7 @@ def test_continue_shows_the_pages_left_and_sends_only_those_once(cli):
     assert shown.exit_code == 0, shown.stdout + shown.stderr
     for words in ('pages 8–20', 'The call used error correction, and the receiving machine confirmed the first',
                   'Page 8 may already have arrived, so the recipient may get it twice.',
-                  f'Send them with: faxbot sent continue {job} --send'):
+                  f'Send them with: faxbot faxes sent continue {job} --send'):
         assert words in shown.stdout, shown.stdout
     before = fax_ids()
     sent = cli('sent', 'continue', job, '--send')

@@ -512,7 +512,7 @@ async def test_one_attempt_prepared_on_both_sides_of_the_upgrade_stays_uncertain
 # -- what the console and the command line show -------------------------------------------------------------------
 
 def test_costs_savings_and_sent_say_what_a_reused_body_saved(cli, tmp_path):  # noqa: F811
-    """``faxbot costs savings`` and the deliveries Sent and the console read carry the bytes, never money."""
+    """``faxbot savings results`` and the deliveries Sent and the console read carry the bytes, never money."""
     import sqlalchemy as sa
     from app import main
     from app.direct.crypto import Identity, card

@@ -1,6 +1,6 @@
 """Whether Faxbot is ready for what it is set up to do, from the readiness answer (``GET /health/ready``).
 
-One rule for ``/health/ready``'s HTTP status and ``faxbot system health``'s exit code. It reads only
+One rule for ``/health/ready``'s HTTP status and ``faxbot admin health``'s exit code. It reads only
 the answer's public fields, so the command line applies it to any server's answer.
 """
 

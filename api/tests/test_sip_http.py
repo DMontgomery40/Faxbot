@@ -101,7 +101,7 @@ def test_status_without_a_trunk_says_so_in_one_sentence(bare_client):
 
 
 def test_restart_the_fast_fax_service_asks_the_engine_and_never_touches_asterisk(client, isolated_installation):
-    """The console's Restart the fax engine and `faxbot providers trunk restart-engine`: the engine reads
+    """The console's Restart the fax engine and `faxbot delivery providers trunk restart-engine`: the engine reads
     the request and starts again once no fax is going through; before Apply, or while the engine is not
     running, there is nothing to restart and the answer says so."""
     from app import hylafax_engine
@@ -592,7 +592,7 @@ def test_readiness_answers_200_when_ready_for_what_the_install_is_set_up_to_do(s
                                                                                monkeypatch):
     """The HTTP status followed sending only, so an install that only receives got 503 while ready to receive.
 
-    Only the status code follows the setup (the rule `faxbot system health` uses); the body is unchanged.
+    Only the status code follows the setup (the rule `faxbot admin health` uses); the body is unchanged.
     """
     import shutil
     ghostscript = {'installed': True}

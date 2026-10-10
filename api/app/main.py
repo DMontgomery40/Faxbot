@@ -1841,7 +1841,7 @@ class PersistSettingsIn(BaseModel):
           dependencies=[Depends(require_permission('owner:recover', audit=True, complete_owner=True))],
           responses={**_PERMISSION_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
 def persist_settings(payload: PersistSettingsIn):
-    """Deprecated: removed in the next release; back up with `faxbot system backup` instead.
+    """Deprecated: removed in the next release; back up with `faxbot admin backup` instead.
 
     Atomically export desired settings to the installation's private recovery file.
 

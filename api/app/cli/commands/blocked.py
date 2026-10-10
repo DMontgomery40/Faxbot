@@ -1,4 +1,4 @@
-"""faxbot numbers blocked and faxbot received block: junk senders turned away before Faxbot answers.
+"""faxbot delivery blocked and faxbot received block: junk senders turned away before Faxbot answers.
 
 The console's Numbers → Blocked senders and "Mark as junk" on a received fax. Reading needs
 settings:read; blocking and unblocking need settings:write.
@@ -61,7 +61,7 @@ def blocked_remove(number: str = typer.Argument(..., help='The blocked number (o
     matches = [entry for entry in data['entries'] if entry['active'] and (
         entry['id'] == number or (digits and ''.join(c for c in entry['number'] if c.isdigit()).endswith(digits)))]
     if not matches:
-        raise CliError(f'{number} is not blocked. See \'faxbot numbers blocked list\'.')
+        raise CliError(f'{number} is not blocked. See \'faxbot delivery blocked list\'.')
     results = [api.delete('/screening/senders/' + segment(entry['id'])) for entry in matches]
     state.out().result(results, lambda out: out.line(f"{matches[0]['number']} is no longer blocked."))
 

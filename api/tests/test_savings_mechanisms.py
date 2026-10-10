@@ -250,7 +250,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     # Shading is off by the setting and the trunk bills by time, so the map offers to turn it on there.
     friendly = items['fax_friendly']
     assert (friendly['enabled']['label'], friendly['works']['label'], friendly['turn_on']) == ('Off', 'Works here', True)
-    assert friendly['page'] == 'providers/sending' and friendly['page_label'] == 'Providers → In use → Delivery routes'
+    assert friendly['page'] == 'providers/sending' and friendly['page_label'] == 'Delivery setup → Providers & accounts → Delivery routes'
 
     # The trunk's own numbers receive into Faxbot, so faxes to them need no call.
     assert items['own_numbers']['enabled']['on'] is True and items['own_numbers']['works']['here'] is True
@@ -262,7 +262,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert direct['enabled']['on'] is False and direct['turn_on'] is False
 
     sslfax = items['sslfax']
-    assert sslfax['page_label'] == 'Providers → Telnyx' and sslfax['evidence']['level'] == 'lab'
+    assert sslfax['page_label'] == 'Delivery setup → Telnyx' and sslfax['evidence']['level'] == 'lab'
     # The fax engine starts only after Apply and connect, which this installation never ran.
     assert sslfax['works']['here'] is False and 'Apply and connect' in sslfax['works']['sentence']
 
@@ -303,7 +303,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert items['advice_caller_names']['works']['sentence'] == 'Needs your Telnyx key saved on the Telnyx page.'
     charges = items['charge_checks']
     assert (charges['link'], charges['link_label'], charges['command']) == (
-        'costs/charges', 'Costs → Charges', 'faxbot savings charges')
+        'costs/charges', 'Savings & optimization → Charges', 'faxbot savings charges')
     stages = {stage['key']: stage for stage in body['stages']}
     assert [key for key, stage in stages.items() if not stage['path']] == ['advice']
     # "Advice only" is said once, under the advice stage's title, never on each card.
@@ -351,7 +351,7 @@ def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation
         assert agreed.status_code == 200, agreed.text
         marks = item('separator_pages')
         assert (marks['enabled']['on'], marks['works']['here'], marks['turn_on']) == (False, True, True)
-        assert (marks['page'], marks['page_label']) == ('numbers/identity', 'Numbers → Sender identity')
+        assert (marks['page'], marks['page_label']) == ('numbers/identity', 'Delivery setup → Sending identity')
         assert marks['enabled']['sentence'].startswith('Marks at the top of every page need your header text')
 
 

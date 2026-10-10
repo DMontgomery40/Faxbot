@@ -1,6 +1,6 @@
 """Provider accounts: every account Faxbot sends and receives with, trunks included.
 
-`faxbot providers accounts` is the account list on Providers -> In use. The first account of each
+`faxbot delivery providers accounts` is the account list on Providers -> In use. The first account of each
 provider is the one its own provider page sets up; extra accounts, such as a second Sinch account or a
 second trunk, are added here. Secrets are read from a hidden prompt or from standard input, never from
 the command line, and Faxbot never shows them again.
@@ -30,7 +30,7 @@ def find(current, key):
     for account in current.get('accounts') or []:
         if account['key'] == key or account['label'].strip().casefold() == key.strip().casefold():
             return account
-    raise CliError(f"No account is called '{key}'. See 'faxbot providers accounts list'.", EXIT_NOT_FOUND)
+    raise CliError(f"No account is called '{key}'. See 'faxbot delivery providers accounts list'.", EXIT_NOT_FOUND)
 
 
 def provider_kind(current, provider):
@@ -80,7 +80,7 @@ def accounts_list():
         [[item['label'], item['key'], provider_label(current, item['provider']), site_name(current, item.get('site')),
           roles_text(item, current), 'on' if item.get('enabled') else 'off',
           HEALTH.get(item['health']['state'], item['health']['state']), ', '.join(item.get('numbers') or []) or '-']
-         for item in current.get('accounts') or []], empty='No provider accounts yet. Set one up with faxbot system '
+         for item in current.get('accounts') or []], empty='No provider accounts yet. Set one up with faxbot admin '
                                                            'setup.'))
 
 
@@ -171,7 +171,7 @@ def _limits(at_once, calls_per_second, daily_limit, existing=None):
     return limits
 
 
-SITE = typer.Option(None, '--site', help='The site its calls start from (see faxbot providers rules sites).')
+SITE = typer.Option(None, '--site', help='The site its calls start from (see faxbot delivery rules sites).')
 NUMBER = typer.Option(None, '--number', help='A fax number this account receives on (repeat it).')
 AT_ONCE = typer.Option(None, '--at-once', min=0, help='Faxes at once on this account, or lines at once on a trunk; 0 '
                                                        'for no limit.')
@@ -339,7 +339,7 @@ def accounts_health(key: str = typer.Argument(None, metavar='KEY', help="One acc
     state.out().result(result, human)
 
 
-# -- prices by where calls start (faxbot costs fax --to and costs rate-cards) ----------------------------
+# -- prices by where calls start (faxbot savings fax --to and costs rate-cards) ----------------------------
 
 def quote_command(to: str = typer.Option(..., '--to', metavar='NUMBER', help='The fax number to price.'),
                   pages: int = typer.Option(1, '--pages', min=1, max=1000, help='Pages in the fax.'),

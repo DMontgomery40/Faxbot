@@ -1,4 +1,4 @@
-"""faxbot providers digital and faxbot recipients digital: Direct and FHIR on the command line."""
+"""faxbot delivery providers digital and faxbot recipients digital: Direct and FHIR on the command line."""
 from api.app.digital import certificates
 from api.tests.digital_fixtures import SENDER, hisp_settings, pem_cert, pem_key, pki
 from api.tests.test_cli import Cli, _serve, cli, server  # noqa: F401 - fixtures

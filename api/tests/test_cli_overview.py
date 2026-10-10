@@ -93,7 +93,7 @@ def test_faxbot_overview_json_has_each_item_with_its_command(scenario):
 
 def test_every_command_it_names_exists():
     lines = [line.strip() for scenario in ATTENTION + BLOCKS['scenarios'] for line in scenario['cli']]
-    named = {line[line.index('faxbot '):] for line in lines if 'faxbot ' in line} | {'faxbot providers list'}
+    named = {line[line.index('faxbot '):] for line in lines if 'faxbot ' in line} | {'faxbot delivery providers list'}
     assert len(named) > 10
     for command in sorted(named):
         words = command.split()[1:]
@@ -126,7 +126,7 @@ def test_no_provider_names_the_providers_command_and_is_not_serious():
     assert result.exit_code == 0, result.stdout + result.stderr
     assert result.stdout.splitlines()[0] == 'What Faxbot is doing'
     assert attention_section(result.stdout) == ['Needs attention', 'To check', '  No fax provider is set up yet',
-                                                '    faxbot providers list']
+                                                '    faxbot delivery providers list']
 
 
 def test_the_full_capabilities_answer_puts_every_capability_ready_to_turn_on_among_the_next_improvements():

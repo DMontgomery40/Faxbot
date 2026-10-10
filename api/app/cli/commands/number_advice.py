@@ -1,8 +1,8 @@
 """Number advice on the command line: where each number should live, your NPI record, the check before a first
 fax, and US prices by where a call starts.
 
-``faxbot costs recommendations numbers`` and ``sites``, ``faxbot numbers npi``, ``faxbot recipients check`` and
-``faxbot costs state-prices``. Everything here advises; nothing ports a number, changes caller ID or stops a fax.
+``faxbot savings opportunities numbers`` and ``sites``, ``faxbot admin npi``, ``faxbot recipients check`` and
+``faxbot savings state-prices``. Everything here advises; nothing ports a number, changes caller ID or stops a fax.
 """
 from pathlib import Path
 

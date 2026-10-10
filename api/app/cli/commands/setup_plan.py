@@ -1,4 +1,4 @@
-"""faxbot system setup: suggested packs of rules and settings, from what Faxbot already knows.
+"""faxbot admin setup: suggested packs of rules and settings, from what Faxbot already knows.
 
 The console's System → Setup, Suggested packs. ``plan`` previews a plan (it
 changes nothing), ``show`` shows one, and ``apply`` applies its chosen
@@ -69,7 +69,7 @@ def _human(plan):
                      f"{'suggestion' if len(application['items']) == 1 else 'suggestions'} ({application['outcome']}).")
         if any(item['selected'] for _, item in _numbered(plan)):
             out.line('')
-            out.line(f"Apply the chosen suggestions with: faxbot system setup apply {plan['number']}")
+            out.line(f"Apply the chosen suggestions with: faxbot admin setup apply {plan['number']}")
     return show
 
 
@@ -110,7 +110,7 @@ def setup_list():
         out.table(['Plan', 'Created', 'Created by'],
                   [[row['number'], local_time(row['created_at']), row.get('actor_name') or 'Not recorded']
                    for row in rows])
-        out.line('Open a plan with: faxbot system setup show NUMBER')
+        out.line('Open a plan with: faxbot admin setup show NUMBER')
     state.out().result(result, human)
 
 
@@ -121,14 +121,14 @@ def setup_show(number: int = typer.Argument(None, help='The plan number. Default
     if number is None:
         plan = api.get('/setup/plans/latest')['plan']
         if plan is None:
-            raise CliError("There is no setup plan yet. Preview one with 'faxbot system setup plan'.")
+            raise CliError("There is no setup plan yet. Preview one with 'faxbot admin setup plan'.")
     else:
         plan = api.get(f'/setup/plans/{number}')
     state.out().result(plan, _human(plan))
 
 
 @setup.command('apply')
-def setup_apply(number: int = typer.Argument(..., help='The plan number, from faxbot system setup plan.'),
+def setup_apply(number: int = typer.Argument(..., help='The plan number, from faxbot admin setup plan.'),
                 only: str = typer.Option('', '--only', help="The suggestions to apply, by number, such as '1,4'. "
                                                             'Default: every suggestion the plan chose.')):
     """Apply a plan's chosen suggestions in one step; refused if your settings or rules changed since."""

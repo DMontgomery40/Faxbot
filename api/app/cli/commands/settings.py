@@ -37,7 +37,7 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
     shown = current
     if section:
         if section not in current or section == '_meta':
-            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot system settings get' to see them.",
+            raise CliError(f"There is no settings section named '{section}'. Run 'faxbot admin settings get' to see them.",
                            EXIT_NOT_FOUND)
         shown = {section: current[section]}
 
@@ -175,12 +175,12 @@ def settings_reload():
 
 @settings.command('persist')
 def settings_persist():
-    """Save every setting to the server's recovery file (owners only). Goes away in the next release; use 'faxbot system backup'."""
+    """Save every setting to the server's recovery file (owners only). Goes away in the next release; use 'faxbot admin backup'."""
     result = state.api().post('/admin/settings/persist', json={})
 
     def human(out):
         out.line(f"Settings written to {result.get('path')} on the server.")
-        out.line("The recovery copy goes away in the next release. To back up everything, run 'faxbot system backup'.")
+        out.line("The recovery copy goes away in the next release. To back up everything, run 'faxbot admin backup'.")
     state.out().result(result, human)
 
 
@@ -244,7 +244,7 @@ def _provider_fields(provider):
     from ...config_plugin_fields import PLUGIN_FIELDS
     name = provider.strip().lower()
     if name not in PLUGIN_FIELDS:
-        raise CliError(f"There is no provider named '{provider}'. Run 'faxbot providers list' to see them.",
+        raise CliError(f"There is no provider named '{provider}'. Run 'faxbot delivery providers list' to see them.",
                        EXIT_NOT_FOUND)
     return name, PLUGIN_FIELDS[name]
 
@@ -256,7 +256,7 @@ def _in_use(current, name):
 
 
 @providers.command('config')
-def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
+def providers_config(provider: str = typer.Argument(..., help="Provider from 'faxbot delivery providers list'."),
                      role: str = typer.Option(None, '--role', help='Only say whether it is used for outbound '
                                                                    '(sending), inbound (receiving) or storage.')):
     """Show a provider's settings. Passwords and keys are hidden."""
@@ -281,7 +281,7 @@ def providers_config(provider: str = typer.Argument(..., help="Provider from 'fa
 
 
 @providers.command('configure')
-def providers_configure(provider: str = typer.Argument(..., help="Provider from 'faxbot providers list'."),
+def providers_configure(provider: str = typer.Argument(..., help="Provider from 'faxbot delivery providers list'."),
                         assignments: list[str] = typer.Argument(None, metavar='NAME=VALUE...',
                                                                 help='Provider settings to change.'),
                         secret: list[str] = typer.Option(None, '--secret', metavar='NAME',
@@ -304,7 +304,7 @@ def providers_configure(provider: str = typer.Argument(..., help="Provider from 
     def setting(key):
         target = fields.get(key) or (key if key in fields.values() else None)
         if target is None:
-            raise CliError(f"{_provider(name)} has no setting named '{key}'. Run 'faxbot providers show {name}' "
+            raise CliError(f"{_provider(name)} has no setting named '{key}'. Run 'faxbot delivery providers show {name}' "
                            'to see them.')
         return known.get(target, target)
 
@@ -364,7 +364,7 @@ def _every(seconds):
 
 
 def _humblefax_lines(result):
-    """The sentences 'faxbot providers humblefax status' and 'check' print."""
+    """The sentences 'faxbot delivery providers humblefax status' and 'check' print."""
     if not result.get('receiving'):
         return [result.get('reason') or 'Faxbot is not checking HumbleFax for received faxes.']
     lines = ['HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.'
@@ -458,7 +458,7 @@ def providers_install(manifest: str = typer.Argument(..., help='The file that de
     """Install a custom HTTP fax provider from its manifest file."""
     result = state.api().post('/admin/plugins/http/install', json={'manifest': _manifest(manifest)})
     state.out().result(result, lambda out: out.line(f"Provider {result.get('id')} installed. Configure it with "
-                                                    f"faxbot providers configure {result.get('id')}."))
+                                                    f"faxbot delivery providers configure {result.get('id')}."))
 
 
 @providers.command('status')
@@ -529,7 +529,7 @@ _DIAGNOSTICS_WORDS = {'ok': 'Working', 'attention': 'Needs attention', 'problem'
 def _print_report(result):
     def human(out):
         if not result.get('checked_at'):
-            out.line('Diagnostics have not run yet. Run: faxbot system diagnostics run')
+            out.line('Diagnostics have not run yet. Run: faxbot admin diagnostics run')
             return
         out.line(f"{result.get('summary')} (checked {result.get('checked_at_text')})")
         for section in result.get('sections') or []:

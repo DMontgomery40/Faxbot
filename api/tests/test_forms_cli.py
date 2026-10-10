@@ -1,4 +1,4 @@
-"""faxbot forms: import, list, show, render and send registered forms from the command line."""
+"""faxbot faxes forms: import, list, show, render and send registered forms from the command line."""
 import base64
 import io
 import json

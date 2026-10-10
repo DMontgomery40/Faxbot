@@ -1,4 +1,4 @@
-"""faxbot expected against the real application, in process over HTTPS."""
+"""faxbot faxes expected against the real application, in process over HTTPS."""
 from datetime import datetime, timedelta
 import json
 import uuid

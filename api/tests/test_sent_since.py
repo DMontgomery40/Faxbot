@@ -1,6 +1,6 @@
 """Sent faxes whose state changed in the last hours: the list Needs attention opens for "failed in the last 24 hours".
 
-GET /admin/fax-jobs?since_hours= and `faxbot sent list --hours` keep only faxes whose delivery changed within that
+GET /admin/fax-jobs?since_hours= and `faxbot faxes sent list --hours` keep only faxes whose delivery changed within that
 many hours, by the same clock and column as the Overview's count, inside the same visibility as the list.
 """
 from datetime import datetime, timedelta

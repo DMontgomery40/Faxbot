@@ -639,7 +639,7 @@ def test_asterisks_events_store_received_numbers_the_way_the_hand_overs_do(datab
 
 
 def test_received_calls_stored_without_the_country_code_are_shown_with_it_and_kept_as_stored(database):
-    """Recent calls, the trunk's last call and `faxbot providers trunk calls` read the same records. Rows stored
+    """Recent calls, the trunk's last call and `faxbot delivery providers trunk calls` read the same records. Rows stored
     before received numbers were read for the country keep their stored form (history is never rewritten)."""
     schema.upgrade_schema(database)
     calls = sip_calls.SipCallRecords(database)

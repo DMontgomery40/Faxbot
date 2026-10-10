@@ -134,7 +134,7 @@ def test_a_cost_heavy_installation_gets_rules_with_predicted_savings_sources_and
     assert country['rule']['when'] == {'destination': {'countries': ['GB']}} and country['rule']['then'] == {'use': 'sinch'}
     assert country['rule']['id'].startswith('setup-') and 'Add as a rule?' not in country['sentence']
     assert 'about $0.12 a month' in country['sentence']
-    assert [source['name'] for source in country['sources']] == ['Costs → Recommendations', 'Faxbot’s cost estimate']
+    assert [source['name'] for source in country['sources']] == ['Savings & optimization → Opportunities', 'Faxbot’s cost estimate']
     toll = rules_['cost.toll-free-class.signalwire']
     assert toll['rule']['when'] == {'destination': {'prefixes': ['+1800']}}
     # The route those faxes took stays next, so a failed call can still move on.
