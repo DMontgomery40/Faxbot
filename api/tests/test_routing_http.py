@@ -95,6 +95,94 @@ def test_destination_recommendation_ranks_configured_routes_by_cost(client):
     assert client.patch('/routing/destinations/555', headers=ADMIN, json={}).status_code == 400
 
 
+@pytest.mark.parametrize('number', ['+442079460123', '+61293744000'])
+def test_international_recommendation_never_uses_a_domestic_trunk_price(client, number):
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+    response = client.get(f'/routing/destinations/{number}', headers=ADMIN, params={'pages': 2})
+    assert response.status_code == 200, response.text
+    choices = response.json()['recommended_routes']
+    routes = {item['route']: item for item in choices}
+    # No foreign Telnyx tariff was entered; Phaxio's separate international tariff is $0.10/page.
+    assert routes['sip']['estimated_cost'] is None
+    assert routes['sip']['estimated_cost_one_page'] is None
+    assert routes['sip']['rate'] is None
+    assert routes['sip']['included_in_plan'] is False
+    assert routes['phaxio']['estimated_cost'] == {'currency': 'USD', 'amount': '0.20'}
+    assert routes['phaxio']['estimated_cost_one_page'] == {'currency': 'USD', 'amount': '0.10'}
+    assert routes['phaxio']['rate'] == '$0.10 a page'
+    assert choices[0]['route'] == 'phaxio'
+
+
+def test_destination_rate_row_changes_recommendation_price_and_route_order(client):
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+    saved = client.put('/routing/rate-cards/sip/rows', headers=ADMIN, json={'rows': [
+        {'origin': 'any', 'destination_prefix': '+44', 'per_minute': '0.20',
+         'billing_increment_seconds': 60, 'minimum_seconds': 60}]})
+    assert saved.status_code == 200, saved.text
+    choices = client.get('/routing/destinations/+442079460123', headers=ADMIN).json()['recommended_routes']
+    routes = {item['route']: item for item in choices}
+    # One minute minimum at the saved UK rate costs more than a $0.10 Phaxio page.
+    assert routes['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.20'}
+    assert routes['sip']['estimated_cost_one_page'] == {'currency': 'USD', 'amount': '0.20'}
+    assert routes['sip']['rate'] == '$0.20 a minute, at least 1 minute'
+    assert choices[0]['route'] == 'phaxio'
+
+
+def test_recommendation_does_not_call_a_separate_international_tariff_included(client):
+    plan = {**PHAXIO, 'per_page': '0', 'monthly_fee': '10.00'}
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, plan]}).status_code == 200
+    choices = client.get('/routing/destinations/+442079460123', headers=ADMIN).json()['recommended_routes']
+    phaxio = next(item for item in choices if item['route'] == 'phaxio')
+    assert phaxio['estimated_cost'] == {'currency': 'USD', 'amount': '0.10'}
+    assert phaxio['included_in_plan'] is False
+    assert phaxio['monthly_fee'] is None
+    assert phaxio['reason'] != 'included'
+
+
+def test_recommendation_handles_included_minutes_without_a_monthly_fee(client):
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    saved = client.put('/admin/settings', headers=ADMIN, json={
+        'expected_revision_id': current['_meta']['desired_revision_id'],
+        'plan_budgets': 'sip:included_minutes=100'})
+    assert saved.status_code == 200, saved.text
+    response = client.get('/routing/destinations/+12025550123', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    sip = next(row for row in response.json()['recommended_routes'] if row['route'] == 'sip')
+    assert sip['included_in_plan'] is True
+    assert sip['monthly_fee'] is None
+    assert 'Included' in sip['explanation']
+    assert 'a month' not in sip['explanation']
+
+
+@pytest.mark.parametrize('failed_route', [None, 'sip'])
+def test_recommendation_keeps_a_failed_price_lookup_unknown(client, monkeypatch, failed_route):
+    from app.routing import pricing
+    from app.routing.database import DeliveryStoreError
+    assert client.put('/routing/rate-cards', headers=ADMIN, json={'cards': [TELNYX, PHAXIO]}).status_code == 200
+
+    actual_price = pricing.price
+
+    def unavailable(routes, values, key, *args, **kwargs):
+        if failed_route is None or key == failed_route:
+            raise DeliveryStoreError('Synthetic tariff lookup unavailable')
+        return actual_price(routes, values, key, *args, **kwargs)
+
+    monkeypatch.setattr(pricing, 'price', unavailable)
+    response = client.get('/routing/destinations/+442079460123', headers=ADMIN)
+    assert response.status_code == 200, response.text
+    choices = response.json()['recommended_routes']
+    if failed_route is None:
+        assert choices[0]['reason'] == 'unknown_cost'
+        unknown = choices
+    else:
+        assert choices[0]['route'] == 'phaxio'
+        assert choices[0]['estimated_cost'] == {'currency': 'USD', 'amount': '0.10'}
+        unknown = [row for row in choices if row['route'] == failed_route]
+    assert all(row['estimated_cost'] is None for row in unknown)
+    assert all(row['estimated_cost_one_page'] is None and row['rate'] is None for row in unknown)
+
+
 def test_costs_report_totals_by_provider(client):
     engine = main.app.state.configuration_runtime.manager.store.engine
     store = RouteStore(engine)
@@ -404,8 +492,8 @@ def test_each_estimate_is_worded_by_its_card_and_counts_this_fax(client):
     assert one['signalwire']['rate'] is None and one['signalwire']['estimated_cost'] is None  # no rate card
     assert one['sip']['pages'] == 1 and one['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.005'}
     two = routes(pages=2)
-    # About 30 seconds to connect and 30 a page: 90 seconds, billed as 2 whole minutes.
-    assert two['sip']['pages'] == 2 and two['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.01'}
+    # The shared line-time predictor fits this two-page fax within the first billed minute.
+    assert two['sip']['pages'] == 2 and two['sip']['estimated_cost'] == {'currency': 'USD', 'amount': '0.005'}
     assert two['sip']['estimated_cost_one_page'] == {'currency': 'USD', 'amount': '0.005'}
     assert two['phaxio']['estimated_cost'] == {'currency': 'USD', 'amount': '0.14'}
     assert client.get('/routing/destinations/+12025550123', headers=ADMIN, params={'pages': 0}).status_code == 422

@@ -355,7 +355,7 @@ def _hour_facts(engine, number, link, moment, values):
 
 
 def plan_terms(route_key, terms, card, values):
-    """A monthly plan's allowance and extra-page price from its budget (``plan_budget``) first.
+    """A plan's allowance and extra-page price from its budget (``plan_budget``) first.
 
     The budget is what you set in ``plan_budgets``, else the published plan the
     card matches, so an allowance or extra-page price you set prices the fax
@@ -370,10 +370,8 @@ def plan_terms(route_key, terms, card, values):
         return terms
     if budget is None:
         return terms
-    # A minute allowance (a trunk bundle) prices any card's fax; minutes past it cost its per-minute price.
+    # An allowance can apply to a metered card too: the budget supplies its included pages or minutes.
     minutes = budget.included_minutes if budget.included_minutes and card.per_minute_micros else None
-    if not card.monthly_fee_micros:
-        return replace(terms, included_minutes=minutes) if minutes else terms
     included = budget.included_pages
     return replace(terms, included_pages=included, included_minutes=minutes,
                    overage_page_micros=budget.page_overage_micros if included else None)
@@ -413,6 +411,11 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     engine = _engine() if engine is None else engine
     data = shipped() if data is None else data
     account = account or route_key
+    # An account's saved card changes its price, not which provider's destination rules apply.
+    documents = getattr(values, 'provider_accounts', None) or {}
+    document = documents.get(account) or {}
+    if document.get('provider') and document.get('kind') != 'digital':
+        route_key = document['provider']
     own = _extra_trunk(values, account)
     if own is not None:
         values, route_key = own, 'sip'
@@ -429,7 +432,9 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         from .database import DeliveryStoreError
         try:
             # The saved cards are authoritative: a card the administrator removed is not brought back here.
-            card, saved = stored_card(engine, route_key, preset), True
+            if account != route_key:
+                card = stored_card(engine, account)
+            card, saved = card or stored_card(engine, route_key, preset), True
         except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
             # The saved cards could not be read: the shipped card, and the cause logged. Anything else is a bug
             # and raises.
@@ -456,7 +461,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         if rated is not None:
             terms, origin = rated, row.origin
             card = card or rated.card
-    terms = plan_terms(route_key, terms, card, values)
+    terms = plan_terms(account, terms, card, values)
     missing = refusal
     if terms is None and where.kind == LOCAL and card is None:
         missing = f'{label} has no rate card'
@@ -479,7 +484,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
                 link = replace(link, rate=cap)
             link = _hour_facts(engine, number, link, moment, values)
         if terms is not None and (terms.card.flat_plan or terms.included_pages or terms.included_minutes):
-            plan = plan_use(engine, route_key, now=moment, values=values)
+            plan = plan_use(engine, account, now=moment, values=values)
     currency = card.currency if card is not None else 'USD'
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
                       origin=origin)

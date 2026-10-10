@@ -21,7 +21,7 @@ whole room.
   the plan, and for the reserve (``plan_allocation``); a fax not given the plan
   ranks it at its marginal price after them. ``Price.held`` says what was held.
 """
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
@@ -44,6 +44,7 @@ class Price:
     held: object = None                # plan_allocation.Hold: part of the plan's room held for other faxes
     unheld_micros: int | None = None   # with ``held``: what this fax would add with the whole room
     unheld_over: bool = False          # with ``held``: whether the whole room would be past the normal-use budget
+    rate_card: object = None           # the applicable destination tariff, for displaying its rate and plan fee
 
     @property
     def known(self):
@@ -90,7 +91,7 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     ``site`` prices it as if the call started from that site. ``hold`` (``plan_allocation.Hold``) is the part of
     the plan's room this fax may not use.
     """
-    from .plan_budget import budget_left, marginal, plan_use
+    from .plan_budget import budget_left, marginal
     from .predict import Shape, predict_from
     from .predict_facts import facts_for
     engine = routes.engine
@@ -100,19 +101,19 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
     if key != provider and routes.card_for(key) is None:
         facts_key = provider
     facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site)
-    if facts_key != key and facts.plan is not None:
-        # The provider's terms, this account's own use: a second plan never shares the first one's month.
-        try:
-            own = plan_use(engine, key, now=moment, values=values)
-        except Exception:
-            own = None
-        facts = replace(facts, plan=own)
     shape = Shape(max(int(pages or 1), 1), None, 'standard', layout if layout in ('normal', 'dense') else 'normal')
     prediction = predict_from(facts, shape)
     try:
         left = budget_left(key, moment, engine=engine, values=values)
     except Exception:
         left = None
+    if left is not None and not prediction.marginal:
+        # Room on a domestic plan does not cover an unpriced destination or a separate tariff. A monetary
+        # commitment can cover a known charge in its own currency, without assuming a destination allowance.
+        commitment = (left.budget.commitment_micros is not None and not left.budget.flat
+                      and not left.budget.included_pages and not left.budget.included_minutes)
+        if not commitment or prediction.cost is None or prediction.cost.currency != left.budget.currency:
+            left = None
     found = marginal(left, shape.pages, prediction)
     unheld = None
     if hold is not None and left is not None:
@@ -126,7 +127,8 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
                  sentence=found.sentence or prediction.basis, number=number,
                  origin=getattr(facts, 'origin', None), held=hold if unheld is not None else None,
                  unheld_micros=(unheld.cost.micros if unheld is not None and unheld.cost is not None else None),
-                 unheld_over=bool(unheld is not None and unheld.over_budget))
+                 unheld_over=bool(unheld is not None and unheld.over_budget),
+                 rate_card=facts.terms.card if facts.terms is not None and not facts.refused else None)
 
 
 def _accounts(values):

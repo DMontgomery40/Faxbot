@@ -25,7 +25,7 @@ from api.app.batching.outcomes import map_call
 from api.app.batching.transport import BatchingTransport
 
 
-NUMBER = '+15555550123'
+NUMBER = '+12025550123'  # Valid US example number so domestic call estimates have an applicable tariff.
 T0 = datetime(2026, 10, 3, 22, 30)
 
 

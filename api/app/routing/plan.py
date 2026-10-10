@@ -87,6 +87,8 @@ def _explain(choice, destination=None):
                 'Received without a phone call.')
     if choice.reason == 'included':
         card = choice.route.card
+        if card is None or card.monthly_fee_micros is None:
+            return f'Included in your {route_label(choice.route.key)} plan.'
         return f'Included in your {route_label(choice.route.key)} plan ({plan_fee_text(card.monthly_fee_micros, card.currency)} a month).'
     if choice.reason == 'cheapest_delivered' and choice.delivered is not None and choice.compared:
         figure = choice.delivered
