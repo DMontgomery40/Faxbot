@@ -425,7 +425,8 @@ async def test_a_real_call_to_the_trunks_own_number_hairpins_over_a_trunk_with_t
 async def test_a_trunk_with_one_line_cannot_call_its_own_number_and_sent_says_so(  # noqa: F811
         database, tmp_path, monkeypatch):
     """LC-P003: the pin to the trunk cannot be honoured with one line; the fax goes by the other route, and Sent
-    details (``route_explanation``, which ``faxbot sent show`` prints) and the route view say why in one sentence."""
+    details (``route_explanation``, which ``faxbot faxes sent show`` prints) and the route view say why in one
+    sentence."""
     env = _hairpin(database, tmp_path, monkeypatch, lines=1)
     env.routes.update_destination(OWN, preferred_route='sip')
     job = _accept_by_call(env)

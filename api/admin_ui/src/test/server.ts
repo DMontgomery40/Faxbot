@@ -735,7 +735,7 @@ const consoleHandlers = [
       + 'you fax is already a partner.', items: [], items_total: 0, link: 'recipients/partners' })),
   http.get('/routing/recommendations/toll-free', () => json({ state: 'none', days: 30, items: [],
     sentence: 'No recipient has a toll-free fax number on file. If one publishes a toll-free number for the same '
-      + 'intake, add it under Recipients → Details; Faxbot uses it only once you record their approval, because the '
+      + "intake, add it in that number's Details in Recipients; Faxbot uses it only once you record their approval, because the "
       + 'recipient pays for those calls.' })),
   // A recipient's toll-free number: none on file.
   http.get('/routing/destinations/:number/toll-free', ({ params }) => json({ number: String(params.number), current: null,

@@ -481,13 +481,16 @@ def trunk_records(values):
         readable = reader is not None and reader.ready()
     sentence = found.sentence
     if found.api and not readable:
+        from ..provider_labels import trunk_name
         from ..sip_trunk import PRESETS
         label = PRESETS[preset].label if preset in PRESETS else 'Your carrier'
+        # The trunk page, named as the console's menu names it for this installation.
+        page = f'Delivery setup → {trunk_name(preset)}'
         sentence = (f'{label} publishes each call\'s charge, but Faxbot cannot read it yet: '
-                    + ('add the Telnyx API key under Delivery setup → Telnyx.' if preset == 'telnyx' else
-                       'add your SignalWire project ID and API token under Delivery setup → SignalWire.'
+                    + (f'add the Telnyx API key under {page}.' if preset == 'telnyx' else
+                       f'add your SignalWire project ID and API token under {page}.'
                        if preset == 'signalwire' else
-                       'add your Flowroute API access key and secret key under Delivery setup → Flowroute.'
+                       f'add your Flowroute API access key and secret key under {page}.'
                        if preset == 'flowroute' else 'add its API credentials.'))
     return {'preset': preset, 'published': found.api, 'readable': readable,
             'sources': [{'title': title, 'url': url, 'read_on': read_on} for title, url, read_on in found.sources],
