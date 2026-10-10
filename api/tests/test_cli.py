@@ -1687,6 +1687,22 @@ def test_a_recovered_fax_shows_when_it_arrived_and_that_it_was_brought_in_later(
     assert status_label({'status': 'SUCCESS'}) == 'Delivered'
 
 
+def test_an_uncertain_sent_fax_says_what_to_check_for_the_route_that_carried_it():
+    """As Sent says it (JobsList deliveryNotice, sentRoute.test.tsx): the server's route-aware sentence, else one
+    true for any route."""
+    from app.cli.commands.fax import delivery_notice
+    job = {'delivery_state': 'reconciliation_required', 'dispatch_mode': 'normal'}
+    own_call = ('The call ended before the receiving fax machine confirmed the pages; check with the recipient before '
+                'sending this fax again.')
+    assert delivery_notice({**job, 'reconciliation_reason': own_call}) == own_call
+    assert delivery_notice(job) == ("Delivery couldn't be confirmed; check with the recipient, or in your provider "
+                                    'account if a fax service sent it, before sending it again.')
+    assert delivery_notice({**job, 'dispatch_mode': 'legacy'}) == (
+        'Imported fax with no delivery record; check with the recipient, or in your provider account if a fax service '
+        'sent it.')
+    assert delivery_notice({'delivery_state': 'success'}) is None
+
+
 def test_route_and_spending_words_match_the_console(monkeypatch):
     from app.cli import output
     from app.cli.commands import delivery

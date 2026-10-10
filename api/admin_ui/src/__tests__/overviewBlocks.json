@@ -2873,7 +2873,7 @@
     "    Faxbot is not ready to send faxes",
     "      faxbot admin health",
     "    Sent faxes with an uncertain result: 1",
-    "      Check your provider account before you send any of them again.",
+    "      Check with each recipient, or in your provider account for faxes a fax service sent, before you send any of them again.",
     "      faxbot faxes sent list --status reconciliation_required",
     "What Faxbot is doing",
     "  Used here in the last 30 days",

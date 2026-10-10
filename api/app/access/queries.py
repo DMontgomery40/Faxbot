@@ -17,12 +17,26 @@ from .fax_resources import FaxAccessError
 from .types import AccessUnavailableError, InvalidTransactionError
 
 
+# Faxbot's own trunk and fax engines (power.LOCAL_PROVIDERS): the call is Faxbot's own, so there is no provider
+# account to check.
+OWN_ROUTES = frozenset({'sip', 'freeswitch'})
+
+
 def delivery_fields(row):
+    """The delivery fields of a sent fax, with one sentence for an uncertain result that fits the route that carried
+    it: the provider account for a fax service, the recipient for Faxbot's own trunk or engines. ``route_provider``
+    is the provider of the account its latest attempt used, else the account it was accepted with (``backend``)."""
     reason = None
     if row['delivery_state'] == 'reconciliation_required':
-        reason = ('Faxbot has no delivery record for this older fax; check its status in your provider account.'
-            if row['dispatch_mode'] == 'legacy' else
-            'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
+        own = (row.get('route_provider') or row.get('backend')) in OWN_ROUTES
+        if row['dispatch_mode'] == 'legacy':
+            reason = ('Faxbot has no delivery record for this older fax; check with the recipient before sending it '
+                      'again.' if own else
+                      'Faxbot has no delivery record for this older fax; check its status in your provider account.')
+        else:
+            reason = ('The call ended before the receiving fax machine confirmed the pages; check with the recipient '
+                      'before sending this fax again.' if own else
+                      'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
     return {'delivery_state': row['delivery_state'], 'dispatch_mode': row['dispatch_mode'],
             'delivery_version': row['delivery_version'], 'reconciliation_reason': reason}
 
@@ -55,9 +69,17 @@ class AuthorizedFaxQueries:
         columns += ('urgent',) if 'urgent' in jobs.c else ()
         # 0040: the time the sender needs the fax sent by.
         columns += ('send_by',) if 'send_by' in jobs.c else ()
+        # The provider of the account the latest attempt used (an attempt bound to another route), else the
+        # account the fax was accepted with: which advice an uncertain result gets (delivery_fields). Wording only.
+        attempts = self.configuration.delivery_tables['outbound_attempts']
+        bindings, profiles = self.configuration.job_bindings, self.configuration.profiles
+        profile = sa.func.coalesce(
+            sa.select(attempts.c.profile_id).where(attempts.c.id == delivery.c.attempt_id).scalar_subquery(),
+            sa.select(bindings.c.profile_id).where(bindings.c.id == jobs.c.id).scalar_subquery())
+        route_provider = sa.select(profiles.c.provider_id).where(profiles.c.id == profile).scalar_subquery()
         return sa.select(*(jobs.c[name] for name in columns),
             delivery.c.state.label('delivery_state'), delivery.c.dispatch_mode,
-            delivery.c.version.label('delivery_version')).select_from(
+            delivery.c.version.label('delivery_version'), route_provider.label('route_provider')).select_from(
                 jobs.outerjoin(delivery, delivery.c.id == jobs.c.id))
 
     def _visible(self, connection, actor, now):
