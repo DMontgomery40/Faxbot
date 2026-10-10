@@ -121,11 +121,18 @@ describe('Dashboard delivery cards', () => {
       backend: '', backend_healthy: false, backend_message: 'No fax provider set up yet.',
       jobs: { queued: 0, in_progress: 0, recent_failures: 0 }, inbound_enabled: false, api_keys_configured: true, require_auth: true })));
     const navigate = vi.fn();
-    const { unmount } = render(<Dashboard client={client()} onNavigate={navigate} canSetUp />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up a fax provider' }));
-    expect(navigate).toHaveBeenCalledWith('setup');
+    // Whether or not the person reads settings (and so sees What Faxbot is doing), there is exactly one button.
+    for (const canReadSettings of [false, true]) {
+      const { unmount } = render(<Dashboard client={client()} onNavigate={navigate} canSetUp canReadSettings={canReadSettings} />);
+      await screen.findByText('No fax provider set up yet.');
+      await waitFor(() => expect(screen.getByTestId('overview-doing').getAttribute('data-state')).not.toBe('loading'));
+      const buttons = screen.getAllByRole('button', { name: 'Set up a fax provider' });
+      expect(buttons).toHaveLength(1);
+      fireEvent.click(buttons[0]);
+      expect(navigate).toHaveBeenLastCalledWith('setup');
+      unmount();
+    }
     expect(navigate).not.toHaveBeenCalledWith('diagnostics');
-    unmount();
     render(<Dashboard client={client()} onNavigate={navigate} />);
     expect(await screen.findByText('No fax provider set up yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();

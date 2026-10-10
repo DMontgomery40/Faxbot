@@ -257,11 +257,15 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
   // 1. What Faxbot is doing: what acted on faxes here, and the results in their own units.
   const savingsFailed = value.savings.kind === 'error' || value.savings.kind === 'unavailable';
-  const doing = blockState(savingsFailed ? [value.capabilities] : [value.capabilities, value.savings], { now, empty: false });
+  const used = capabilities ? usedCapabilities(capabilities) : [];
+  const results = value.savings.kind === 'ready' ? resultLines(value.savings.data) : null;
+  const doing = blockState(savingsFailed ? [value.capabilities] : [value.capabilities, value.savings],
+    { now, empty: !newInstall && used.length === 0 && results !== null && results.length === 0 });
+  // A new installation's one Set up a fax provider button is here when this block can show it, else on the status card.
+  const doingOffersSetUp = newInstall && canSetUp && !!onNavigate && (doing.state === 'ready' || doing.state === 'stale');
   const doingBlock = (
     <BlockFrame id="doing" title="What Faxbot is doing" state={doing.state} at={doing.at}>
-      <DoingContent used={capabilities ? usedCapabilities(capabilities) : []}
-        results={value.savings.kind === 'ready' ? resultLines(value.savings.data) : null} days={days}
+      <DoingContent used={used} results={results} days={days}
         newInstall={newInstall} connect={capabilities ? connectNext(capabilities) : []} canSetUp={canSetUp}
         onNavigate={onNavigate} />
     </BlockFrame>
@@ -269,12 +273,12 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
   // 2. Next improvements: capabilities ready to turn on, then the top advice; each says what kind of step it is.
   const adviceFailed = [value.sending, value.facts].filter((source) => source.kind === 'error' || source.kind === 'unavailable');
-  const next = blockState([value.capabilities, ...[value.sending, value.facts].filter((source) => !adviceFailed.includes(source))],
-    { now, empty: false });
   const improvements = nextImprovements({
     capabilities, sending: value.sending.kind === 'ready' ? value.sending.data : null,
     facts: value.facts.kind === 'ready' ? value.facts.data : null,
   });
+  const next = blockState([value.capabilities, ...[value.sending, value.facts].filter((source) => !adviceFailed.includes(source))],
+    { now, empty: improvements.length === 0 });
   const nextBlock = (
     <BlockFrame id="next" title="Next improvements" state={next.state} at={next.at}
       action={canReadSettings && onNavigate ? (
@@ -329,7 +333,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
                         {NOT_READY_TEXT[notReadyFor(health)!]}.
                       </Typography>
                     )}
-                    {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && (
+                    {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && !doingOffersSetUp && (
                       <Button variant="contained" size="small" sx={{ mt: 1.5 }}
                         onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>
                         Set up a fax provider
@@ -490,7 +494,13 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
       {/* 5. Every way Faxbot saves money, along a fax's path (owner decision 2026-10-08: at the bottom). Nothing
           shows for a person who may not read settings. */}
       {canReadSettings && mechanisms.kind === 'ready' && (
-        <Box data-block="map"><SavingsMap data={mechanisms.data} onNavigate={onNavigate} /></Box>
+        <Box data-block="map">
+          <SavingsMap data={mechanisms.data} onNavigate={onNavigate} />
+          <Typography variant="caption" color={now - mechanisms.at > STALE_AFTER_MS ? 'warning.main' : 'text.secondary'}
+            sx={{ display: 'block', mt: 1 }} data-testid="overview-map-checked">
+            {now - mechanisms.at > STALE_AFTER_MS ? staleText(mechanisms.at) : `Map checked ${clockText(mechanisms.at)}.`}
+          </Typography>
+        </Box>
       )}
       {canReadSettings && mechanisms.kind === 'error' && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }} data-testid="savings-map-error">

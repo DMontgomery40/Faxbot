@@ -54,8 +54,8 @@ const NEXT = ['capability-fax_friendly', 'sending-+13035550124', 'fact-+13035550
   'capability-separator_pages', 'capability-encoded_pages'];
 const EXPECT: Record<string, { states: [string, string, string]; used: string[]; next: string[]; results: string[] }> = {
   healthy: { states: ['ready', 'ready', 'ready'], used: USED, next: NEXT, results: ['money', 'pages', 'seconds', 'calls', 'bytes'] },
-  new: { states: ['ready', 'ready', 'ready'], used: [], next: [], results: [] },
-  quiet: { states: ['ready', 'ready', 'ready'], used: [], next: READY, results: [] },
+  new: { states: ['ready', 'empty', 'ready'], used: [], next: [], results: [] },
+  quiet: { states: ['empty', 'ready', 'ready'], used: [], next: READY, results: [] },
   'receive-only': { states: ['ready', 'ready', 'ready'], used: USED, next: NEXT, results: ['money', 'pages', 'seconds', 'calls', 'bytes'] },
   incident: { states: ['ready', 'ready', 'ready'], used: USED, next: NEXT, results: ['money', 'pages', 'seconds', 'calls', 'bytes'] },
   'failed source': { states: ['ready', 'ready', 'ready'], used: USED, next: NEXT.filter((key) => !key.startsWith('sending-')), results: [] },
@@ -210,6 +210,7 @@ describe('Overview freshness and order', () => {
     expect(screen.getByTestId('overview-next-checked').textContent).toBe(loadedAt);
     expect(screen.getByTestId('overview-everyday-checked').textContent).toBe(loadedAt);
     expect(screen.getByTestId('needs-attention-checked').textContent).toBe(loadedAt);
+    expect(screen.getByTestId('overview-map-checked').textContent).toBe(`Map checked ${clockText(start)}.`);
 
     time = start + STALE_AFTER_MS + 60 * 1000;
     poll(healthBody('healthy'));
@@ -219,6 +220,7 @@ describe('Overview freshness and order', () => {
       expect(screen.getByTestId(`overview-${id}-state`).textContent).toBe(stale);
     }
     expect(screen.getByTestId('needs-attention-stale').textContent).toBe(stale);
+    expect(screen.getByTestId('overview-map-checked').textContent).toBe(stale);
     expect(screen.getByTestId('overview-status-checked').textContent).toBe(`Status checked ${clockText(time)}.`);
   });
 
