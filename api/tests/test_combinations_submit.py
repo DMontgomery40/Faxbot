@@ -132,10 +132,12 @@ def test_a_cli_send_without_a_key_is_never_retried_by_itself_and_running_it_agai
     again = run('--json', 'send', NUMBER, letter, '--queue')
     assert again.exit_code == 0 and json.loads(again.stdout)['id'] != first
     assert len(faxes()[0]) == 2
+    # The group's invariant (one submission is one fax) does not hold for this retry: recorded as a candidate defect
+    # for the lead to decide (C20: should the command line make its own key and print it when the answer is lost?).
+    # If it is a defect, this case becomes a strict xfail asserting one fax.
     record(Case(GROUP, 'CLI retry after a lost answer, no key', ('cli', 'timeout', 'retry'), ('two faxes',),
-                INVARIANT, 'impossible',
-                alternate='nothing retried automatically; the command says to check first (faxbot status); a '
-                          'run without --idempotency-key is a deliberate new fax'))
+                INVARIANT, 'xfail', defect='C20 (candidate): a keyless re-run after a lost answer makes a second '
+                                           'fax; the command says to check first'))
 
 
 # One request from the command line and the API alike ----------------------------------------------------------

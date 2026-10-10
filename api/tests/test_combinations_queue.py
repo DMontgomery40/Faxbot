@@ -33,8 +33,8 @@ GROUP = '5 long preparation x contention x lease renewal x fallback'
 INVARIANT = ('no fax starves; never submitted twice; attempt bound to its account; definite failure before data '
              'moves on, uncertain never resent')
 CHEAPEST = {'cheapest_reliable': ['sip', 'sip-pages']}
-LEASE = 1  # seconds: the shortest lease a worker takes
-LONGER_THAN_A_LEASE = 1.4
+LEASE = 2  # seconds: a short lease, as tests/test_joint_optimizer.py takes it
+LONGER_THAN_A_LEASE = 2.6
 
 
 def slow(env, seconds=LONGER_THAN_A_LEASE, sweeps=None):
