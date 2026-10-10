@@ -20,7 +20,7 @@ Add each **Setup item** with its cost and mark **Already installed** where appli
 
 Leave an amount blank when it is unknown; enter `0` when there is none. Faxbot lists missing amounts needed for a comparison. **Expected plan** has the highest expected net benefit. **Cautious plan** has the best lower net benefit across your two scenarios. Both are estimates from your inputs, not measured savings.
 
-To compare from the command line, create a UTF-8 JSON scenario using the fields in the [command reference](../reference/cli.md#faxbot-costs-portfolio), then run:
+To compare from the command line, create a UTF-8 JSON scenario using the fields in the [command reference](../reference/cli.md#faxbot-savings-portfolio), then run:
 
 ```bash
 faxbot costs portfolio --file scenario.json

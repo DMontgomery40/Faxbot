@@ -304,7 +304,7 @@ describe('held faxes and why a fax took its route', () => {
     expect(screen.queryByRole('button', { name: 'Approve the fax to +15550100001' })).toBeNull();
     unmount();
     render(<HeldFaxes api={new FakeRules().api()} canApprove={false} />);
-    expect(await screen.findByText('Approving a fax needs the Approve faxes permission. Give it on Access → Roles.')).toBeTruthy();
+    expect(await screen.findByText('Approving a fax needs the Approve faxes permission. Give it on Administration → Roles.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /anyway$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Approve the fax/ })).toBeNull();
   });

@@ -303,11 +303,43 @@ describe('the console shell', () => {
     expect(panel().queryAllByRole('link').filter((link) => link.getAttribute('aria-current') === 'page')).toEqual([]);
   });
 
-  it('opens the first page this person may open when the address names nothing', async () => {
-    window.history.replaceState(null, '', '/#settings');
+  it('opens the first page this person may open when the address is empty', async () => {
+    window.history.replaceState(null, '', '/#/');
     await signIn();
     await waitFor(() => expect(window.location.hash).toBe('#/faxes/received'));
     expect(screen.queryByTestId('moved-notice')).toBeNull();
+  });
+
+  it('says an address that is not an address names no page, instead of opening the first page', async () => {
+    window.history.replaceState(null, '', '/#/faxes/received/123');
+    await signIn();
+    expect(await screen.findByTestId('address-unknown')).toBeTruthy();
+    expect(window.location.hash).toBe('#/faxes/received/123');
+  });
+
+  it('closes the other areas when the person opens one, except the area of the current page', async () => {
+    window.history.replaceState(null, '', '/#/admin/roles');
+    await signIn();
+    await screen.findByRole('heading', { name: 'Roles' });
+    const expanded = (name: string) => screen.getByRole('button', { name }).getAttribute('aria-expanded');
+    fireEvent.click(screen.getByRole('button', { name: 'Faxes' }));
+    await waitFor(() => expect(expanded('Faxes')).toBe('true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery setup' }));
+    await waitFor(() => expect(expanded('Faxes')).toBe('false'));
+    expect(expanded('Delivery setup')).toBe('true');
+    expect(expanded('Administration')).toBe('true');
+    // Closing an area by hand still works.
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery setup' }));
+    await waitFor(() => expect(expanded('Delivery setup')).toBe('false'));
+  });
+
+  it('names the six areas on the sign-in page', async () => {
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Sign in' });
+    for (const label of ['Overview', 'Savings & optimization', 'Faxes', 'Delivery setup', 'Recipients', 'Administration']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    for (const older of ['Numbers', 'Providers', 'Costs']) expect(screen.queryByText(older)).toBeNull();
   });
 
   it('keeps Send a fax at the top of the panel for people who may send, and only once', async () => {

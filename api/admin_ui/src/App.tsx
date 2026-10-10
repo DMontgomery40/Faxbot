@@ -26,7 +26,7 @@ import {
   destinationAddress,
   pageAddress,
   parseAddress,
-  resolveAddress,
+  resolveHash,
   providersInUse,
   visibleNavigation,
   type AdminDestination,
@@ -186,7 +186,8 @@ function AppContent() {
 }
 
 
-const DRAWER_WIDTH = 264;
+// Wide enough for the longest area name (Savings & optimization) on one line.
+const DRAWER_WIDTH = 288;
 const CONTEXT_FAILED = 'Could not load current settings. Leave and reopen this section to try again.';
 
 interface ConsoleShellProps {
@@ -237,7 +238,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   );
 
   const [hash, setAddress] = useAddress();
-  const route = resolveAddress(visible, parseAddress(hash));
+  const route = resolveHash(visible, hash);
   // The page shown; none while the address names no page this person may open.
   const shown = route?.kind === 'page' ? route : null;
   const pageKey = shown ? `${shown.area.id}/${shown.page.id}` : '';

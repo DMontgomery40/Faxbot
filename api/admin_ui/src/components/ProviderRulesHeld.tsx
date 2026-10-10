@@ -186,7 +186,7 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged, whenNone }: 
       )}
       {!canApprove && holds.some((hold) => hold.kind !== 'window') && (
         <Alert severity="info" sx={{ mt: 1 }}>
-          Approving a fax needs the Approve faxes permission. Give it on Access → Roles.
+          Approving a fax needs the Approve faxes permission. Give it on Administration → Roles.
         </Alert>
       )}
       <SendAnywayDialog hold={sendingAnyway} onClose={() => setSendingAnyway(null)} onSend={(account) => {

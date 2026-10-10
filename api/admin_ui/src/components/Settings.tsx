@@ -665,7 +665,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             Save a recovery copy
           </Button>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }} data-testid="recovery-retiring">
-            The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot system backup).
+            The recovery copy goes away in the next release. Make a full backup on the server instead (faxbot admin backup).
           </Typography>
           </>)}
 
@@ -1353,7 +1353,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                         if (!storage) {
                           setSnack('Save your storage settings first, then check again.');
                         } else if (storage.status === 'attention') {
-                          setSnack('Turn on Also check the S3 bucket under System → Diagnostics, then check again.');
+                          setSnack('Turn on Also check the S3 bucket under Administration → System health, then check again.');
                         } else {
                           setSnack(storage.sentence);
                         }
@@ -1368,7 +1368,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                     Check the bucket
                   </Button>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 2, display: 'block', mt: 1 }}>
-                    A full check needs Also check the S3 bucket turned on under System → Diagnostics, and AWS access for this server.
+                    A full check needs Also check the S3 bucket turned on under Administration → System health, and AWS access for this server.
                   </Typography>
                 </Box>
               </Box>

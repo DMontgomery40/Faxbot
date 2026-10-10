@@ -159,7 +159,7 @@ describe('Costs → Recommendations: Add as rule', () => {
     );
     render(<SendingRecommendations client={keyClient()} canWrite onNavigate={() => undefined} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add as rule' }));
-    expect(await screen.findByText('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
+    expect(await screen.findByText('“Faxes to +44 numbers go through Sinch (UK)” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.')).toBeTruthy();
     expect(drafts.map((draft) => draft.document.routes.map((rule) => rule.name))).toEqual([['Faxes to +44 numbers go through Sinch (UK)']]);
   });
 
@@ -184,7 +184,7 @@ describe('Costs → Recommendations: Add as rule', () => {
     render(<SendingRecommendations client={keyClient()} canWrite onNavigate={() => undefined} />);
     expect(await screen.findByText(/Faxes to \+44 numbers cost about \$0\.031 less each through Sinch/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Add as rule' }));
-    expect(await screen.findByText('“Numbers in the United Kingdom go by Sinch” is in your draft on Providers → Rules. It takes effect when you publish it.')).toBeTruthy();
+    expect(await screen.findByText('“Numbers in the United Kingdom go by Sinch” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.')).toBeTruthy();
     expect(drafts[0].document.routes[0].when).toEqual({ destination: { countries: ['GB'] } });
   });
 });

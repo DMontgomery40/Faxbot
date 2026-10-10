@@ -460,10 +460,10 @@ export const NAVIGATION: NavArea[] = [
       // Mailboxes and folders that bring documents in or send faxes (intake connectors).
       { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
-      { id: 'connections', label: 'In use', icon: <SwapHorizIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
+      { id: 'connections', label: 'Providers & accounts', icon: <SwapHorizIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
         render: (ctx) => whenContextReady(ctx,
           <>
-            <Typography variant="h4" component="h1" sx={{ mb: 2 }}>In use</Typography>
+            <Typography variant="h4" component="h1" sx={{ mb: 2 }}>Providers & accounts</Typography>
             <ProvidersInUse context={ctx.context} canChange={ctx.permissions.has('settings:write')} onNavigate={ctx.navigate} />
             <ProviderAccounts api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
               currency={currency(ctx)} onNavigate={ctx.navigate} />
@@ -731,6 +731,16 @@ export function resolveAddress(visible: NavArea[], requested: ParsedAddress | nu
   // Only the area named: its first page, without the query (one-page areas keep it).
   const keep = pageId || single ? parsed.params : undefined;
   return { kind: 'page', area, page, address: pageAddress(area.id, page.id, keep), movedFrom: moved?.was };
+}
+
+// What the address in the browser bar opens. Only an empty address ('', '#', '#/') means
+// "no address" and opens the first page this person may open; anything else that is not
+// an address (#/faxes/received/123, #/Costs/savings, #settings) names no page.
+export function resolveHash(visible: NavArea[], hash: string): Resolution | null {
+  if (visible.length === 0) return null;
+  if (hash === '' || hash === '#' || hash === '#/') return resolveAddress(visible, null);
+  const parsed = parseAddress(hash);
+  return parsed ? resolveAddress(visible, parsed) : { kind: 'unknown', address: hash };
 }
 
 // The address part of a destination: a legacy name through LEGACY_DESTINATIONS, an

@@ -66,7 +66,7 @@ export default function FactAdvice({ client }: { client: AdminAPIClient }) {
   useEffect(() => { void load(); }, [load]);
   return (
     <Box>
-      <ScreenHeader title="What a missing fact costs you" onRefresh={load} busy={busy}
+      <ScreenHeader title="Facts to establish" onRefresh={load} busy={busy}
         subtitle="Cheaper ways to reach a recipient that one confirmed fact would open" />
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {advice && (

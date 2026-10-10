@@ -38,8 +38,8 @@ def _option_table(command, ctx):
 def hoist_global_options(root, ctx, args):
     """Move global options written after a subcommand to just before it.
 
-    `faxbot received list --json` then means `faxbot --json received list`. An option
-    the subcommand defines itself (system profiles save --url) stays with it, option
+    `faxbot faxes received list --json` then means `faxbot --json faxes received list`. An option
+    the subcommand defines itself (admin profiles save --url) stays with it, option
     values are never mistaken for options, and nothing after `--` moves.
     """
     globals_table = {name: value for param in root.get_params(ctx) if param.name in GLOBAL_OPTIONS
@@ -85,7 +85,7 @@ class FaxbotGroup(TyperGroup):
     """Report expected failures as one plain sentence; never print tracebacks or local values."""
 
     def parse_args(self, ctx, args):
-        # Global options are also accepted after the subcommand: faxbot received list --json.
+        # Global options are also accepted after the subcommand: faxbot faxes received list --json.
         return super().parse_args(ctx, hoist_global_options(self, ctx, args))
 
     def invoke(self, ctx):
@@ -110,7 +110,7 @@ def _json_mode(ctx):
 app = typer.Typer(
     name='faxbot', cls=FaxbotGroup, no_args_is_help=True, pretty_exceptions_enable=False,
     help='Send and receive faxes and look after your Faxbot installation from the command line. Commands work '
-         'with a running Faxbot server and use your key. The system status, migrate, recover-owner, backup and'
+         'with a running Faxbot server and use your key. The admin status, migrate, recover-owner, backup and'
          ' restore commands work on this computer while Faxbot is stopped.',
     context_settings={'help_option_names': ['-h', '--help']},
 )
@@ -132,7 +132,7 @@ def main(
                             help='The key to use. Defaults to the key in your saved profile. A profile or '
                                  'FAXBOT_API_KEY keeps the key out of your command history.'),
     profile: str = typer.Option(None, '--profile', envvar='FAXBOT_PROFILE', metavar='NAME',
-                                help='Saved profile to use (see faxbot system profiles).'),
+                                help='Saved profile to use (see faxbot admin profiles).'),
     json_output: bool = typer.Option(False, '--json', help='Print results as JSON, for scripts.'),
     quiet: bool = typer.Option(False, '--quiet', '-q',
                                help='Print nothing when a command works, except keys and passwords shown only once.'),

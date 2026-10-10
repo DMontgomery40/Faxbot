@@ -89,7 +89,7 @@ describe('Delivery routes spending', () => {
     routes({ providers: [{ ...sip, carrier: null, reported_cost: [], attempts_with_reported_cost: 0, total_cost: [usd('0.02')],
       attempts_without_reported_cost: 3 }], received: [], carrier_charges: { carrier: 'Telnyx', supported: true, readable: false } });
     render(<DeliveryRoutes client={client()} canWrite />);
-    expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Providers → Telnyx.')).toBeTruthy();
+    expect(await screen.findByText('Telnyx call charges appear here once you add your Telnyx API key in Delivery setup → Telnyx.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Check Telnyx charges now' })).toBeNull();
     expect(screen.getByText('estimated')).toBeTruthy();
   });

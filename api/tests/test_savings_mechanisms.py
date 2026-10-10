@@ -40,6 +40,20 @@ def _savings_parts(body):
     return {key for key, value in body.items() if isinstance(value, dict) and 'sentence' in value}
 
 
+def _command_now(command):
+    """The command as the reference lists it: an older name (faxbot costs charges) is still a command, hidden from
+    the reference, so it is checked under the name it has now (faxbot savings charges)."""
+    from app.cli.nouns import canonical
+    words = command.split()
+    return ' '.join([words[0], *canonical(words[1:])])
+
+
+def test_an_older_command_name_counts_under_its_name_now():
+    assert _command_now('faxbot costs recommendations sending') == 'faxbot savings opportunities sending'
+    assert _command_now('faxbot providers trunk telnyx names') == 'faxbot delivery providers trunk telnyx names'
+    assert _command_now('faxbot recipients partners relay') == 'faxbot recipients partners relay'
+
+
 def _navigation_pages():
     """{'area/page'} for every page navigation.tsx declares, read area by area."""
     text = (CONSOLE / 'navigation.tsx').read_text(encoding='utf-8')
@@ -83,7 +97,8 @@ def test_every_entry_names_real_settings_pages_parts_and_an_evidence_level():
             page, _, query = mechanism.link.partition('?')
             assert page in pages, f'{mechanism.key}: the console has no page {page}'
             assert mechanism.link_label and mechanism.command, mechanism.key
-            assert f'### `{mechanism.command}`' in reference, f'{mechanism.key}: no command {mechanism.command}'
+            assert f'### `{_command_now(mechanism.command)}`' in reference, \
+                f'{mechanism.key}: no command {mechanism.command}'
             if page == 'costs/recommendations':
                 section = query.removeprefix('section=')
                 assert f'section="{section}"' in advice, f'Recommendations.tsx renders no anchor for {section}'
@@ -255,7 +270,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     t38 = items['fax_over_ip']
     assert (t38['enabled']['on'], t38['works']['here'], t38['evidence']['level']) == (True, True, 'live')
     assert t38['here']['sentence'] == 'Used on 10 calls in 30 days'
-    assert t38['link'] == 'costs/savings?part=t38' and t38['command'] == 'faxbot costs savings'
+    assert t38['link'] == 'costs/savings?part=t38' and t38['command'] == 'faxbot savings results'
     assert savings['t38']['sentence'] == ('Fax over IP (T.38) took about 18 seconds a page over 10 calls, and audio '
                                           'fax about 30 seconds a page over 10 calls.')
     assert savings['t38']['saved'] == [] and savings['t38']['estimate'] is False
@@ -288,7 +303,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert items['advice_caller_names']['works']['sentence'] == 'Needs your Telnyx key saved on the Telnyx page.'
     charges = items['charge_checks']
     assert (charges['link'], charges['link_label'], charges['command']) == (
-        'costs/charges', 'Costs → Charges', 'faxbot costs charges')
+        'costs/charges', 'Costs → Charges', 'faxbot savings charges')
     stages = {stage['key']: stage for stage in body['stages']}
     assert [key for key, stage in stages.items() if not stage['path']] == ['advice']
     # "Advice only" is said once, under the advice stage's title, never on each card.
@@ -357,17 +372,17 @@ def test_the_command_and_the_console_show_the_same_sentences_as_the_server():
                       for key, _ in mechanisms.STAGES for m in mechanisms.CATALOGUE if m.stage == key]
 
 
-def test_faxbot_costs_mechanisms_prints_the_map_by_stage(cli):
-    result = cli('costs', 'mechanisms')
+def test_faxbot_savings_mechanisms_prints_the_map_by_stage(cli):
+    result = cli('savings', 'mechanisms')
     assert result.exit_code == 0, result.stdout
     lines = result.stdout.splitlines()
-    assert lines[0] == 'How Faxbot saves money' and lines[-1] == 'What each one saved: faxbot costs savings'
+    assert lines[0] == 'How Faxbot saves money' and lines[-1] == 'What each one saved: faxbot savings results'
     for _, title in mechanisms.STAGES:
         assert title in lines
     assert '  Sending together: Off · Not here · Test lab' in lines
     assert '    Needs your own SIP trunk; you send through Phaxio only.' in lines
     assert '$' not in result.stdout
-    body = cli.json('costs', 'mechanisms')
+    body = cli.json('costs', 'mechanisms')  # the older name still works
     assert [stage['title'] for stage in body['stages']] == [title for _, title in mechanisms.STAGES]
 
 

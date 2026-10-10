@@ -225,7 +225,7 @@ function ConnectorDialog({ connector, choices, busy, error, onSave, onClose }: {
       )}
       {purpose.direction === 'send' && !existing && (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          Faxbot gives this connector its own key that may only send faxes. It appears under Access → Keys & phones; pausing the
+          Faxbot gives this connector its own key that may only send faxes. It appears under Administration → Keys & phones; pausing the
           connector revokes it.
         </Typography>
       )}

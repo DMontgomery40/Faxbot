@@ -435,8 +435,8 @@ describe('How received faxes reach Faxbot', () => {
   it('says in one sentence where to turn receiving on when it is off', async () => {
     const navigate = vi.fn();
     render(<Received client={client()} inboundEnabled={false} onNavigate={navigate} permissions={new Set(['inbound:list', 'settings:read'])} />);
-    expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Providers, In use.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Open Providers' }));
+    expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Delivery setup, Providers & accounts.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Providers & accounts' }));
     expect(navigate).toHaveBeenCalledWith('providers/sending');
   });
 

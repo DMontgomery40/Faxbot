@@ -107,24 +107,24 @@ CONSOLE_ONLY = {
     ('POST', '/admin/terminal/ticket'): 'the terminal is a browser feature',
     ('WS', '/admin/terminal'): 'the terminal is a browser feature',
     ('GET', '/plugins/{plugin_id}/config'): ('the Provider plugins page, off by default and retired next release; '
-                                             'faxbot providers show reads /admin/settings'),
+                                             'faxbot delivery providers show reads /admin/settings'),
     ('PUT', '/plugins/{plugin_id}/config'): ('the Provider plugins page, off by default and retired next release; '
-                                             'faxbot providers configure writes /admin/settings'),
+                                             'faxbot delivery providers configure writes /admin/settings'),
 }
 
 # The command line only, by design.
 CLI_ONLY = {
     ('GET', '/routing/quote'): (
-        'one fax priced by each account your rules allow, for faxbot costs fax --to; the console shows the same '
-        'price for each allowed account in Providers -> Rules -> Try a fax (POST /routing/explain)'),
+        'one fax priced by each account your rules allow, for faxbot savings fax --to; the console shows the same '
+        'price for each allowed account in Delivery setup -> Routing rules -> Try a fax (POST /routing/explain)'),
     ('GET', '/routing/inbound/{inbound_id}/cost'): (
-        "one received fax's cost for faxbot costs received <id>; the console reads the costs of the received faxes "
+        "one received fax's cost for faxbot savings received <id>; the console reads the costs of the received faxes "
         'on screen in one request (GET /routing/inbound-costs)'),
     ('GET', '/routing/published-plans'): (
-        "any provider's published plans for faxbot costs plans <provider>; the console shows the plans of the "
+        "any provider's published plans for faxbot savings plans <provider>; the console shows the plans of the "
         'providers in use (GET /routing/published-plans/in-use)'),
     ('GET', '/case-checklists/{name}'): (
-        'one checklist, or one of its earlier versions, for faxbot recipients cases checklist show and build; the '
+        'one checklist, or one of its earlier versions, for faxbot faxes cases checklist show and build; the '
         'console reads every checklist with its items in one request (GET /case-checklists)'),
 }
 
@@ -135,7 +135,7 @@ AWAITING_CONSOLE: dict = {
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
 AWAITING_CLI: dict = {
-    ('GET', '/routing/capabilities'): 'faxbot costs capabilities (UX-B, #50 milestone 2)',
+    ('GET', '/routing/capabilities'): 'faxbot savings capabilities (UX-B, #50 milestone 2)',
 }
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,

@@ -38,7 +38,7 @@ export function AddAsRuleButton({ api, suggestion, onDone, onError, onNavigate }
       addSuggestedRule(api, suggestion)
         .then((rule) => {
           setAdded(true);
-          onDone(`“${rule.name}” is in your draft on Providers → Rules. It takes effect when you publish it.`);
+          onDone(`“${rule.name}” is in your draft on Delivery setup → Routing rules. It takes effect when you publish it.`);
         })
         .catch(onError)
         .finally(() => setBusy(false));

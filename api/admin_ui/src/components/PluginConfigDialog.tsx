@@ -116,8 +116,8 @@ export default function PluginConfigDialog({ open, plugin, initialConfig, loadin
       return (
         <Box>
           <Alert severity="info">
-            Your carrier trunk has its own page under Providers, named after your carrier. Set the name and number
-            other fax machines see in Numbers → Sender identity.
+            Your carrier trunk has its own page under Delivery setup, named after your carrier. Set the name and number
+            other fax machines see in Delivery setup → Sending identity.
           </Alert>
         </Box>
       );
