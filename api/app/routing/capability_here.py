@@ -53,32 +53,31 @@ def _table(name, *columns):
     return sa.table(name, *(sa.column(column) for column in columns))
 
 
-def _rows(here, table, when, since, *where, distinct=None):
-    """How many rows of ``table`` (or distinct values of its ``distinct`` column) fall in the window; ``where`` names
-    (column, value) pairs that must match, or (column, '>=', value)."""
-    columns = {when, *(condition[0] for condition in where), *((distinct,) if distinct else ())}
-    found = _table(table, *columns)
-    tests = [found.c[when] >= since]
+def _where(table, *where, extra=()):
+    """``table`` (named with the columns it needs) and its conditions: each (column, value) must match, ``None``
+    meaning the column is empty, and (column, '>=', value) is a lower bound."""
+    found = _table(table, *{condition[0] for condition in where}, *extra)
+    tests = []
     for condition in where:
         column, value = found.c[condition[0]], condition[-1]
-        tests.append(column >= value if len(condition) == 3 else column == value)
+        tests.append(column >= value if len(condition) == 3 else column.is_(None) if value is None else column == value)
+    return found, tests
+
+
+def _rows(here, table, when, since, *where, distinct=None):
+    """How many rows of ``table`` (or distinct values of its ``distinct`` column) have ``when`` in the window."""
+    found, tests = _where(table, (when, '>=', since), *where, extra=(distinct,) if distinct else ())
     counted = sa.func.count(sa.distinct(found.c[distinct])) if distinct else sa.func.count()
     with read_connection(here.engine) as connection:
         return int(connection.scalar(sa.select(counted).select_from(found).where(*tests)) or 0)
 
 
 def _any(here, table, *where):
-    """Whether ``table`` has a row matching every (column, value) pair, where ``None`` means the column is empty and
-    (column, '>=', value) a lower bound: a cheap look before a reader that reflects its tables."""
-    columns = {condition[0] for condition in where}
-    found = _table(table, *columns)
-    tests = []
-    for condition in where:
-        column, value = found.c[condition[0]], condition[-1]
-        tests.append(column >= value if len(condition) == 3 else column.is_(None) if value is None else column == value)
+    """Whether ``table`` has a matching row: a cheap look before a reader that reflects its tables."""
+    found, tests = _where(table, *where)
     with read_connection(here.engine) as connection:
-        found = connection.execute(sa.select(sa.literal(1)).select_from(found).where(*tests).limit(1)).first()
-    return found is not None
+        row = connection.execute(sa.select(sa.literal(1)).select_from(found).where(*tests).limit(1)).first()
+    return row is not None
 
 
 def _acted(count, here, done, one='fax', many='faxes', none=None):

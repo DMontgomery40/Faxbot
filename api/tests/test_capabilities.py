@@ -147,10 +147,14 @@ def test_every_catalogue_key_says_what_it_did_here():
     """Each entry's "What it did here" line comes from its Savings part, from a counter in capability_here.py, or
     from the catalogue's own sentence that Faxbot keeps no count of it; a new entry with none of those fails here."""
     keys = [mechanism.key for mechanism in mechanisms.CATALOGUE]
+    # Only these two keep no record at all (each works out its wait afresh); their catalogue line says so.
+    no_count = {'busy_hours', 'free_line'}
     silent = [key for key in keys if not mechanisms.BY_KEY[key].part and key not in capability_here.COUNTERS
-              and key not in mechanisms.NO_PART]
+              and key not in no_count]
     assert silent == [], (f'Catalogue keys with no "What it did here" line: add a counter for each to COUNTERS in '
                           f'{HERE_MODULE}, counted from its own stored records: {silent}')
+    assert {key for key in mechanisms.NO_PART if key not in capability_here.COUNTERS} == no_count, (
+        f'A catalogue line that only says where the figures are not needs a counter in {HERE_MODULE}')
     assert sorted(set(capability_here.COUNTERS) - set(keys)) == [], f'{HERE_MODULE} counts keys the catalogue lacks'
     # A counter never replaces the count of a Savings part.
     assert [key for key in capability_here.COUNTERS if mechanisms.BY_KEY[key].part] == []

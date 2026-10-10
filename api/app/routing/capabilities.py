@@ -7,10 +7,9 @@ Each prerequisite has a kind (``KINDS``), one sentence saying who or what satisf
 that happens, and a check of whether this installation has it.
 
 ``evaluate`` joins those with the catalogue's own evaluation, so the Capabilities page, the Overview's map and
-``faxbot savings mechanisms`` never disagree about whether something is on, works here, is proven or was used. Where
-the catalogue has no count of what an entry did here, ``capability_here.py`` counts it from the entry's own records.
-Like the map, it reads only this installation's settings and stored records, never the network, and it never shows
-money: amounts stay on Savings & optimization → Savings.
+``faxbot savings mechanisms`` never disagree about whether something is on, works here, is proven or was used. Like the
+map, it reads only this installation's settings and stored records, never the network, and it never shows money:
+amounts stay on Savings & optimization → Savings.
 
 A new catalogue entry needs one line in ``CAPABILITIES``. ``api/tests/test_capabilities.py`` fails, naming this
 module, when a key has none, names an unknown outcome or prerequisite kind, or points at a console address or
