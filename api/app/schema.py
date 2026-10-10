@@ -1,8 +1,12 @@
 """One locked, transactional installation/upgrade path for startup and Alembic."""
 from contextlib import contextmanager
+import logging
 import os
 from pathlib import Path
 import re
+import sqlite3
+import sys
+import time
 
 import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
@@ -180,15 +184,119 @@ def create_database_engine(url, *, lock_timeout=LOCK_TIMEOUT_SECONDS, **kwargs):
         database = parsed.database if parsed.database and parsed.database != ":memory:" else None
 
         @sa.event.listens_for(engine, "connect")
-        def enable_foreign_keys(dbapi_connection, _record):
+        def enable_foreign_keys(dbapi_connection, record):
+            record.info.pop(_WRITE_STARTED, None)
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute("PRAGMA foreign_keys=ON")
+                if database:
+                    _use_write_ahead_log(cursor)
             finally:
                 cursor.close()
             if database:
                 keep_database_private(database)
+    _watch_slow_writes(engine)
     return engine
+
+
+def _use_write_ahead_log(cursor):
+    """Readers never wait for a writer, and a writer never waits for readers (SQLite's WAL journal).
+
+    The mode is kept in the database file, so one connection that sets it is enough; a connection that finds the
+    database busy or read-only leaves it to the next. ``synchronous`` stays at its default (FULL), so a committed fax
+    record survives a power cut.
+    """
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError as error:
+        text = str(error).lower()
+        if "locked" in text or "busy" in text or "readonly" in text or "read-only" in text:
+            logging.getLogger(__name__).warning(
+                "The database could not switch to write-ahead logging on this connection (%s); the next connection "
+                "tries again.", error)
+            return
+        raise
+    mode = cursor.fetchone()
+    if mode is not None and str(mode[0]).lower() != "wal":
+        logging.getLogger(__name__).warning(
+            "The database stayed in %s journal mode: its folder does not allow write-ahead logging, so a long read "
+            "can still make writes wait.", mode[0])
+
+
+# A write transaction that holds the database's write lock longer than this is logged with where it ran.
+SLOW_WRITE_SECONDS = 2.0
+_WRITE_STARTED = "faxbot_write_started"
+_clock = time.monotonic
+_WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "BEGIN IMMEDIATE", "BEGIN EXCLUSIVE")
+# Frames that only carry a transaction (helpers and libraries): the call site is the first frame outside them.
+_CARRIERS = frozenset({"_locked", "write_transaction", "_transaction", "_transaction_on", "guarded_migration",
+                       "_write", "_finished", "do_commit", "do_rollback", "__exit__", "__aexit__", "close"})
+
+
+def _watch_slow_writes(engine):
+    """Log a write transaction that held the write lock longer than ``SLOW_WRITE_SECONDS``.
+
+    The clock starts when a write statement (or the advisory lock on PostgreSQL) has run, so waiting for the lock
+    is not counted, and stops when its commit or rollback has finished. A fast write costs one dictionary lookup a
+    statement; the call site is looked up only for a slow one.
+    """
+    postgresql = engine.dialect.name == "postgresql"
+
+    @sa.event.listens_for(engine, "after_cursor_execute")
+    def started(connection, _cursor, statement, _parameters, _context, _executemany):
+        info = connection.info
+        if _WRITE_STARTED in info:
+            return
+        head = statement.lstrip()[:16].upper()
+        if head.startswith(_WRITES) or (postgresql and "pg_advisory_xact_lock" in statement):
+            info[_WRITE_STARTED] = _clock()
+
+    dialect = engine.dialect
+    commit, rollback = dialect.do_commit, dialect.do_rollback
+
+    def do_commit(dbapi_connection):
+        try:
+            commit(dbapi_connection)
+        finally:
+            _finished(dbapi_connection, "committed")
+
+    def do_rollback(dbapi_connection):
+        try:
+            rollback(dbapi_connection)
+        finally:
+            _finished(dbapi_connection, "rolled back")
+
+    # This engine's own dialect instance: Connection and the pool's reset both end transactions through it.
+    dialect.do_commit, dialect.do_rollback = do_commit, do_rollback
+
+
+def _finished(dbapi_connection, ending):
+    try:
+        info = dbapi_connection.info
+    except (AttributeError, NotImplementedError):
+        return  # a raw DBAPI connection or SQLAlchemy's first-connect probe: no write was timed on it
+    started = info.pop(_WRITE_STARTED, None) if isinstance(info, dict) else None
+    if started is None:
+        return
+    held = _clock() - started
+    if held >= SLOW_WRITE_SECONDS:
+        logging.getLogger(__name__).warning(
+            "A database write held the write lock for %.1f seconds (%s) and was %s; other writes waited behind it.",
+            held, _call_site(), ending)
+
+
+def _call_site():
+    """``file.py:line in function`` of the code that ran the transaction, outside SQLAlchemy and the helpers."""
+    frame = sys._getframe(2)
+    library = os.sep + "sqlalchemy" + os.sep
+    while frame is not None:
+        code = frame.f_code
+        name = code.co_filename
+        if (library not in name and name != __file__ and not name.endswith("contextlib.py")
+                and code.co_name not in _CARRIERS):
+            return f"{os.path.basename(name)}:{frame.f_lineno} in {code.co_name}"
+        frame = frame.f_back
+    return "unknown place"
 
 
 def keep_database_private(path):

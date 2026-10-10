@@ -173,7 +173,7 @@ async def test_api_lifespan_closes_ami_and_does_not_duplicate_callbacks(isolated
     client = AMIClient()
     monkeypatch.setattr(main, "ami_client", client)
     monkeypatch.setattr(main, "providerHasTrait", lambda *args: True)
-    monkeypatch.setattr(main, "_handle_fax_result", results.put_nowait)
+    monkeypatch.setattr(main, "_on_fax_result", results.put_nowait)
     monkeypatch.setenv("FAX_DISABLED", "false")
     monkeypatch.setenv("ASTERISK_AMI_HOST", "127.0.0.1")
     monkeypatch.setenv("ASTERISK_AMI_PORT", str(server.sockets[0].getsockname()[1]))

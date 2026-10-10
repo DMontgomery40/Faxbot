@@ -12,6 +12,8 @@ import logging
 from uuid import uuid4
 
 from .config_runtime import run_lifecycle_step
+from .config_store import ConfigurationStoreError
+from .database_busy import busy_cause, retry_when_busy
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,15 @@ class OutboundWorker:
                 return
             except asyncio.TimeoutError:
                 pass
-            renewed = await run_lifecycle_step(lambda: renew(claim, lease_seconds=self.lease_seconds))
+            try:
+                renewed = await run_lifecycle_step(lambda: renew(claim, lease_seconds=self.lease_seconds))
+            except ConfigurationStoreError as error:
+                # The database was busy (or its answer was lost): the lease still runs, so preparation goes on and
+                # the next beat tries again. A lease that did run out makes begin_submission refuse; nothing is sent.
+                logging.getLogger(__name__).warning(
+                    'Fax %s: its claim could not be renewed this time (%s); trying again at the next beat.',
+                    claim.job_id, busy_cause(error) or 'the database did not answer')
+                continue
             if not renewed:
                 logging.getLogger(__name__).warning('Fax %s: its claim was lost while it was being prepared; '
                                                     'nothing is sent by this attempt.', claim.job_id)
@@ -137,9 +147,13 @@ class OutboundWorker:
                     await run_lifecycle_step(lambda: self.store.record_uncertain(claim))
                     return True
                 # Deliberately outside the transport exception handler. This
-                # commit may already have succeeded when its response is lost.
-                await run_lifecycle_step(lambda: self.store.record_receipt(claim,
-                    provider_sid=receipt.provider_sid, status=receipt.status, error=receipt.error))
+                # commit may already have succeeded when its response is lost:
+                # that one is never tried again (the fax becomes uncertain when
+                # its lease ends, and the call's own result still settles it).
+                # A busy database that refused it outright is tried again.
+                await run_lifecycle_step(lambda: retry_when_busy(lambda: self.store.record_receipt(claim,
+                    provider_sid=receipt.provider_sid, status=receipt.status, error=receipt.error),
+                    what=f'the hand-over of fax {claim.job_id} to its provider'))
         except PreparationFailure as error:
             if not preparing:
                 raise

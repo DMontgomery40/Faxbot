@@ -132,6 +132,8 @@ from .codec.send import combine as codec_combine
 from .diagnostics_report import router as diagnostics_router
 from .batching.transport import BatchingTransport
 from .batching import acceptance as batching_acceptance, results as batching_results
+from . import engine_results
+from .database_busy import busy_cause, retry_when_busy
 import logging
 
 # How long startup gives Asterisk to accept Faxbot's manager login before the
@@ -161,8 +163,9 @@ async def lifespan(application: FastAPI):
             try:
                 owns_ami = await _initialize_runtime(tasks)
                 if owns_ami:
-                    ami_client.on_fax_result(_handle_fax_result)
-                    ami_client.on_originate_response(_handle_originate_response)
+                    # Saved on the results thread in arrival order, never on the event loop (engine_results.py).
+                    ami_client.on_fax_result(_on_fax_result)
+                    ami_client.on_originate_response(_on_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
                     # A T.38 call whose fax data never came back switches new calls to audio fax.
                     sip_fax_mode.attach(ami_client, runtime)
@@ -187,6 +190,12 @@ async def lifespan(application: FastAPI):
                                         local=installation_route(application, runtime))))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
+                    # A built-in engine fax whose result never arrived waits for a person, never for ever.
+                    from .routing.background import repeat
+                    tasks.append(asyncio.create_task(repeat(
+                        lambda: engine_results.settle_lost_results(delivery), interval=300.0, initial_delay=60.0,
+                        warning='Faxes whose call result was lost could not be checked.'),
+                        name='faxbot-lost-results'))
                     # The task's frame keeps the startup values; the watcher reads the current ones.
                     tasks.append(asyncio.create_task(watch_public_address(
                         values_source=lambda: runtime.manager.store.read().active.values, runtime=runtime),
@@ -200,6 +209,8 @@ async def lifespan(application: FastAPI):
                 await asyncio.gather(*tasks, return_exceptions=True)
                 if owns_ami:
                     await ami_client.close()
+                    # Results Asterisk already sent are saved before the API stops.
+                    await engine_results.drain()
                 for mount in mounts:
                     application.router.routes.remove(mount)
                 close_audit_logger()
@@ -578,9 +589,32 @@ def _native_partly_sent(event):
     return pages if pages > 0 else None
 
 
+def _on_fax_result(event):
+    """AMI listener: the result is saved on the results thread, after every result Asterisk sent before it."""
+    engine_results.submit(lambda: _handle_fax_result(event))
+
+
+def _on_originate_response(event):
+    engine_results.submit(lambda: _handle_originate_response(event))
+
+
+def _result_unsaved(error, job_id, attempt):
+    """Asterisk never sends a result again: say why this one was not kept (engine_results.settle_lost_results is
+    the safety net for the fax)."""
+    cause = busy_cause(error)
+    if cause is not None:
+        audit_event('native_result_requires_reconciliation', provider='sip', reason='database_busy')
+        logging.getLogger(__name__).error(
+            'The result of fax %s (attempt %s) was not saved because the database stayed busy; the fax shows as '
+            'sending until Faxbot marks it uncertain, half an hour after its call started.', job_id, attempt)
+    else:
+        audit_event('native_result_requires_reconciliation', provider='sip')
+
+
 def _handle_fax_result(event):
     fields = {str(key).lower(): value for key, value in event.items()}
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
+    what = f'the result of fax {job_id} (attempt {attempt})'
     try:
         # A call that carried several faxes gives each its own outcome from the confirmed pages.
         # A person or a voice line answered: the fax fails and takes no other route (sip_calls.PERSON_ANSWERED).
@@ -596,14 +630,17 @@ def _handle_fax_result(event):
         if pages is not None:
             # Pages went before the call broke: never sent again whole by itself (the SSL Fax engine's sentence).
             from .hylafax_engine import failure_sentence
-            _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                            error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
+            retry_when_busy(lambda: _observe_native(
+                job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+                error=failure_sentence('', pages), before_data=False, error_category='partly_sent'),
+                what=what, idempotent=True)
             return
-        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                        error=sip_calls.result_summary(event), before_data=native_event(event),
-                        **({'error_category': answered_by} if answered_by else {}))
-    except Exception:
-        audit_event('native_result_requires_reconciliation', provider='sip')
+        retry_when_busy(lambda: _observe_native(
+            job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+            error=sip_calls.result_summary(event), before_data=native_event(event),
+            **({'error_category': answered_by} if answered_by else {})), what=what, idempotent=True)
+    except Exception as error:
+        _result_unsaved(error, job_id, attempt)
     finally:
         # After the outcome is kept: the station the far end answered as, kept when the fax went through, and
         # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble, in reaching
@@ -634,10 +671,12 @@ def _handle_originate_response(event):
                                                     failure_sentence=sip_calls.originate_summary(event)):
             return
         # The call was never placed: nothing reached a fax machine.
-        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
-                        error=sip_calls.originate_summary(event), before_data=True)
-    except Exception:
-        audit_event('native_result_requires_reconciliation', provider='sip')
+        retry_when_busy(lambda: _observe_native(
+            parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
+            error=sip_calls.originate_summary(event), before_data=True),
+            what=f'the result of fax {parts[1]} (attempt {parts[2]})', idempotent=True)
+    except Exception as error:
+        _result_unsaved(error, parts[1], parts[2])
 
 
 app.include_router(sip_router)

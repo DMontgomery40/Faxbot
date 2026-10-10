@@ -161,6 +161,7 @@ const categoryLabels: Record<string, string> = {
   partly_sent: 'Part of this fax may have arrived before the call failed',
   pages_unconfirmed: 'The call ended without confirming which pages arrived',
   person_answered: 'A person answered, not a fax machine, so Faxbot did not call again',
+  result_lost: "Faxbot lost this call's result; check whether it arrived before sending again",
 };
 
 // How a fax went by direct delivery, from the partner's answer. The direct

@@ -31,7 +31,7 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
     'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing', 'person_answered',
-    'wrong_station'})
+    'wrong_station', 'result_lost'})
 # A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
 # failed or waiting for a person, never resent automatically (no other route takes it). ``notice_missing``: a
 # Direct message the recipient's HISP never confirmed within the wait (digital/direct_message.py).
@@ -39,6 +39,7 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
 # route would ring that person again, so the fax fails and a person checks the number (research N9).
 # ``wrong_station``: the number answered as a fax machine Faxbot did not expect there and the station check refused
 # it before any page (routing/stations.py): another route would reach the same machine.
+# ``result_lost``: the built-in engine's result for the call never reached the store (engine_results.py).
 # How long a shared call's priced partition costs are kept between claims (``OutboundStore._call_costs``).
 COST_SECONDS = 60
 NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered',
@@ -1096,13 +1097,15 @@ class OutboundStore:
 
     def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key, category='pages_unconfirmed',
                            now=None):
-        """A shared call ended without a confirmed page count, or a Direct message's notice never came
-        (``notice_missing``): this fax may have arrived.
+        """A shared call ended without a confirmed page count, a Direct message's notice never came
+        (``notice_missing``), or the built-in engine's result for the call was lost (``result_lost``,
+        engine_results.py): this fax may have arrived.
 
         The fax waits for a person, exactly like an unacknowledged submission;
         nothing is sent again. A repeated report has no further effect.
         """
-        if category not in ('pages_unconfirmed', 'notice_missing') or not isinstance(event_key, str) or not event_key \
+        if category not in ('pages_unconfirmed', 'notice_missing', 'result_lost') or not isinstance(event_key, str) \
+                or not event_key \
                 or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         now = now or datetime.utcnow()
