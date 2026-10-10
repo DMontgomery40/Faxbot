@@ -190,7 +190,7 @@ describe('Inbox email delivery', () => {
     const pages = visibleNavigation(new Set(['mailboxes:read', 'settings:read', 'diagnostics:read']),
       { send: false, jobs: false, inbox: true }, { pluginsEnabled: false }).flatMap((area) => area.pages.map((page) => page.label));
     expect(pages).not.toContain('Intake');
-    expect(pages).toEqual(expect.arrayContaining(['Email delivery', 'Recipients', 'Spending']));
+    expect(pages).toEqual(expect.arrayContaining(['Staff email delivery', 'Recipients', 'Spending']));
   });
 });
 
