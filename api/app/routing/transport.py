@@ -614,14 +614,16 @@ class RoutedTransport:
             raise error.__cause__
         except Exception:
             # Route evidence is optional; the accepted provider still works (and chooses its own number), unless
-            # the fax's rules exclude it: then the fax waits in Sent instead of going outside its rules.
+            # the fax's rules exclude it: then the fax waits in Sent instead of going outside its rules. Either way
+            # the warning carries the error, so a bug here is never mistaken for an ordinary hold.
             if not await run_lifecycle_step(lambda: self._bound_allowed(claim)):
                 logging.getLogger(__name__).warning('Route choice is unavailable; the fax waits for a route its '
-                                                    'rules allow.')
+                                                    'rules allow.', exc_info=True)
                 await run_lifecycle_step(lambda: self._hold(claim, None, (
                     'Faxbot could not choose a route your rules allow just now, so nothing was sent. It waits for '
                     'you in Sent; check again in a moment.')))
-            logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.')
+            logging.getLogger(__name__).warning('Route choice is unavailable; using the outbound provider.',
+                                                exc_info=True)
             plan = choice = measured = None
         if choice is None and plan is not None and _pinned(plan) is not None:
             # Nothing the rules allow can take the fax now, its own account included (owner's answer Q1).
