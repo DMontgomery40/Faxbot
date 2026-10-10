@@ -54,14 +54,15 @@ export const SOURCE_NAMES: Record<AttentionSource, string> = {
 };
 
 // The sources the Overview reads on entry and on Refresh; Faxbot's status comes from its own poll.
-export async function loadAttentionSources(client: AdminAPIClient): Promise<Omit<AttentionSources, 'health'>> {
+export async function loadAttentionSources(client: AdminAPIClient, clock: () => number = Date.now)
+  : Promise<Omit<AttentionSources, 'health'>> {
   const [holds, work, intake, expected, costs, network] = await Promise.all([
-    settle(rulesApiFor(client).holds().then((result) => result.holds)),
-    settle(client.workCounts()),
-    settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts)),
-    settle(expectedApi(client).counts()),
-    settle(client.getRouteCosts()),
-    settle(client.getSipNetwork()),
+    settle(rulesApiFor(client).holds().then((result) => result.holds), clock),
+    settle(client.workCounts(), clock),
+    settle(client.listIntakeItems({ limit: 1 }).then((result) => result.counts), clock),
+    settle(expectedApi(client).counts(), clock),
+    settle(client.getRouteCosts(), clock),
+    settle(client.getSipNetwork(), clock),
   ]);
   return { holds, work, intake, expected, costs, network };
 }
@@ -148,7 +149,7 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
     const notReady = notReadyFor(status);
     if (notReady) {
       add({ key: 'not-ready', group: 'serious', label: NOT_READY_TEXT[notReady], count: null, serious: true,
-        destination: 'system/diagnostics' });
+        destination: 'admin/health' });
     }
     if (status.jobs.reconciliation_required) {
       add({ key: 'uncertain', group: 'serious', label: 'Sent faxes with an uncertain result',
@@ -190,14 +191,14 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
       .reduce((total, row) => total + (row.unrecorded_calls ?? 0), 0);
     if (unrecorded > 0) {
       add({ key: 'unrecorded', group: 'check', label: 'Carrier charges with no matching fax, last 30 days', count: unrecorded,
-        destination: 'costs/spending' });
+        destination: 'savings/spending' });
     }
   }
   // While Faxbot keeps fax over the internet off because of the network.
   if (network.kind === 'ready' && network.data.applies && network.data.action === 'turned_off' && !network.data.t38_enabled) {
     add({ key: 't38-network', group: 'check',
       label: 'One network change would let faxes go over the internet; faxes still go through meanwhile', count: null,
-      destination: 'providers/trunk' });
+      destination: 'delivery/trunk' });
   }
 
   const ordered = GROUP_ORDER.flatMap((group) => items.filter((item) => item.group === group));

@@ -33,7 +33,7 @@
       "serious": true,
       "items": [
         {"key": "not-ready", "group": "serious", "label": "Faxbot is not ready to send faxes", "count": null, "detail": null,
-         "serious": true, "destination": "system/diagnostics", "command": "faxbot system health"},
+         "serious": true, "destination": "admin/health", "command": "faxbot system health"},
         {"key": "uncertain", "group": "serious", "label": "Sent faxes with an uncertain result", "count": 1,
          "detail": "Check your provider account before you send any of them again.",
          "serious": true, "destination": "faxes/sent?status=reconciliation_required",
@@ -54,10 +54,10 @@
         {"key": "not-delivered", "group": "failed", "label": "Received faxes not delivered by email", "count": 4, "detail": null,
          "serious": false, "destination": "faxes/received?show=not-delivered", "command": "faxbot received deliveries list --state failed"},
         {"key": "unrecorded", "group": "check", "label": "Carrier charges with no matching fax, last 30 days", "count": 3, "detail": null,
-         "serious": false, "destination": "costs/spending", "command": "faxbot costs spending"},
+         "serious": false, "destination": "savings/spending", "command": "faxbot costs spending"},
         {"key": "t38-network", "group": "check",
          "label": "One network change would let faxes go over the internet; faxes still go through meanwhile", "count": null,
-         "detail": null, "serious": false, "destination": "providers/trunk", "command": "faxbot providers trunk network status"}
+         "detail": null, "serious": false, "destination": "delivery/trunk", "command": "faxbot providers trunk network status"}
       ],
       "console": [],
       "cli": [

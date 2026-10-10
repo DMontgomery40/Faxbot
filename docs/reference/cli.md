@@ -28,7 +28,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 
 * `send`: Send a fax.
 * `status`: Show where a sent fax is now.
-* `overview`: Show what needs attention now, as on the...
+* `overview`: Show the Overview: what Faxbot is doing...
 * `received`: Received faxes: list and open them, give...
 * `sent`: Sent faxes: list them, open one, download...
 * `forms`: Registered forms: import a fillable PDF or...
@@ -94,7 +94,7 @@ $ faxbot status [OPTIONS] {fax_id}
 
 ## `faxbot overview`
 
-Show what needs attention now, as on the console&#x27;s Overview: held faxes, uncertain and failed sends, received faxes without an owner, email delivery failures and overdue expected faxes, each with the command that lists them.
+Show the Overview: what Faxbot is doing for you, the next improvements, everyday faxes and what needs attention, as on the console.
 
 **Usage**:
 
@@ -545,7 +545,7 @@ $ faxbot sent list [OPTIONS]
 * `--offset <int range>`: Skip this many of the newest faxes.  [default: 0; x&gt;=0]
 * `--ids`: Also show each fax&#x27;s ID, to use with faxbot sent show, pdf and refresh.
 * `--held`: Only faxes your rules are holding: waiting for approval, for a time window or for a route the rules allow.
-* `--hours <int range>`: Only faxes whose state changed in the last this many hours, such as 24.  [1&lt;=x&lt;=8784]
+* `--hours <int range>`: Show only faxes whose state changed within this many hours, such as 24.  [1&lt;=x&lt;=8784]
 * `--help`: Show this message and exit.
 
 ### `faxbot sent show`

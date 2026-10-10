@@ -58,8 +58,9 @@ describe('Dashboard delivery cards', () => {
     const denied = () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 });
     server.use(http.get('/routing/costs', denied), http.get('/intake/items', denied), http.get('/direct/peers', denied));
     const navigate = vi.fn();
-    render(<Dashboard client={client()} onNavigate={navigate} />);
-    expect(await screen.findAllByText('Not available to this account.')).toHaveLength(3);
+    // A person who reads settings, so only these three cards are refused.
+    render(<Dashboard client={client()} onNavigate={navigate} canReadSettings />);
+    await waitFor(() => expect(screen.getAllByText('Not available to this account.')).toHaveLength(3));
     expect(screen.queryByRole('button', { name: 'Spending, last 30 days' })).toBeNull();
     fireEvent.click(screen.getByText('Spending, last 30 days'));
     expect(navigate).not.toHaveBeenCalled();
@@ -92,7 +93,7 @@ describe('Dashboard delivery cards', () => {
     const item = await screen.findByTestId('attention-t38-network');
     expect(item.textContent).toContain('One network change would let faxes go over the internet; faxes still go through meanwhile');
     fireEvent.click(item);
-    expect(opened).toEqual(['providers/trunk']);
+    expect(opened).toEqual(['delivery/trunk']);
   });
 
   it('has no network item when someone chose audio fax or the network allows fax over IP', async () => {
