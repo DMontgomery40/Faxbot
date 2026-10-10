@@ -1,4 +1,4 @@
-# Costs
+# Savings & optimization
 
 ## Spending
 
@@ -26,16 +26,21 @@ To compare from the command line, create a UTF-8 JSON scenario using the fields 
 faxbot savings portfolio --file scenario.json
 ```
 
-## Savings
+## Savings results
 
-**Savings & optimization → Savings results** (`#/savings/results`) shows what the last 30 days saved, each part marked **Estimate**:
+**Savings & optimization → Savings results** (`#/savings/results`) shows results for the last 30 days. Money figures are estimates: they compare what Faxbot paid with what the same faxes might have cost the usual way. They remain estimates even after a carrier reports its charges.
 
-- **Sending together**: calls saved when faxes to the same number shared a call;
-- **Direct delivery**: fax calls avoided when a partner accepted the document directly;
-- **Case packets**: pages not sent again because a packet listed documents the recipient already had.
-- **Pages saved by encoding (experimental)**: pages avoided when an attempt used encoded pages.
+The page reports money, pages, call time, calls and data in separate units. Some entries are counts rather than estimates; the page marks which figures are estimates. Different results can describe the same delivery, so do not add their counts together or multiply an avoided-call count by a price yourself. That can count an avoided call twice.
 
-Money estimates compare what you paid with what the same faxes would have cost the usual way, so they remain estimates after the carrier reports. Exact byte counts for reuse and patches appear separately and are not added to money saved. A fax that would have gone through a flat plan saves no money. Case packets count from when Faxbot started recording what each packet left out, and the page says from which day.
+Data saved by reuse and patches is a byte count, not a money saving. It may matter for metered data or storage if you have a cost basis for those bytes; Faxbot does not convert it to money. A fax that would have gone through a flat plan saves no money. Case-packet savings count only from when Faxbot started recording what each packet left out; the page gives the date.
+
+## Capabilities
+
+**Savings & optimization → Capabilities** (`#/savings/capabilities`) lists what Faxbot can do, grouped by outcome. Filter by **On**, **Off**, **Ready to turn on**, **Needs something** or **Experimental**. **Ready to turn on** means the capability is off but works on this installation; it does not mean it has been tested on every route or recipient.
+
+Open a capability to see an example, its prerequisites, where to change its setting and what it did here. The evidence label describes how far the capability has been demonstrated: on a live call, in a test lab or with sample data. This evidence is separate from whether Faxbot has recorded its use on your installation. The page reads local settings and stored records; it does not make a network check. It does not show money.
+
+From the command line, use `faxbot savings capabilities --filter ready` to list ready capabilities, or `faxbot savings capabilities show KEY` to see one capability and its setting command. The key is shown in brackets beside each capability name.
 
 ## Recommendations
 
