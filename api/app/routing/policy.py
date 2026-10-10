@@ -33,8 +33,12 @@ DIRECT = 'direct'
 # ``own_number``: one of the installation's own receiving numbers, delivered inside Faxbot without a call.
 # ``rule``: first in the list a sending rule gave (its order, not cost, decides).
 # ``plan_reserved``: first because a scarce plan's last pages are held for faxes they save more on (plan_allocation).
+# ``mixed_currency``: the routes charge in different currencies and no exchange rate is set, so your order decided
+# between currencies (money ranks only within one currency).
+# ``cheapest_converted``: the cheapest at the exchange rate you set.
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
-           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule', 'plan_reserved')
+           'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule', 'plan_reserved',
+           'mixed_currency', 'cheapest_converted')
 # A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
 # Ranked by cost against each other: provider accounts, partner relays and digital routes (Direct, FHIR).
 CALLING = ('provider', 'relay', 'digital')
@@ -81,6 +85,18 @@ class RouteChoice:
     compared: int = 0
 
 
+def _rate(exchange, currency, base):
+    """How many ``base`` one unit of ``currency`` is at the rates you set (either direction); None when unset."""
+    if currency == base:
+        return 1
+    rates = exchange or {}
+    if (currency, base) in rates:
+        return rates[(currency, base)]
+    if rates.get((base, currency)):
+        return 1 / rates[(base, currency)]
+    return None
+
+
 class RoutePolicy:
     def __init__(self, *, min_success_percent=80, min_attempts=3, min_delivered=MIN_DELIVERED):
         if not 0 <= min_success_percent <= 100 or min_attempts < 1 or min_delivered < 1:
@@ -105,11 +121,19 @@ class RoutePolicy:
             return []
         return found
 
-    def order(self, candidates, *, stats=None, preferred=None, pages=1, delivered=None, prices=None):
+    def order(self, candidates, *, stats=None, preferred=None, pages=1, delivered=None, prices=None, doubtful=(),
+              exchange=None):
         """``delivered`` maps a route key to its ``DeliveredCost`` at this destination, if known.
 
         ``prices`` maps a route key to its ``routing.pricing.Price`` (what one more fax adds there); without it
-        the rate card's estimate ranks, exactly as before.
+        the rate card's estimate ranks, exactly as before. ``doubtful``: keys ranked as an unreliable route is
+        (after every reliable one), such as an account with an open route family incident on every transport it
+        would use (``route_families``).
+
+        Money is never compared across currencies as it stands: with routes in several currencies, ``exchange``
+        (``{(from currency, to currency): rate}``, rates you set with their date) converts each estimate into the
+        first route's currency for ranking only; without a rate for every currency, money ranks within each currency
+        and your order decides between currencies (reason ``mixed_currency``).
         """
         stats = stats or {}
         delivered = delivered or {}
@@ -121,6 +145,13 @@ class RoutePolicy:
                                      estimate_cost(candidate.card, pages) if candidate.card is not None else None)
                      for candidate in candidates}
         position = {key: index for index, key in enumerate(keys)}
+        currencies = {}
+        for candidate in candidates:
+            price = prices.get(candidate.key)
+            if estimates[candidate.key] is None:
+                continue
+            currencies[candidate.key] = ((price.currency if price is not None else None)
+                                         or getattr(candidate.card, 'currency', None))
         chosen = []
 
         def take(candidate, reason, compared=0):
@@ -141,19 +172,39 @@ class RoutePolicy:
         if direct is not None:
             take(direct, 'direct_peer')
         remaining = [c for c in providers if c is not override]
-        reliable = [c for c in remaining if not self.unreliable(stats.get(c.key))]
-        doubtful = [c for c in remaining if self.unreliable(stats.get(c.key))]
+        flagged = set(doubtful or ())
+        reliable = [c for c in remaining if not self.unreliable(stats.get(c.key)) and c.key not in flagged]
+        doubtful = [c for c in remaining if self.unreliable(stats.get(c.key)) or c.key in flagged]
+
+        # Money across currencies: converted at a rate you set, else ranked only within each currency, your order
+        # between them.
+        known = [candidate for candidate in remaining if estimates[candidate.key] is not None]
+        found = {currencies.get(candidate.key) for candidate in known} - {None}
+        group, converted, mixed = {}, {}, False
+        if len(found) > 1:
+            base = next(currencies[c.key] for c in known if currencies.get(c.key) is not None)
+            rates = {currency: _rate(exchange, currency, base) for currency in found}
+            if all(rate is not None for rate in rates.values()):
+                converted = {candidate.key: estimates[candidate.key] * rates.get(currencies.get(candidate.key), 1)
+                             for candidate in known}
+            else:
+                mixed = True
+                for candidate in sorted(known, key=lambda item: position[item.key]):
+                    group.setdefault(currencies.get(candidate.key), position[candidate.key])
 
         def cost_rank(candidate):
             estimate = estimates[candidate.key]
+            if estimate is not None and candidate.key in converted:
+                estimate = converted[candidate.key]
             price = prices.get(candidate.key)
             # An unknown cost never ranks ahead of a known one; among known costs a plan past its normal-use budget
             # goes last; between equal costs a route that uses no plan budget first; ties keep configured order,
             # which puts the job's own provider first.
             over = bool(price is not None and price.over_budget)
             uses = bool(price is not None and price.uses_budget)
-            return (estimate is None, over, estimate if estimate is not None else 0, uses, candidate.doubt,
-                    not candidate.bound, position[candidate.key])
+            return (estimate is None, over, group.get(currencies.get(candidate.key), 0) if mixed else 0,
+                    estimate if estimate is not None else 0, uses, candidate.doubt, not candidate.bound,
+                    position[candidate.key])
 
         def first_reason(candidate):
             estimate = estimates[candidate.key]
@@ -166,6 +217,10 @@ class RoutePolicy:
                 return 'included'
             if len(remaining) == 1:
                 return 'configured' if candidate.bound else 'cheapest'
+            if mixed:
+                return 'mixed_currency'
+            if converted:
+                return 'cheapest_converted'
             if any(estimates[other.key] is None for other in reliable if other is not candidate):
                 return 'known_cheapest'
             return 'cheapest'
@@ -186,6 +241,7 @@ class RoutePolicy:
                 take(candidate, 'cheapest_delivered', len(observed))
             else:
                 take(candidate, first_reason(candidate))
-        for candidate in sorted(doubtful, key=lambda c: (-(stats[c.key].success_percent or 0),) + cost_rank(c)):
+        for candidate in sorted(doubtful, key=lambda c: (-((stats.get(c.key) or RouteStats()).success_percent or 0),)
+                                + cost_rank(c)):
             take(candidate, 'unreliable')
         return chosen

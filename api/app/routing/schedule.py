@@ -1082,8 +1082,11 @@ class Scheduler:
                    a.c.submitted_at <= now)
             .order_by(a.c.submitted_at.desc(), a.c.id).limit(HISTORY_READ)).mappings().all()
         seen, found = set(), []
+        # A failure that belonged to a route family incident (the route's, not the number's) teaches nothing about
+        # the number's busy hours (route_families.excluded_attempts).
+        excluded = _route_family_excluded(connection, [row['id'] for row in rows])
         for row in rows:
-            if row['id'] in seen:
+            if row['id'] in seen or row['id'] in excluded:
                 continue
             seen.add(row['id'])
             sentence = None
@@ -1113,7 +1116,7 @@ class Scheduler:
             return []
         e = self.t.get('fax_engine_calls')
         columns = [s.c.started_at, s.c.disposition, s.c.fax_status, s.c.pages, s.c.connected_seconds,
-                   s.c.error_cause, s.c.direction, s.c.job_id]
+                   s.c.error_cause, s.c.direction, s.c.job_id, s.c.attempt_id]
         source = s.join(a, a.c.id == s.c.attempt_id).join(j, j.c.id == a.c.job_id)
         if e is not None and 'transfer_seconds' in e.c:
             columns.append(e.c.transfer_seconds)
@@ -1123,7 +1126,10 @@ class Scheduler:
         if number is not None:
             query = query.where(j.c.to_number == number)
         rows = connection.execute(query.order_by(s.c.started_at.desc()).limit(HISTORY_READ)).mappings().all()
-        return [found for found in (call_timing(dict(row)) for row in rows) if found is not None]
+        # Calls a route family incident spoiled teach no per-number timing (route_families.excluded_attempts).
+        excluded = _route_family_excluded(connection, [row['attempt_id'] for row in rows])
+        return [found for found in (call_timing(dict(row)) for row in rows if row['attempt_id'] not in excluded)
+                if found is not None]
 
     def timing(self, connection, number, settings, now, *, fallback=True):
         """The number's learned call hours, or (``fallback``) the route's as a whole when the number has too few
@@ -1197,6 +1203,13 @@ def priced_by_hour(route, preset):
     from .predict_facts import shipped
     identity = (f'sip-{preset}' if preset else 'sip') if route == 'sip' else route
     return any(entry[0] == identity for entry in shipped().get('bands') or ())
+
+
+def _route_family_excluded(connection, attempt_ids):
+    """The attempts among ``attempt_ids`` whose failure belonged to a route family incident
+    (``route_families.excluded_attempts``), read on ``connection``."""
+    from .route_families import excluded_attempts
+    return excluded_attempts(connection.engine, attempt_ids, connection=connection)
 
 
 _CACHE = {}

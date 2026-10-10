@@ -38,6 +38,9 @@ REASON_TEXT = {
     'rule': 'Your sending rule chose this account first.',
     'plan_reserved': ("Your plan's last included pages or minutes go to faxes they save more on, so this fax goes by "
                       'the next cheapest route.'),
+    'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot kept your '
+                       'order between them and compared prices only within each currency.'),
+    'cheapest_converted': 'The cheapest route at the exchange rate you set.',
 }
 
 
@@ -49,6 +52,8 @@ DECIDED_TEXT = {
     'own_number': 'This is one of your own fax numbers, so the fax went straight into Received without a phone call.',
     'plan_reserved': ("Your plan's last included pages or minutes went to faxes they saved more on, so Faxbot sent "
                       'this one by the next cheapest route.'),
+    'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot used your '
+                       'order between them instead of comparing the amounts.'),
 }
 
 
@@ -103,7 +108,7 @@ def _explain(choice, destination=None):
 
 
 # A first route chosen by price may be first only because a plan's room is held for other faxes.
-_PRICED_FIRST = ('cheapest', 'known_cheapest', 'cheapest_delivered', 'configured')
+_PRICED_FIRST = ('cheapest', 'known_cheapest', 'cheapest_delivered', 'configured', 'cheapest_converted')
 
 
 def _reserved(choices, prices):
@@ -118,6 +123,9 @@ def _reserved(choices, prices):
         if hold is None or hold.given or price.unheld_micros is None or price.unheld_over or not (
                 hold.others or hold.reserve):
             continue  # a plan full of faxes already on their way is simply full
+        first_price = prices.get(first.route.key)
+        if first_price is not None and first_price.currency and price.currency != first_price.currency:
+            continue  # amounts in different currencies are never compared
         if first.estimated_cost_micros is None or price.unheld_micros < first.estimated_cost_micros:
             from dataclasses import replace
             return ([replace(first, reason='plan_reserved')] + list(choices[1:]),
@@ -403,12 +411,16 @@ class RoutePlanner:
         row = self.store.get_destination(destination)
         policy = RoutePolicy(min_success_percent=values.route_min_success_percent, min_attempts=MIN_ATTEMPTS)
         stats = self.store.route_stats(destination)
+        # An account with an open route family incident on every transport it would use is doubtful, ranked as an
+        # unreliable one is; a trunk's T.38 incident alone leaves its audio fax usable (route_families).
+        incident = self._incidents(candidates)
         unreliable = ()
         if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
             # The administrator's order wins; an account that often failed here keeps its place and is noted.
             choices = _in_order(candidates, prices, pages)
             unreliable = tuple(candidate.key for candidate in candidates
-                               if candidate.kind == 'provider' and policy.unreliable(stats.get(candidate.key)))
+                               if candidate.kind == 'provider' and (policy.unreliable(stats.get(candidate.key))
+                                                                    or candidate.key in incident))
         else:
             # What each route really cost per delivered fax here; it decides only with enough evidence.
             providers = sum(candidate.kind == 'provider' for candidate in candidates)
@@ -422,7 +434,7 @@ class RoutePlanner:
                 # Pinned when the fax was accepted; a rule that chose "cheapest" ranks only its own accounts.
                 preferred = pinned.envelope.preferred if pinned.automatic else None
             choices = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
-                                   prices=prices)
+                                   prices=prices, doubtful=incident)
             choices, held = _reserved(choices, prices)
         held_back = {key for key, why in skipped if why != 'tried'}
         if not choices and (pinned is None or (pinned.allows(bound) and bound not in held_back)):
@@ -430,6 +442,21 @@ class RoutePlanner:
         return RoutePlan(destination, tuple(choices), peer if any(c.route.kind == 'direct' for c in choices) else None,
                          {key: number for key, number in dialed.items() if number != destination},
                          skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held)
+
+    def _incidents(self, candidates):
+        """Keys of provider candidates with an open route family incident on every transport they would use: a
+        trunk's T.38 and audio fax, a fax service's own sending (``route_families.family_incident``)."""
+        from .route_families import family_incident, open_incidents
+        found = set()
+        if not any(candidate.kind == 'provider' for candidate in candidates) or not open_incidents(self.store.engine):
+            return found  # nothing open: one read per plan
+        for candidate in candidates:
+            if candidate.kind != 'provider':
+                continue
+            transports = ('t38', 'audio') if candidate.provider_id in ('sip', 'freeswitch') else ('service',)
+            if all(family_incident(self.store.engine, candidate.key, transport) for transport in transports):
+                found.add(candidate.key)
+        return found
 
     def _unusable(self, key, current, pinned, prices):
         """Why an allowed account cannot take this attempt now, or None: it does not send to this number's country
