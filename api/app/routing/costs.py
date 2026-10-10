@@ -9,7 +9,9 @@ import re
 
 
 MICROS = 1_000_000
-# The research example: about 30 seconds of setup plus 30 seconds per page.
+# The 2026-10-03 research example's call time: about 30 seconds of setup plus 30 seconds per page. Only the stand-in
+# page predictor (``pages.decision``) and the carrier comparison's what-if (``carrier_compare``) still read it;
+# ``estimate_cost``, and with it every route ranking, uses the shared predictor's time model instead.
 ESTIMATE_SETUP_SECONDS = 30
 ESTIMATE_SECONDS_PER_PAGE = 30
 MAX_RATE_MICROS = 100 * MICROS
@@ -315,10 +317,22 @@ def split_by_weight(total, weights):
 
 
 def estimate_cost(card, pages):
-    """Expected cost of a successful send, used only to rank routes."""
+    """Expected cost of one delivered fax of ``pages`` typical pages on ``card``, in micros.
+
+    The shared pre-dial predictor's figure (``predict``): its setup time, typical page size at standard resolution
+    and handshake per page, billed over its default spread of call times with the card's increment and minimum,
+    exactly as route ranking prices a fax (``pricing.price``) when nothing is known about the number. It replaces
+    the older estimate of 30 seconds plus 30 seconds a page. A flat plan's fax adds nothing (0).
+    """
+    from .destinations import LOCAL, DestinationClass
+    from .predict import RouteFacts, Shape, predict_from
     pages = pages if isinstance(pages, int) and pages > 0 else 1
-    seconds = ESTIMATE_SETUP_SECONDS + ESTIMATE_SECONDS_PER_PAGE * pages
-    return attempt_cost(card, seconds=seconds, pages=pages, delivered=True)
+    facts = RouteFacts(card.provider_id, card.label, DestinationClass(LOCAL), RateTerms(card))
+    found = predict_from(facts, Shape(min(pages, 10_000), None, 'standard', 'normal'))
+    if found.cost is None:
+        # A card always prices a fax of known time; this is only reached for an impossible shape.
+        return attempt_cost(card, seconds=None, pages=pages, delivered=True)
+    return found.cost.micros
 
 
 def rate_text(card):

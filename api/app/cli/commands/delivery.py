@@ -1028,6 +1028,15 @@ def _line_time(seconds):
     return f'about {whole // 60} min {whole % 60} s' if whole >= 60 else f'about {whole} s'
 
 
+def _pages_sent(route):
+    """'1 long page', '2 pages', '1 encoded page'; '-' when not measured."""
+    sent = route.get('sent_pages')
+    if not sent:
+        return '-'
+    noun = {'dense': 'long page', 'codec': 'encoded page'}.get(route.get('layout'), 'page')
+    return f"{sent} {noun}{'' if sent == 1 else 's'}"
+
+
 def _predicted_cost(route):
     if route.get('cost') is None:
         return 'Unknown'
@@ -1063,10 +1072,14 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
         if result.get('measured_sentence'):
             out.line(result['measured_sentence'])
         routes = result.get('routes') or []
+        # A measured document: each account's own best pages (long pages, encoded pages) as the worker would send.
+        measured_pages = any(route.get('sent_pages') for route in routes)
         if routes:
-            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within'],
+            out.table(['Route', 'Cost', 'Time on the line', '9 in 10 calls within']
+                      + (['Pages sent'] if measured_pages else []),
                       [[route['label'], _predicted_cost(route), _line_time(route.get('seconds')),
                         _line_time(route.get('p90_seconds')) if route.get('finish_sentence') else '-']
+                       + ([_pages_sent(route)] if measured_pages else [])
                        for route in routes])
             for route in routes:
                 out.line(f"{route['label']}: {route['basis']}")

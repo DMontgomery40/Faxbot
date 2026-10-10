@@ -69,8 +69,9 @@ def test_attempts_without_a_charge_or_estimate_are_priced_from_the_rate_card_wit
         15_000, 'USD', 'estimated')
     # A per-minute card cannot price a call of unknown length.
     assert attempt_figure(Attempt('sip', 'sip', 'success', pages=1), trunk) is None
-    # An uncertain attempt is estimated as a successful send of its pages.
-    assert attempt_figure(Attempt('sip', 'sip', 'uncertain', pages=4), trunk) == (15_000, 'USD', 'estimated')
+    # An uncertain attempt is estimated as a successful send of its pages, by the shared predictor: four typical
+    # pages take about 60 seconds, so one billed minute a quarter of the time and two otherwise.
+    assert attempt_figure(Attempt('sip', 'sip', 'uncertain', pages=4), trunk) == (8_750, 'USD', 'estimated')
     per_page = card('phaxio', page='0.07', call='0.01')
     assert attempt_figure(Attempt('phaxio', 'phaxio', 'failed', pages=3), per_page) == (10_000, 'USD', 'estimated')
     # A reported charge always wins over an estimate, and a stored estimate over the current card.

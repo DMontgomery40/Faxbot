@@ -268,8 +268,13 @@ class CapturedTransport:
         layout_rule = await run_lifecycle_step(lambda: _layout_rule(store_engine, claim.job_id))
         from .codec.store import KeySeal
         seal = KeySeal(store_configuration) if store_configuration is not None else None
+        # The account the route choice bound (its own tariff prices the pages) and, when it compared accounts, the
+        # pages it measured and chose for that account (routing/joint.py).
+        from .routing.joint import handed_over
+        handoff = handed_over(claim)
         changed = await run_lifecycle_step(lambda: page_sending.prepare(
-            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule, seal=seal))
+            store_engine, values, configuration, claim, job, pdf, tiff, rule=layout_rule, seal=seal,
+            handoff=handoff))
         if changed is not None:
             pdf = Path(changed.pdf) if changed.pdf else pdf
             tiff = Path(changed.tiff) if changed.tiff else tiff

@@ -164,6 +164,24 @@ export interface PredictionAnswer {
 // `coding` is set only for Faxbot's own engines (route 'sip'): the coding they would be asked for, in one sentence.
 export interface DocumentRoutePrediction extends RoutePrediction {
   coding: { coding: string; measured: boolean; sentence: string } | null;
+  // The pages this account would send: its own best layout, measured on the document ('normal', 'dense', 'codec').
+  layout?: string;
+  sent_pages?: number;
+  original_pages?: number;
+}
+
+// The account and pages Faxbot would send the document with (the delivery worker's own choice), or the runner-up.
+export interface PlanChoice {
+  route: string;
+  label: string;
+  layout: string;
+  rendering: string;
+  coding: string | null;
+  original_pages: number;
+  sent_pages: number;
+  cost: Money | null;
+  in_plan: boolean;
+  measured: boolean;
 }
 
 export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
@@ -171,6 +189,13 @@ export interface DocumentPrediction extends Omit<PredictionAnswer, 'routes'> {
   measured: Record<string, number>;
   measured_sentence: string | null;
   jbig_measured: boolean;
+  // Each account's best pages measured on its own price, ranked as the delivery worker ranks them; `sentence` then
+  // says the choice ("Would go through … instead of …"). Absent from older servers.
+  selected?: PlanChoice | null;
+  runner_up?: PlanChoice | null;
+  compared?: number;
+  held?: boolean;
+  approximate?: boolean;
 }
 
 export interface DestinationDetail extends Destination {

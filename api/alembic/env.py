@@ -77,6 +77,8 @@ config.attributes["schema_polled_transmit"] = importlib.import_module(package + 
 
 
 config.attributes["schema_analysis"] = importlib.import_module(package + ".schema_analysis")
+config.attributes["schema_route_selections"] = importlib.import_module(
+    package + ".schema_route_selections")
 
 
 def migrate(connection):

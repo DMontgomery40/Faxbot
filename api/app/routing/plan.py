@@ -432,8 +432,12 @@ class RoutePlanner:
                          skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held)
 
     def _unusable(self, key, current, pinned, prices):
-        """Why an allowed account cannot take this attempt now, or None: turned off, at its daily spending limit,
-        or over the decision's cost cap with today's price (an unknown price fails a cap)."""
+        """Why an allowed account cannot take this attempt now, or None: it does not send to this number's country
+        or kind of number (its published terms; never ranked as an unknown price), turned off, at its daily spending
+        limit, or over the decision's cost cap with today's price (an unknown price fails a cap)."""
+        price = (prices or {}).get(key)
+        if price is not None and getattr(price, 'refused', False):
+            return 'not_served'
         if current is not None:
             from ..accounts import account_named, over_daily_limit
             account = account_named(current, key)
