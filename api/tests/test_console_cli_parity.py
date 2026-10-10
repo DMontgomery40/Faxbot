@@ -130,12 +130,10 @@ CLI_ONLY = {
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
 AWAITING_CONSOLE: dict = {
-    ('GET', '/routing/capabilities'): 'Savings & optimization -> Capabilities page (UX-B, #50 milestone 2)',
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
 AWAITING_CLI: dict = {
-    ('GET', '/routing/capabilities'): 'faxbot costs capabilities (UX-B, #50 milestone 2)',
 }
 
 LISTS = {'NOT_OPERATOR': NOT_OPERATOR, 'CONSOLE_ONLY': CONSOLE_ONLY, 'CLI_ONLY': CLI_ONLY,

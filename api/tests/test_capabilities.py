@@ -249,7 +249,8 @@ def _check_answer(body, mapped):
         assert item['filters'] == expected, key
         assert (item['improvement'] is None) == (not item['ready']), key
         for prerequisite in item['prerequisites']:
-            assert prerequisite['label'] == ('In place' if prerequisite['met'] else 'Missing')
+            assert prerequisite['label'] == capabilities.STATES[prerequisite['state']]
+            assert prerequisite['met'] == (prerequisite['state'] != 'missing')
             assert prerequisite['kind_label'] == capabilities.KINDS[prerequisite['kind']]
         assert item['setting']['address'] and item['setting']['label'], key
         # A command only where it changes this setting, on the page the setting is on this time.
@@ -284,6 +285,8 @@ def _write_fixture(body):
                   'tests/test_capabilities.py with FAXBOT_WRITE_FIXTURES=1.'),
         'response': body,
         'cli': _cli_lines(body),
+        # Every console address the module can emit; the console's test opens each one (resolvesTo).
+        'addresses': sorted({where for _, _, where in _static_addresses()}),
     }, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 
 
@@ -299,7 +302,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert together['outcome'] == 'no_repeats' and together['filters'] == ['on']
     assert [(p['kind'], p['met']) for p in together['prerequisites']] == [
         ('connection', True), ('prices', True), ('agreement', True)]
-    assert together['setting'] == {'address': 'recipients/list', 'label': 'Recipients → Details',
+    assert together['setting'] == {'address': 'recipients/list', 'label': 'Recipients',
                                    'command': 'faxbot recipients together set {number} --recipient-agreed'}
     assert together['results'] == {'address': 'savings/results?part=sending_together',
                                    'label': 'Savings & optimization → Savings', 'command': 'faxbot costs savings'}
@@ -323,7 +326,7 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     direct = items['direct_delivery']
     assert direct['filters'] == ['off', 'needs'] and direct['improvement'] is None
     assert direct['prerequisites'] == [{
-        'kind': 'partner', 'kind_label': 'Partner', 'met': False, 'label': 'Missing',
+        'kind': 'partner', 'kind_label': 'Partner', 'met': False, 'state': 'missing', 'label': 'Missing',
         'sentence': capabilities.PARTNER.sentence, 'address': 'recipients/partners',
         'address_label': 'Recipients → Partners'}]
 
@@ -334,6 +337,11 @@ def test_the_read_lists_every_key_once_by_outcome_and_never_shows_money(installa
     assert items['sslfax']['setting']['label'] == 'Delivery setup → Telnyx'
     assert items['fax_over_ip']['here']['sentence'] == 'Used on 3 calls in 30 days'
     assert items['fax_over_ip']['setting']['command'] == 'faxbot providers trunk mode t38'
+    # A T.38 call went through, so the network carries it; the header text is not needed while no recipient chose
+    # page marks.
+    assert [p['state'] for p in items['fax_over_ip']['prerequisites']] == ['in_place', 'in_place']
+    assert [p['state'] for p in items['separator_pages']['prerequisites']] == [
+        'in_place', 'in_place', 'missing', 'not_needed']
     # Measured coding is automatic: its page, and no command.
     assert items['measured_coding']['setting'] == {'address': 'delivery/trunk', 'label': 'Delivery setup → Telnyx',
                                                    'command': None}
@@ -363,6 +371,8 @@ def test_a_new_installation_names_what_each_capability_is_missing(installation):
     # No trunk, no partner: trunk and partner capabilities say exactly that, and none is offered to turn on.
     assert [(p['kind'], p['met']) for p in items['sslfax']['prerequisites']] == [('connection', False), ('engine', False)]
     assert items['partner_tunnel']['missing'] == 3
+    # No T.38 call has gone through, so the network is not said to carry it.
+    assert [p['state'] for p in items['fax_over_ip']['prerequisites']] == ['missing', 'not_checked']
     assert not items['sslfax']['ready'] and not items['direct_delivery']['ready']
 
 
@@ -393,7 +403,8 @@ def test_settings_faxbot_changed_itself_or_set_elsewhere_are_said_with_their_own
 
     t38 = items['fax_over_ip']
     assert (t38['enabled']['on'], t38['works']['here'], t38['ready']) == (False, False, False)
-    assert [(p['kind'], p['met']) for p in t38['prerequisites']] == [('connection', True), ('connection', False)]
+    assert [(p['kind'], p['state']) for p in t38['prerequisites']] == [
+        ('connection', 'in_place'), ('connection', 'missing')]
     assert t38['filters'] == ['off', 'needs']
 
 
@@ -428,6 +439,7 @@ def test_the_fixture_is_an_answer_from_the_modules():
     assert any(not p['met'] and p['kind'] == 'agreement' for item in items.values() for p in item['prerequisites'])
     # The command prints exactly the fixture's lines from that answer.
     assert fixture['cli'] == _cli_lines(response), regenerate
+    assert fixture['addresses'] == sorted({where for _, _, where in _static_addresses()}), regenerate
 
 
 def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
@@ -461,6 +473,21 @@ def test_faxbot_costs_capabilities_lists_shows_and_filters(cli):
     assert unknown.exit_code != 0
     assert 'There is no capability cheapest. List them with: faxbot costs capabilities' in (
         unknown.stdout + (unknown.stderr or ''))
+
+
+def test_a_key_with_no_capability_line_is_still_listed_and_the_read_still_answers(installation, monkeypatch, caplog):
+    """A research entry merged without its line here must not take the read (and Overview) down; the strict test
+    above still fails until the line is added."""
+    trimmed = {key: capability for key, capability in capabilities.CAPABILITIES.items() if key != 'relay'}
+    monkeypatch.setattr(capabilities, 'CAPABILITIES', trimmed)
+    with installation.start() as client:
+        body = client.get('/routing/capabilities', headers=ADMIN)
+    assert body.status_code == 200, body.text
+    relay = _by_key(body.json())['relay']
+    assert (relay['outcome'], relay['example'], relay['prerequisites'], relay['setting']['command']) == (
+        'explain', '', [], None)
+    assert relay['setting']['label'] == 'Recipients → Partners'
+    assert 'Capability relay has no entry in routing/capabilities.py' in caplog.text
 
 
 def test_capabilities_need_settings_read(installation):

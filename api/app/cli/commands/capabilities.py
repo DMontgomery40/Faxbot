@@ -80,7 +80,9 @@ def find(result, key):
 def show_lines(result, key):
     """One capability: what it does, an example, its state here, what it needs, its setting and its figures."""
     outcome, item = find(result, key)
-    lines = [item['name'], states(item), item['sentence'], f"For example: {item['example']}"]
+    lines = [item['name'], states(item), item['sentence']]
+    if item['example']:
+        lines.append(f"For example: {item['example']}")
     lines += [sentence for sentence in (item['enabled']['sentence'], item['works']['sentence']) if sentence]
     lines.append(f"Helps with: {outcome['title']}")
     lines += ['', 'What it needs']

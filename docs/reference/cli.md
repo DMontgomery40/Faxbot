@@ -6514,6 +6514,7 @@ $ faxbot costs [OPTIONS] COMMAND [ARGS]...
 * `state-prices`: Import a carrier&#x27;s US prices for calls...
 * `predict`: Show what a fax to a number would take and...
 * `analysis`: Read the saved analysis, its freshness and...
+* `capabilities`: Everything Faxbot can do to make your...
 * `recommendations`: Ways to pay less, from what your faxes and...
 * `plans`: Your plans: each plan&#x27;s budget or...
 * `charges`: What each provider charged: how Faxbot...
@@ -6744,6 +6745,43 @@ Read the saved analysis, its freshness and the next refresh time.
 ```console
 $ faxbot costs analysis [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `faxbot costs capabilities`
+
+Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with: whether each is on, works here and is proven, and what it still needs. Run it alone to list them.
+
+**Usage**:
+
+```console
+$ faxbot costs capabilities [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--filter on|off|ready|needs|experimental`: Only the capabilities that are on, off, ready to turn on, need something, or are experimental.
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show one capability: what it does, an...
+
+#### `faxbot costs capabilities show`
+
+Show one capability: what it does, an example, whether it works here, what it needs and where to change it.
+
+**Usage**:
+
+```console
+$ faxbot costs capabilities show [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: The capability, as listed in brackets by faxbot costs capabilities.  [required]
 
 **Options**:
 

@@ -19,6 +19,7 @@ Console addresses here are the six-area addresses of spec #48 (``delivery/trunk`
 catalogue still names the older ones, so ``MOVED`` translates each page and link it emits.
 """
 from dataclasses import dataclass
+import logging
 from typing import Callable
 
 import sqlalchemy as sa
@@ -27,6 +28,7 @@ from . import mechanisms
 from .database import read_connection, reflect
 from .store import WINDOW_DAYS
 
+log = logging.getLogger(__name__)
 
 TITLE = 'Capabilities'
 SENTENCE = 'Everything Faxbot can do to make your faxes cost less and take less time, grouped by what it helps with.'
@@ -65,7 +67,7 @@ KINDS = {
 FILTERS = (
     ('on', 'On', 'Switched on for your faxes.'),
     ('off', 'Off', 'Switched off for now.'),
-    ('ready', 'Ready to turn on', 'Off, but this installation already has what it needs.'),
+    ('ready', 'Ready to turn on', 'Off, and works on this installation.'),
     ('needs', 'Needs something', "Missing something it needs, such as a connection, prices or a recipient's agreement."),
     ('experimental', 'Experimental', 'Still being proven; its evidence and limits are shown with it.'),
 )
@@ -92,7 +94,7 @@ PAGES = {
     'delivery/identity': 'Delivery setup → Sender identity',
     'delivery/connections': 'Delivery setup → Connections',
     'delivery/trunk': 'Delivery setup → Carrier trunk',
-    'recipients/list': 'Recipients → Details',
+    'recipients/list': 'Recipients',
     'recipients/partners': 'Recipients → Partners',
     'admin/setup': 'Administration → Setup',
 }
@@ -113,6 +115,16 @@ MOVED = {
 }
 
 
+# How a prerequisite stands here. Only "missing" counts as missing; the other two are said as they are, so a
+# prerequisite Faxbot has not seen working, or that nothing needs yet, never reads as in place.
+STATES = {
+    'in_place': 'In place',
+    'missing': 'Missing',
+    'not_needed': 'Not needed yet',
+    'not_checked': 'Not checked yet',
+}
+
+
 @dataclass(frozen=True)
 class Prerequisite:
     kind: str
@@ -120,6 +132,7 @@ class Prerequisite:
     sentence: str
     # The console address where it is satisfied.
     address: str
+    # True (in place) or False (missing), or one of STATES' keys.
     met: Callable
 
 
@@ -203,12 +216,16 @@ def _engine(here):
 
 
 def _network_passes_t38(here):
+    """Missing when Faxbot switched to audio fax because the network or carrier cannot carry T.38; in place once a
+    T.38 call went through; otherwise not checked yet."""
     from .. import sip_fax_mode
-    if getattr(here.values, 'sip_t38_enabled', True):
-        return True
-    record = sip_fax_mode.read(here.values)
-    reason = record.get('reason') if record and record.get('mode') == 'audio' else None
-    return reason not in (sip_fax_mode.NETWORK, sip_fax_mode.CARRIER)
+    if not getattr(here.values, 'sip_t38_enabled', True):
+        record = sip_fax_mode.read(here.values)
+        reason = record.get('reason') if record and record.get('mode') == 'audio' else None
+        if reason in (sip_fax_mode.NETWORK, sip_fax_mode.CARRIER):
+            return False
+    carried = here.count('sip_call_records', lambda c: c.t38 == 'yes', lambda c: c.fax_status == 'SUCCESS')
+    return True if carried else 'not_checked'
 
 
 def _partner(here):
@@ -248,10 +265,13 @@ def _agreed_marks(here):
 
 
 def _header_ready(here):
-    """Met unless a recipient chose page marks and the header text does not name the sender yet."""
+    """Missing when a recipient chose page marks and the header text does not name the sender yet; not needed while
+    no recipient chose page marks."""
     from ..batching.policy import header_identifies_sender
+    if header_identifies_sender(here.values):
+        return True
     marks = here.count('batching_numbers', lambda c: c.enabled == 1, lambda c: c.boundaries == 'page_headers')
-    return not marks or header_identifies_sender(here.values)
+    return False if marks else 'not_needed'
 
 
 def _toll_free_approved(here):
@@ -309,7 +329,8 @@ TRUNK_RECEIVES = Prerequisite('connection', 'Faxes received over your own SIP tr
                               lambda here: here.trunk_receives)
 RECEIVING_NUMBER = Prerequisite('connection', 'A number this Faxbot receives faxes on.', 'delivery/numbers',
                                 _receiving_number)
-RECEIVES = Prerequisite('connection', 'A number this Faxbot receives faxes on.', 'delivery/numbers', _receives)
+RECEIVES = Prerequisite('connection', 'A fax service account or SIP trunk that receives faxes for this Faxbot.',
+                        'delivery/connections', _receives)
 SECOND_ROUTE = Prerequisite('connection', 'A second sending route, such as another fax service account or your own '
                                           'SIP trunk.', 'delivery/connections', _second_route)
 PRICED_ROUTES = Prerequisite('prices', 'Prices for at least two sending routes that charge for each fax.',
@@ -428,7 +449,7 @@ CAPABILITIES = {
         "A hospital lists a Direct address in the national provider directory. Once you confirm it, referrals to "
         'that hospital go as Direct messages instead of fax calls.',
         'faxbot recipients digital add {number} --direct {address} --confirm',
-        (Prerequisite('connection', 'A Direct messaging (HISP) or FHIR account.', 'delivery/connections',
+        (Prerequisite('connection', 'A Direct messaging provider account or a FHIR account.', 'delivery/connections',
                       _digital_account),
          Prerequisite('agreement', "A recipient's Direct address or FHIR server that you confirmed on their page.",
                       'recipients/list', _digital_confirmed))),
@@ -577,6 +598,10 @@ CAPABILITIES = {
 }
 
 
+# A catalogue key with no entry above, listed with the catalogue's own facts only (see evaluate).
+UNMAPPED = Capability('explain', '', None)
+
+
 # -- the read -----------------------------------------------------------------------------------------------------
 
 def _labels(values):
@@ -586,7 +611,8 @@ def _labels(values):
 
     def label(where):
         page = where.partition('?')[0]
-        return trunk if page == 'delivery/trunk' else PAGES[page]
+        # A page this module has no name for (a new catalogue page): its address, until PAGES names it.
+        return trunk if page == 'delivery/trunk' else PAGES.get(page, page)
     return label
 
 
@@ -609,10 +635,11 @@ def _improvement(ready, experimental, prerequisites):
 def _view(key, capability, item, here, label):
     prerequisites = []
     for prerequisite in capability.prerequisites:
-        met = bool(prerequisite.met(here))
+        found = prerequisite.met(here)
+        state = found if isinstance(found, str) else 'in_place' if found else 'missing'
         prerequisites.append({
-            'kind': prerequisite.kind, 'kind_label': KINDS[prerequisite.kind], 'met': met,
-            'label': 'In place' if met else 'Missing', 'sentence': prerequisite.sentence,
+            'kind': prerequisite.kind, 'kind_label': KINDS[prerequisite.kind], 'met': state != 'missing',
+            'state': state, 'label': STATES[state], 'sentence': prerequisite.sentence,
             'address': prerequisite.address, 'address_label': label(prerequisite.address)})
     missing = sum(1 for prerequisite in prerequisites if not prerequisite['met'])
     ready = bool(item['turn_on'])
@@ -661,7 +688,12 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
     label = _labels(values)
     grouped = {key: [] for key, _, _ in OUTCOMES}
     for mechanism in mechanisms.CATALOGUE:
-        capability = CAPABILITIES[mechanism.key]
+        capability = CAPABILITIES.get(mechanism.key)
+        if capability is None:
+            # A catalogue entry added without its line here: still listed, with what the catalogue says, rather than
+            # taking the whole read down. api/tests/test_capabilities.py fails until the line is added.
+            log.warning('Capability %s has no entry in routing/capabilities.py; listing it without one', mechanism.key)
+            capability = UNMAPPED
         grouped[capability.outcome].append(_view(mechanism.key, capability, items[mechanism.key], here, label))
     return {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
