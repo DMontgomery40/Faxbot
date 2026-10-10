@@ -1,6 +1,6 @@
 # Delivery routes
 
-Faxbot records how every fax was sent and what it cost, and uses that to send each fax the cheapest way that works for its number.
+Faxbot records how every fax was sent and what it cost. It uses the applicable price for the number being called and delivery history to rank routes. A route with an unknown price is not treated as free.
 
 In the Admin Console, spending, prices and savings are under **Costs**, and the numbers you fax and direct partners under **Recipients**.
 
@@ -28,12 +28,14 @@ Each route in a number's **Details** says what decided its place:
 | --- | --- |
 | The cheapest route that works reliably for this number. | Every reliable route has a known price, and this one costs least. |
 | The cheapest route with a known price that works reliably for this number. | Another reliable route has no rate card, so Faxbot cannot say it is the cheapest overall. |
-| Included in your HumbleFax plan. | The route's rate card is a flat monthly plan, so a fax adds nothing. |
+| Included in your HumbleFax plan. | The applicable price says the fax is covered by the plan or its allowance. |
 | More reliable for this number; its cost is unknown. | Cheaper routes often failed for this number, and this route has no rate card. |
 | Your outbound fax provider; its cost is unknown. | No route has a known price, so your configured order decides. |
 | Your outbound fax provider. | There is only one route to choose from. |
 
 A route whose cost is unknown is never called the cheapest.
+
+Faxbot prices a route for the number it would actually dial, including an approved alternate number where that route can use it. A domestic card price does not stand in for a missing international price. If no applicable price is available, Faxbot leaves the estimate unknown. A plan or allowance covers only destinations its applicable tariff includes; it does not make a separate destination price free.
 
 A route counts as unreliable for a number after at least three finished faxes with less than 80% delivered in the last 30 days. Set `FAX_ROUTE_MIN_SUCCESS_PERCENT` to change that threshold.
 
@@ -105,7 +107,7 @@ Tested on 4 October 2026 over a local T.38 test line between two Faxbot fax engi
 
 Faxbot keeps three amounts for each attempt:
 
-- **Estimated** comes from your rate card and the call or pages Faxbot observed. It is rounded per call under the card's billing rule. With whole-minute billing, a 59-second call and a 61-second call bill as 1 and 2 minutes, which is 3 minutes in total.
+- **Estimated** uses the applicable price for the number actually dialed and the call duration or pages Faxbot observed. It is rounded per call under that price's billing rule. With whole-minute billing, a 59-second call and a 61-second call bill as 1 and 2 minutes, which is 3 minutes in total. If Faxbot has no applicable price, the estimate stays unknown rather than using an unrelated domestic price.
 - **Charged** is the amount the provider or carrier reports. Faxbot reads SignalWire's reported fax price and, for faxes sent or received on a Telnyx SIP trunk, what Telnyx billed for each call (see [What a call costs](../setup/sip-trunk.md#what-a-call-costs)). A charge can arrive after the fax is delivered, so Faxbot keeps asking for up to 7 days.
 - **Settled** is the charge once it has stopped changing. A charge seen a day after the call ended is treated as settled.
 
@@ -140,7 +142,7 @@ If a call record with measured connected time is available for an attempt, Faxbo
 
 ### Flat monthly plans
 
-Some providers charge a monthly fee and nothing per fax. Give that provider a rate card with a **Monthly plan fee** and leave the per-minute, per-page and per-call prices at 0. Faxbot then shows the route as "Included in your HumbleFax plan ($10 a month)" in Spending, on the Overview and in route recommendations, and ranks it as costing nothing extra per fax. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
+Some providers charge a monthly fee and nothing per fax. In **Costs → Prices & plans**, add or edit that provider's rate card, enter the **Monthly plan fee**, and leave the per-minute, per-page and per-call prices at 0. Faxbot treats a fax as included only when the applicable destination price says the plan covers it. The fee is never added to one fax. In spending totals the fee counts once per 30 days, pro-rated by day for other periods.
 
 ### Published prices Faxbot ships
 
@@ -158,7 +160,9 @@ Every time Faxbot starts, each provider you send or receive with that has never 
 
 ## Rate cards
 
-Add one rate card per provider. Enter the provider's advertised price per minute, per page and per call, how they round call time, and where and when the price was advertised. Faxbot keeps old versions, so earlier estimates still show the price that applied.
+In **Costs → Prices & plans**, choose **Add rate card** or **Edit**. Enter the advertised price per minute, per page and per call, how the provider rounds call time, its currency, and the price source and date. Keep the sending and receiving cards separate. A separate account's own saved card takes precedence for that account; otherwise Faxbot uses the provider's applicable price.
+
+Under **Costs → Prices & plans**, you can also set a plan's included pages or minutes and any extra-page price. Those allowances apply only to destinations covered by the plan's applicable tariff. They do not price a destination with no tariff or cover a separate destination price.
 
 These are examples of advertised prices (advertised on 2026-10-03). Check your own account, because prices vary by destination and plan:
 
@@ -206,7 +210,7 @@ These routes need `settings:read`, or `settings:write` for changes:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/routing/destinations` | Numbers with their routes, delivery rate and 30-day cost |
-| GET | `/routing/destinations/{number}?pages=` | One number, with the route order for its next fax. Each route gives `rate`, its price in the card's own unit ("$0.005 a minute, at least 1 minute", "$0.07 a page"), and `estimated_cost` for a fax of `pages` pages (default 1): about 30 seconds to connect and 30 a page, rounded the way the card bills |
+| GET | `/routing/destinations/{number}?pages=` | One number, with the route order for its next fax. Each route gives `rate`, the applicable price in its own unit, and `estimated_cost` for a fax of `pages` pages (default 1), using the predicted call time and that price's billing rule; an unavailable price stays unknown |
 | GET | `/routing/savings?days=` | What sending together (calls saved), direct delivery (fax calls avoided) and case packets (pages not sent again) saved in the last `days` (default 30). Every figure is an estimate, even after the carrier reports, because it compares with calls that never happened; a fax that would have gone through a flat plan counts as `in_plan` and saves no money |
 | PATCH | `/routing/destinations/{number}` | Name, notes, preferred route, case references |
 | GET | `/routing/costs?since=` | Spending by route and for received calls, with charged, estimated and waiting counts |
