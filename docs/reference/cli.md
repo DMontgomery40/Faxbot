@@ -68,6 +68,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
 * `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
+* `--court DETAILS.json`: Send under the California court profile, with the case details in this JSON file: purpose file or serve, county, case_number, plaintiff, defendant, documents (title and pages) and sender. Filing adds the MC-005 cover sheet; the pages otherwise go exactly as given.
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -5508,6 +5509,7 @@ $ faxbot delivery rules [OPTIONS] COMMAND [ARGS]...
 * `regions`: Regions: named sets of countries and...
 * `sites`: Sites: the places your organization sends...
 * `workflows`: Workflows: named kinds of work, such as...
+* `court`: The California court profile: faxes filed...
 
 #### `faxbot delivery rules list`
 
@@ -6208,6 +6210,135 @@ $ faxbot delivery rules workflows remove [OPTIONS] {KEY}
 **Options**:
 
 * `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery rules court`
+
+The California court profile: faxes filed with a court or served on a party go exactly as given, with the MC-005 cover sheet when filing, and keep their transmission record.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show where the court profile applies, what...
+* `attach`: Send every fax from a mailbox, or whose...
+* `detach`: Stop sending a mailbox&#x27;s faxes, or a...
+* `courts`: List which California superior courts take...
+* `deadline`: Extend a deadline that runs from service...
+* `record`: Save a court fax&#x27;s transmission record,...
+
+##### `faxbot delivery rules court show`
+
+Show where the court profile applies, what it does, and the rules and holidays it rests on.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court attach`
+
+Send every fax from a mailbox, or whose route a routing rule chooses, under the court profile. Their senders
+must then give the case details.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court attach [OPTIONS] {mailbox|rule} {name}
+```
+
+**Arguments**:
+
+* `mailbox|rule`: Attach it to a mailbox or a routing rule.  [required]
+* `name`: The mailbox or routing rule, by its name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court detach`
+
+Stop sending a mailbox&#x27;s faxes, or a routing rule&#x27;s, under the court profile.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court detach [OPTIONS] {mailbox|rule} {name}
+```
+
+**Arguments**:
+
+* `mailbox|rule`: A mailbox or a routing rule.  [required]
+* `name`: The mailbox or routing rule, by its name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court courts`
+
+List which California superior courts take direct fax filing, which stopped and which refuse it, each with
+its source.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court courts [OPTIONS]
+```
+
+**Options**:
+
+* `--status accepts|stopped|does_not_accept`: Only courts in this state.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court deadline`
+
+Extend a deadline that runs from service by fax by two court days (rule 2.306(d)), counting court holidays.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court deadline [OPTIONS] {DAY}
+```
+
+**Arguments**:
+
+* `DAY`: The deadline you worked out from a fax service date, such as 2026-11-20.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court record`
+
+Save a court fax&#x27;s transmission record, with a draft proof of transmission or of service, as a PDF.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court record [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of a court fax.  [required]
+
+**Options**:
+
+* `-o, --output <str>`: Save the PDF here; the default is transmission-record-&lt;fax&gt;.pdf.
 * `--help`: Show this message and exit.
 
 ## `faxbot recipients`

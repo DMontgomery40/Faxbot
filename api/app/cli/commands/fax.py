@@ -195,7 +195,12 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                               help='The first page is a cover sheet: print its notice in the header '
                                                    'of every page instead and leave that page out. Needs a header '
                                                    "notice ('faxbot delivery identity notice set'); a recipient that "
-                                                   'needs a cover sheet still gets it.')):
+                                                   'needs a cover sheet still gets it.'),
+         court: Path = typer.Option(None, '--court', metavar='DETAILS.json', exists=True, dir_okay=False,
+                                    help='Send under the California court profile, with the case details in this '
+                                         'JSON file: purpose file or serve, county, case_number, plaintiff, '
+                                         'defendant, documents (title and pages) and sender. Filing adds the MC-005 '
+                                         'cover sheet; the pages otherwise go exactly as given.')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
     api = state.api()
     warning = _first_send_warning(api, to, recipient)
@@ -216,6 +221,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['labels'] = list(label)
     if by:
         data['send_by'] = by
+    if court is not None:
+        data['court'] = court.read_text(encoding='utf-8')
     if cover_in_header:
         data['cover_in_header'] = 'true'
         # As Send a fax offers the choice only when a notice applies: say which notice every page will carry.
@@ -438,6 +445,8 @@ def _sent_detail_sentences(api, fax_id):
         found += (api.get('/routing/stations/faxes/' + segment(fax_id)) or {}).get('sentences') or []
     except CliError:
         pass
+    from .court import sentences as court_sentences  # a court fax: its case, the profile and its timing
+    found += court_sentences(api, fax_id)
     return found
 
 

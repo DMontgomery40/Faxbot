@@ -258,7 +258,7 @@ async def test_an_answer_that_does_not_check_is_not_kept(peer_pair, caplog):  # 
 # The migration -------------------------------------------------------------------------------------------------
 
 def test_0082_follows_0079_and_adds_two_nullable_columns():
-    assert schema_partner_layouts.REVISION == '0082_partner_layouts' == schema.HEAD
+    assert schema_partner_layouts.REVISION == '0082_partner_layouts' == schema.PARTNER_LAYOUTS
     assert schema.POTS_QUOTE == '0079_pots_quote'
     assert schema_partner_layouts.TABLES == frozenset()
 

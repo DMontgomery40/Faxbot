@@ -41,6 +41,7 @@ import { SenderEvidenceItem } from './delivery/RegisteredSenders';
 import { FaxCertaintyItem } from './work/SentCertainty';
 import { SentContinuation } from './work/SentContinuation';
 import { SentHeaderNotice } from './HeaderNotice';
+import { SentCourt } from './CourtProfile';
 import { SentStationCheck } from './StationCheck';
 import { SentAfterAnswer } from './delivery/AfterAnswer';
 import { DigitalFaxOutcome } from './delivery/DigitalMessages';
@@ -904,6 +905,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           {detailJob && <SentContinuation client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
           {/* The header notice the fax carried, and whether its cover sheet went (header_notice.py). */}
           {detailJob && <SentHeaderNotice client={client} jobId={detailJob.id} />}
+          {/* A court fax: what the California court profile did, its timing and its transmission record. */}
+          {detailJob && <SentCourt client={client} jobId={detailJob.id} />}
           {/* The station a call answered as, when it was not the one Faxbot expected (routing/stations.py). */}
           {detailJob && <SentStationCheck client={client} jobId={detailJob.id} />}
           {detailJob && <SentAfterAnswer client={client} jobId={detailJob.id} />}

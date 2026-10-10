@@ -9,6 +9,7 @@ import type { Closures } from '../components/delivery/CountryLines';
 import type { Discovery, DiscoveryPublication, DiscoverySettingsChange } from './discoveryTypes';
 import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, SweepResponse } from './chargesTypes';
 import type { Capabilities } from './capabilityTypes';
+import type { CourtFax, CourtProfile } from './courtTypes';
 import type {
   DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
 } from './digitalTypes';
@@ -883,6 +884,29 @@ class AdminAPIClient {
     return this.deliveryRequest(jobId, confirmation);
   }
 
+  // The California court profile (court/): where it applies, the courts and rules it rests on, a court fax in Sent.
+  async courtProfile(): Promise<CourtProfile> {
+    return this.json('/court/profile');
+  }
+
+  async setCourtAttachment(kind: 'mailbox' | 'rule', target: string, on: boolean): Promise<CourtProfile & { changed: boolean }> {
+    return this.json('/court/profile/attachments', { method: 'PUT', body: JSON.stringify({ kind, target, on }) });
+  }
+
+  async courtFax(jobId: string): Promise<{ court: CourtFax | null }> {
+    return this.json(`/court/faxes/${id(jobId)}`);
+  }
+
+  async downloadCourtRecord(jobId: string): Promise<Blob> {
+    const res = await this.send(`/court/faxes/${id(jobId)}/record`);
+    if (!res.ok) throw new AdminAPIError(res.status, res.statusText, await readDetail(res));
+    return res.blob();
+  }
+
+  async courtDeadline(deadline: string): Promise<{ deadline: string; extended: string; sentence: string }> {
+    return this.json('/court/deadline', { method: 'POST', body: JSON.stringify({ deadline }) });
+  }
+
   async downloadJobPdf(jobId: string): Promise<Blob> {
     const res = await this.send(`/admin/fax-jobs/${id(jobId)}/pdf`);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
@@ -938,7 +962,7 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient; coverInHeader?: boolean } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean; court?: string } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -957,6 +981,8 @@ class AdminAPIClient {
     if (options.sendBy) formData.append('send_by', options.sendBy);
     // The first page is a cover sheet whose notice goes in the header notice instead (header_notice.py).
     if (options.coverInHeader) formData.append('cover_in_header', 'true');
+    // The California court profile: the case details as one JSON object (court/cover.py); never a payment card.
+    if (options.court) formData.append('court', options.court);
     // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
     for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 

@@ -90,6 +90,7 @@ from .routing.renewal_http import router as routing_renewal_router
 from .routing.schedule_http import router as routing_schedule_router
 from .routing.guard_http import router as routing_dialing_router
 from .header_notice_http import router as header_notice_router
+from .court.http import router as court_router
 from .routing.stations_http import router as routing_stations_router
 from .public_test_lines_http import router as test_lines_router
 from .routing.after_answer_http import router as routing_after_answer_router
@@ -243,6 +244,7 @@ app.include_router(routing_renewal_router)
 app.include_router(routing_schedule_router)
 app.include_router(routing_dialing_router)
 app.include_router(header_notice_router)
+app.include_router(court_router)
 app.include_router(routing_stations_router)
 app.include_router(test_lines_router)
 app.include_router(routing_after_answer_router)
@@ -1948,6 +1950,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                 "goes in the header notice printed on every page instead, so that "
                                                 "page is not sent. Needs a header notice for your organization or "
                                                 "the mailbox; a recipient that needs a cover sheet still gets it."),
+                   court: Optional[str] = Form(None, max_length=20000, description="Send under the California court "
+                                               "profile: the case details as one JSON object (purpose file or serve, "
+                                               "county, case_number, plaintiff, defendant, documents with title and "
+                                               "pages, and the sender). Filing adds the MC-005 cover sheet; the pages "
+                                               "otherwise go exactly as given, by a fax call."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1986,6 +1993,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     if cover_in_header:
         # Only when chosen, so every earlier request keeps its fingerprint (header_notice.py).
         routing_intent['cover_in_header'] = True
+    if court is not None and court.strip():
+        # The case details are document content: only their one-way digest goes in the request's fingerprint.
+        routing_intent['court'] = hashlib.sha256(court.strip().encode('utf-8')).hexdigest()
     # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
     # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
@@ -2082,11 +2092,23 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         prepared.cleanup()
         if patient is not None:
             fax_patient.remove(settings.fax_data_dir, job_id)
+    # The California court profile (court/acceptance.py): the case details checked, "By fax" below each title, the
+    # MC-005 cover first when filing. A court fax gets no header notice: its pages go exactly as given.
+    from .court import acceptance as court_acceptance
+    try:
+        court_plan = await run_lifecycle_step(lambda: court_acceptance.plan(
+            manager.store.engine, court, mailbox=mailbox, pdf_path=prepared.pdf_path, pages=prepared.pages))
+        if court_plan is not None:
+            from starlette.concurrency import run_in_threadpool as _in_thread
+            prepared = await _in_thread(court_acceptance.apply, prepared, court_plan)
+    except court_acceptance.CourtRefused as error:
+        discard()
+        raise HTTPException(400, detail=str(error)) from None
     # The header notice, and a cover sent as that notice (header_notice.py): applied before the sending rules,
     # prices and approvals read the pages, so they all count the pages that are sent.
     from . import header_notice
     try:
-        notice_plan = await run_lifecycle_step(lambda: header_notice.plan(
+        notice_plan = None if court_plan is not None else await run_lifecycle_step(lambda: header_notice.plan(
             manager.store.engine, mailbox=mailbox, destination=destination, cover_requested=cover_in_header,
             pages=prepared.pages))
         if notice_plan is not None:
@@ -2109,12 +2131,18 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         rules_plan = await run_lifecycle_step(lambda: rules_acceptance.prepare(
             manager.store.engine, revision, actor=identity.actor, destination=destination, pages=prepared.pages,
             size_bytes=_file_size(pdf_path), mailbox=mailbox, workflow=workflow, labels=labels, urgent=urgent,
-            by_call=send_by_call, document_sha256=_document_sha256(pdf_path)))
+            by_call=send_by_call, document_sha256=_document_sha256(pdf_path), court=court_plan is not None))
     except Exception:
         discard()
         logging.getLogger(__name__).warning('Sending rules could not be read; the fax was not accepted.')
         raise HTTPException(503, detail='Faxbot could not read your sending rules, so the fax was not accepted. '
                                         'Try again in a moment.') from None
+    # A routing rule the court profile is attached to needs the case details too (court/acceptance.py).
+    court_rule = await run_lifecycle_step(lambda: court_acceptance.required_by_rule(
+        manager.store.engine, rules_plan.decision))
+    if court_rule is not None and court_plan is None:
+        discard()
+        raise HTTPException(400, detail=court_acceptance.NEEDS_DETAILS_RULE.format(rule=court_rule))
     if engine_down and _engine_down_refuses(rules_plan):
         discard()
         raise HTTPException(503, detail=ami_client.engine_message())
@@ -2123,6 +2151,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         if not rules_acceptance.first_route_is_bound(rules_plan.decision, rules_plan.bound_key):
             # Sending together needs the fax to go first over its own trunk; a held fax starts waiting when released.
             raise LookupError('not the first route')
+        if court_plan is not None:
+            raise LookupError('a court fax has its own call and its own transmission record')
         hold = await run_lifecycle_step(lambda: batching_acceptance.hold_plan(
             manager.store.engine, revision, profile, destination=destination, pages=prepared.pages,
             actor=identity.actor, send_now=send_now or urgent or (
@@ -2160,6 +2190,8 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             # The time the sender needs it sent by (routing/schedule.py).
             **({'send_by': send_by_at} if send_by_at is not None else {}),
         }, request_identity=request_identity, also=codec_combine(
+            None if court_plan is None else court_acceptance.recorder(
+                job_id, court_plan, 'rule' if court_rule is not None and court_plan.source == 'sender' else None),
             rules_acceptance.recorder(rules_plan, job_id, identity.actor, control=access.control),
             None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor),
             None if notice_plan is None else header_notice.recorder(job_id, notice_plan))))

@@ -1755,3 +1755,8 @@ from .destinations import destinations as _destinations  # noqa: E402
 
 # Its home is faxbot delivery providers destinations (cli/nouns.py); this older path still works.
 rules.add_typer(_destinations, name='destinations', hidden=True)
+
+# The California court profile (court/): attached to a mailbox or a routing rule, beside the rules (N26).
+from .court import court as _court  # noqa: E402
+
+rules.add_typer(_court, name='court')
