@@ -125,7 +125,11 @@ def parse_capabilities(value):
 
     Keys this release does not know are ignored, so a newer partner can add one (for example which encoded-page
     layouts its decoder reads) without this installation refusing its whole statement; the known keys are still
-    required and checked. This release never sends a new key itself."""
+    required and checked. This release never sends a new key itself.
+
+    Because a release ignores keys newer than itself, a new key may only offer something (a capability the
+    receiver may use). A restriction, a refusal or anything security depends on must never live only in a new
+    key: an older partner would silently go on without it."""
     if (not isinstance(value, dict) or not CAPABILITY_KEYS <= set(value)
             or type(value['fax_images']) is not bool or type(value['peer_calls']) is not bool
             or ('own_engine' in value and type(value['own_engine']) is not bool)):
