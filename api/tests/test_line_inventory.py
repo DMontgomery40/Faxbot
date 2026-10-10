@@ -234,6 +234,10 @@ def test_a_line_matches_only_by_its_wire_center_and_distribution_area():
     missing = inventory.match(_row(wire_center=None), [], TODAY)
     assert missing['state'] == 'no_wire_center' and "customer service record" in missing['sentence']
     assert inventory.match(_row(wire_center=None, line_use='alarm'), [], TODAY) is None
+    # Outside the US, or before any AT&T list is imported, nothing asks for an AT&T wire center.
+    assert inventory.match(_row(number='+33142000000', carrier=None, wire_center=None), [], TODAY) is None
+    assert inventory.match(_row(wire_center=None, country='CA'), [], TODAY) is None
+    assert inventory.match(_row(wire_center=None), [], TODAY, att_list=False) is None
     assert inventory.carrier_key('Illinois Bell Telephone') == 'att' and inventory.carrier_key('Lumen') == 'lumen'
     padded = inventory.match(_row(wire_center='ZZTMNDD', distribution_area='1101ZA'), _for('ZZTMNDD'), TODAY)
     assert padded['state'] == 'listed' and inventory._wire_center('ALGNILAQDS0') == 'ALGNILAQ'

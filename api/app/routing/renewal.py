@@ -275,7 +275,7 @@ def _parallel(engine, numbers, since, now):
             'sent': sum(sent_by.values()), 'sent_delivered': sent_by.get('SUCCESS', 0)}
 
 
-def page(engine, values, system, *, today=None, now=None):
+def page(engine, values, system, *, today=None, now=None, loaded=None):
     """The renewal page for one system, in the order the administrator reads it."""
     from .channel_peak import report, system_calls
     from .database import utcnow
@@ -286,7 +286,7 @@ def page(engine, values, system, *, today=None, now=None):
     today = today or now.date()
     renewal = renewals_by_system(engine).get(system)
     zone = getattr(values, 'time_zone', '') if values is not None else ''
-    calls, licensed_imported, _, found_imports = system_calls(engine, system)
+    calls, licensed_imported, _, found_imports = loaded or system_calls(engine, system)
     licensed = (renewal or {}).get('licensed_channels') or licensed_imported
     sentences, result = [], {'system': system, 'renewal': None, 'channels': None, 'parallel': None, 'left': None}
     if renewal:
@@ -326,22 +326,29 @@ def page(engine, values, system, *, today=None, now=None):
         sentences.append('No call records from this system yet: import them to see the channels it really needed.')
     parallel_numbers = json.loads(renewal['parallel_numbers']) if renewal and renewal['parallel_numbers'] else []
     since = _day(renewal['parallel_since']) if renewal else None
+    on_faxbot = {number for number, _ in placed_numbers(values)} if values is not None else set()
     if parallel_numbers:
         handled = _parallel(engine, parallel_numbers, since, now)
         start = f' since {_when(since)}' if since else ''
+        # Sent faxes are counted for the whole installation: a sent fax does not record which number it went from.
         sentence = (f"Faxbot runs beside it on {len(parallel_numbers)} "
                     f"{'number' if len(parallel_numbers) == 1 else 'numbers'}: it received {handled['received']:,} "
                     f"{'fax' if handled['received'] == 1 else 'faxes'} on them{start} "
-                    f"({handled['received_ok']:,} complete), and sent {handled['sent']:,} "
-                    f"({handled['sent_delivered']:,} delivered).")
+                    f"({handled['received_ok']:,} complete). Faxbot sent {handled['sent']:,} "
+                    f"{'fax' if handled['sent'] == 1 else 'faxes'} in all{start} ({handled['sent_delivered']:,} "
+                    'delivered).')
+        missing = [number for number in parallel_numbers if number not in on_faxbot]
+        if missing:
+            sentence += (f" {len(missing)} of these numbers {'is' if len(missing) == 1 else 'are'} on no Faxbot "
+                         f"account yet, so faxes to {'it' if len(missing) == 1 else 'them'} still reach only the old "
+                         'server.')
         sentences.append(sentence)
-        result['parallel'] = {'numbers': [{'number': number, 'display': shown_number(number)}
-                                          for number in parallel_numbers],
+        result['parallel'] = {'numbers': [{'number': number, 'display': shown_number(number),
+                                           'on_faxbot': number in on_faxbot} for number in parallel_numbers],
                               'since': since.isoformat() if since else None, **handled, 'sentence': sentence}
     else:
         sentences.append('No numbers run in parallel yet: choose a few of its numbers for Faxbot to receive on '
                          'first.')
-    on_faxbot = {number for number, _ in placed_numbers(values)} if values is not None else set()
     routes = routes_for(engine, system)
     basis = 'routing'
     if not routes:
@@ -377,10 +384,15 @@ def page(engine, values, system, *, today=None, now=None):
 
 
 def view(engine, values, *, today=None, now=None):
-    """A page for every system with a renewal or imported call records."""
-    from .channel_peak import imports
-    names = list(dict.fromkeys([*renewals_by_system(engine), *(row['system'] for row in imports(engine))]))
-    return {'pages': [page(engine, values, name, today=today, now=now) for name in names],
+    """A page for every system with a renewal or imported call records, and the channel report beside them; each
+    system's calls are read once."""
+    from .channel_peak import imports, system_calls, view as channel_view
+    renewals = renewals_by_system(engine)
+    names = list(dict.fromkeys([*renewals, *(row['system'] for row in imports(engine))]))
+    loaded = {name: system_calls(engine, name) for name in names}
+    licensed_for = {name: row['licensed_channels'] for name, row in renewals.items() if row['licensed_channels']}
+    return {'pages': [page(engine, values, name, today=today, now=now, loaded=loaded[name]) for name in names],
+            'channels': channel_view(engine, values, now=now, loaded=loaded, licensed_for=licensed_for),
             'sentence': None if names else ('No fax server renewal yet. Enter the renewal of the fax server Faxbot '
                                             'could replace, and import its call records.'),
             'help': {'routes': ROUTES_HELP}, 'reference': list(REFERENCE), 'note': ADVICE_ONLY,

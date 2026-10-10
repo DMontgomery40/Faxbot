@@ -529,6 +529,16 @@ def carrier_lists(engine):
     return sorted(found, key=lambda item: (item['carrier'], item['kind']))
 
 
+def _has_att(engine):
+    """Whether one of AT&T's lists is imported, so a US line without a wire center can be asked for one."""
+    from .database import read_connection
+    areas = _tables(engine)['carrier_service_areas']
+    with read_connection(engine) as connection:
+        return connection.execute(sa.select(areas.c.id).where(areas.c.carrier == ATT,
+                                                                areas.c.superseded_at.is_(None)).limit(1))\
+            .first() is not None
+
+
 def _areas_by_wire_center(engine, wire_centers):
     from .database import read_connection
     areas = _tables(engine)['carrier_service_areas']
@@ -552,17 +562,19 @@ def _state(day, today):
     return 'passed' if left < 0 else 'soon' if left <= WARN_DAYS else 'later'
 
 
-def match(line, rows, today):
+def match(line, rows, today, *, att_list=True):
     """What the carrier lists say about one inventory line (a dict from ``inventory_rows``), or None.
 
     ``state`` is ``listed`` (its wire center is listed whole, or with its distribution area), ``possible`` (AT&T
-    lists only some distribution areas of its wire center and the line has none), ``no_wire_center`` (an AT&T line,
-    or one with no carrier, that has no wire center) or None when nothing matches.
+    lists only some distribution areas of its wire center and the line has none), ``no_wire_center`` (a US line
+    that is AT&T's or names no carrier, has no wire center, while AT&T's list is imported: ``att_list``) or None
+    when nothing matches.
     """
     key = carrier_key(line.get('carrier'))
     wire = _wire_center(line.get('wire_center'))
     if wire is None:
-        if key in (ATT, None) and line.get('line_use') in ('fax', 'unknown'):
+        us = str(line.get('number') or '').startswith('+1') and line.get('country') in (None, 'US')
+        if att_list and us and key in (ATT, None) and line.get('line_use') in ('fax', 'unknown'):
             return {'state': 'no_wire_center', 'kind': None, 'sentence': (
                 "Faxbot cannot check this line against AT&T's list without its wire center: add the 8-character "
                 "code from AT&T's customer service record for the line to the inventory.")}
@@ -636,6 +648,14 @@ def _date_item(kind, day, today, sentence, *, source, source_url=None, source_da
             'source': source, 'source_url': source_url, 'source_date': source_date}
 
 
+def _matches(engine, rows, today):
+    """{number: match} for inventory rows, reading the lists once."""
+    areas = _areas_by_wire_center(engine, [_wire_center(row['wire_center']) for row in rows])
+    att = _has_att(engine)
+    return {row['number']: match(row, areas.get(_wire_center(row['wire_center'])) or [], today, att_list=att)
+            for row in rows}
+
+
 def line_dates(engine, *, today, rows=None, matches=None):
     """{number: [dated items, earliest first]}: carrier letters, contract ends and carrier-list matches."""
     from . import closures
@@ -656,8 +676,7 @@ def line_dates(engine, *, today, rows=None, matches=None):
     if rows is None:
         rows = inventory_rows(engine)
     if matches is None:
-        areas = _areas_by_wire_center(engine, [_wire_center(row['wire_center']) for row in rows])
-        matches = {row['number']: match(row, areas.get(_wire_center(row['wire_center'])) or [], today) for row in rows}
+        matches = _matches(engine, rows, today)
     for number, found_match in matches.items():
         if found_match and found_match['state'] == 'listed' and found_match.get('effective_on'):
             found.setdefault(number, []).append(_date_item(
@@ -674,8 +693,7 @@ def view(engine, values=None, *, today=None):
     from .receiving import shown_number
     today = today or datetime.utcnow().date()
     rows = inventory_rows(engine)
-    areas = _areas_by_wire_center(engine, [_wire_center(row['wire_center']) for row in rows])
-    matches = {row['number']: match(row, areas.get(_wire_center(row['wire_center'])) or [], today) for row in rows}
+    matches = _matches(engine, rows, today)
     dates = line_dates(engine, today=today, rows=rows, matches=matches)
     placed = _placed(values)
     lines = []
@@ -716,8 +734,7 @@ def plan_rows(engine, placed, *, today):
     """For the retirement plan: {number: dated items} and the inventory's dated fax lines no Faxbot account
     receives on (life-safety lines are left out: they need their own replacement)."""
     rows = inventory_rows(engine)
-    areas = _areas_by_wire_center(engine, [_wire_center(row['wire_center']) for row in rows])
-    matches = {row['number']: match(row, areas.get(_wire_center(row['wire_center'])) or [], today) for row in rows}
+    matches = _matches(engine, rows, today)
     dates = line_dates(engine, today=today, rows=rows, matches=matches)
     outside = [dict(row, monthly=_price(row)) for row in rows
                if row['number'] not in placed and row['line_use'] in ('fax', 'unknown') and dates.get(row['number'])]

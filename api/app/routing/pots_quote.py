@@ -159,24 +159,39 @@ def quotes(engine):
 # -- the counter-quote ---------------------------------------------------------------------------------------------
 
 def _trunk_carriers(values):
-    """The trunk presets to price the shared trunk at: your trunk's, else every carrier with a published number."""
+    """[(preset, trunk account key or None)] to price the shared trunk at, and whether they are your own trunks:
+    your trunks' presets, else every carrier with a published number price."""
     from .. import sip_trunk
     from .receiving import load_receiving_prices
-    presets = [getattr(trunk.values, 'sip_trunk_preset', '') for trunk in sip_trunk.trunk_accounts(values)] \
-        if values is not None else []
-    presets = [preset for preset in presets if preset]
-    if presets:
-        return list(dict.fromkeys(presets)), True
+    trunks = [(getattr(trunk.values, 'sip_trunk_preset', ''), trunk.key)
+              for trunk in sip_trunk.trunk_accounts(values)] if values is not None else []
+    trunks = [(preset, key) for preset, key in trunks if preset]
+    if trunks:
+        return list(dict.fromkeys(trunks)), True
     entries, cards = load_receiving_prices()
     found = {entry.get('carrier') for entry in entries if entry.get('kind') == 'number_rental'}
     found |= {str(card.get('provider_id'))[4:] for card in cards
               if str(card.get('provider_id', '')).startswith('sip-') and card.get('number_rental_monthly')}
-    return sorted(item for item in found if item), False
+    return [(item, None) for item in sorted(item for item in found if item)], False
 
 
-def _trunk_option(carrier, fax_lines, currency):
-    """What one shared trunk at ``carrier`` costs for the fax lines a month, or None when it publishes no number
-    price in ``currency``."""
+def _saved_cards(routes, carrier, account_key):
+    """(outbound card with a monthly fee, inbound card) you saved for the trunk account or its carrier, or None."""
+    if routes is None:
+        return None, None
+    identities = [item for item in dict.fromkeys([account_key, f'sip-{carrier}']) if item]
+    cards = routes.current_cards()
+    monthly = next((card for identity in identities for card in cards if card.provider_id == identity
+                    and card.direction == 'outbound' and card.monthly_fee_micros is not None), None)
+    inbound = next((card for identity in identities for card in cards if card.provider_id == identity
+                    and card.direction == 'inbound'), None)
+    return monthly, inbound
+
+
+def _trunk_option(carrier, fax_lines, currency, *, routes=None, account_key=None):
+    """What one shared trunk at ``carrier`` costs for the fax lines a month, or None when no number price is known in
+    ``currency``. A rate card you saved for the trunk (Costs) gives its monthly fee and its price per received minute
+    first, as trunk advice reads it; the carrier's published prices give the rest."""
     from .costs import money_text
     from .carriers import carrier_label
     from .receiving import carrier_prices
@@ -184,28 +199,41 @@ def _trunk_option(carrier, fax_lines, currency):
     rental = prices.rental.get('local')
     if rental is None or (prices.currency or 'USD') != currency:
         return None
-    numbers = rental * fax_lines
-    fixed = numbers + (prices.trunk_fee or 0)
+    saved_monthly, saved_inbound = _saved_cards(routes, carrier, account_key)
+    trunk_fee = prices.trunk_fee
+    if saved_monthly is not None and saved_monthly.currency == currency:
+        trunk_fee = saved_monthly.monthly_fee_micros
     per_minute = prices.per_minute.get('local')
+    if saved_inbound is not None and saved_inbound.currency == currency:
+        per_minute = saved_inbound
+    numbers = rental * fax_lines
+    fixed = numbers + (trunk_fee or 0)
     label = carrier_label(carrier)
     parts = [f"{fax_lines} {'number' if fax_lines == 1 else 'numbers'} at {money_text(rental, currency)} a month"]
-    if prices.trunk_fee is None:
+    if trunk_fee is None:
         parts.append(f'its trunk fee, which {label} does not publish')
-    elif prices.trunk_fee == 0:
+    elif trunk_fee == 0:
         parts.append('no trunk fee')
     else:
-        parts.append(f'a trunk fee of {money_text(prices.trunk_fee, currency)} a month')
-    sentence = (f"Faxbot can send and receive them on one shared trunk instead: at {label}'s published prices, "
-                f"{' and '.join(parts)}"
-                + (f", so {_cents(fixed, currency)} a month" if prices.trunk_fee is not None else '')
+        parts.append(f'a trunk fee of {money_text(trunk_fee, currency)} a month')
+    where = (f"at your rate card for {label} and its published number price" if saved_monthly or saved_inbound
+             else f"at {label}'s published prices")
+    sentence = (f"Faxbot can send and receive them on one shared trunk instead: {where}, {' and '.join(parts)}"
+                + (f", so {_cents(fixed, currency)} a month" if trunk_fee is not None else '')
                 + (f", plus {money_text(per_minute.per_minute_micros, currency)} a minute for each received call"
                    if per_minute is not None else ', plus the calls themselves') + '.')
-    return {'carrier': carrier, 'label': label, 'monthly_micros': fixed if prices.trunk_fee is not None else None,
-            'monthly': _cents(fixed, currency) if prices.trunk_fee is not None else None,
-            'trunk_fee_known': prices.trunk_fee is not None, 'sentence': sentence, 'sources': prices.sources}
+    sources = list(prices.sources)
+    for card in (saved_monthly, saved_inbound):
+        if card is not None:
+            sources.insert(0, {'label': f'Your rate card: {card.label}', 'source_url': card.source_url,
+                               'read_on': card.captured_on.date().isoformat() if card.captured_on else None})
+    return {'carrier': carrier, 'label': label, 'monthly_micros': fixed if trunk_fee is not None else None,
+            'monthly': _cents(fixed, currency) if trunk_fee is not None else None,
+            'trunk_fee_known': trunk_fee is not None, 'rate_card': bool(saved_monthly or saved_inbound),
+            'sentence': sentence, 'sources': sources}
 
 
-def counter_quote(engine, values, quote):
+def counter_quote(engine, values, quote, *, routes=None):
     """The counter-quote for one recorded quote, as sentences in reading order with the figures behind them."""
     from .costs import parse_amount
     from .inventory import inventory_rows
@@ -257,8 +285,8 @@ def counter_quote(engine, values, quote):
                 sentence += '.'
         sentences.append(sentence)
         carriers, own = _trunk_carriers(values)
-        options = [option for option in (_trunk_option(carrier, len(fax), currency) for carrier in carriers)
-                   if option is not None]
+        options = [option for option in (_trunk_option(carrier, len(fax), currency, routes=routes, account_key=key)
+                                         for carrier, key in carriers) if option is not None]
         if options:
             option = options[0] if own else min(options, key=lambda item: (
                 item['monthly_micros'] is None, item['monthly_micros'] or 0))
@@ -273,7 +301,7 @@ def counter_quote(engine, values, quote):
                                  'them in the order, before the calls.')
         else:
             sentences.append(f'No carrier Faxbot knows publishes a price for a number in {currency}, so the shared '
-                             'trunk cannot be priced here; enter your carrier\'s rate card under Costs.')
+                             'trunk cannot be priced here.')
         sentences.append('Move each fax number to the trunk with its move plan (Numbers, Advice and moves) before the '
                          'copper line goes.')
     if keep:
@@ -287,9 +315,9 @@ def counter_quote(engine, values, quote):
     return result
 
 
-def view(engine, values):
+def view(engine, values, *, routes=None):
     """Every recorded quote with its counter-quote, and the published prices to start from."""
-    found = [counter_quote(engine, values, quote) for quote in quotes(engine).values()]
+    found = [counter_quote(engine, values, quote, routes=routes) for quote in quotes(engine).values()]
     return {'quotes': found, 'published': list(PUBLISHED), 'note': ADVICE_ONLY,
             'sentence': None if found else ('No POTS-replacement quote yet. Enter the price per line from the quote, '
                                             'or start from a published price.')}

@@ -25,15 +25,15 @@ def client(isolated_installation, monkeypatch):
 
 
 def test_import_calls_record_a_renewal_and_read_its_page(client):
-    assert client.get('/routing/channels', headers=ADMIN).json()['systems'] == []
-    assert client.get('/routing/renewals', headers=ADMIN).json()['pages'] == []
+    empty = client.get('/routing/renewals', headers=ADMIN).json()
+    assert empty['pages'] == [] and empty['channels']['systems'] == []
     imported = client.post('/routing/channels/files', headers=ADMIN,
                            data={'system': 'RightFax at HQ', 'licensed': '8', 'time_zone': 'UTC'},
                            files={'file': ('audit.log', RIGHTFAX_3.encode(), 'text/plain')})
     assert imported.status_code == 200, imported.text
     body = imported.json()
     assert (body['imported'], body['format'], body['skipped_count']) == (3, 'rightfax', 1)
-    system = body['systems'][0]
+    system = body['channels']['systems'][0]
     assert system['report']['never_used'] == 5 and system['imports'][0]['calls'] == 3
     renews = (date.today() + timedelta(days=60)).isoformat()
     saved = client.put('/routing/renewals', headers=ADMIN, json={
@@ -48,7 +48,7 @@ def test_import_calls_record_a_renewal_and_read_its_page(client):
     assert routed.status_code == 200 and routed.json()['imported'] == 3 and routed.json()['skipped_count'] == 1
     assert routed.json()['pages'][0]['left']['count'] == 3
     removed = client.delete(f"/routing/channels/imports/{system['imports'][0]['id']}", headers=ADMIN)
-    assert removed.status_code == 200 and removed.json()['systems'] == []
+    assert removed.status_code == 200 and removed.json()['channels']['systems'] == []
     assert client.delete(f"/routing/channels/imports/{system['imports'][0]['id']}", headers=ADMIN).status_code == 404
     withdrawn = client.post('/routing/renewals/remove', headers=ADMIN, json={'system': 'RightFax at HQ'})
     assert withdrawn.status_code == 200

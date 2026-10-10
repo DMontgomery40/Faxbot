@@ -1135,12 +1135,28 @@ class AdminAPIClient {
     return this.json('/routing/closures/files', { method: 'POST', body: form });
   }
 
-  // Sends one file with its form fields (the line inventory, a carrier's list); empty fields are left out.
-  async postFile<T>(path: string, file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+  // Uploads for the line inventory, carrier lists, call records and number routing; empty fields are left out.
+  private fileForm(file: File, fields: Record<string, string | undefined>): FormData {
     const form = new FormData();
     form.append('file', file);
     Object.entries(fields).forEach(([key, value]) => { if (value) form.append(key, value); });
-    return this.json(path, { method: 'POST', body: form });
+    return form;
+  }
+
+  async importLineInventory<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/line-inventory/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importCarrierList<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/carrier-lists/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importChannelCalls<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/channels/files', { method: 'POST', body: this.fileForm(file, fields) });
+  }
+
+  async importRenewalRoutes<T>(file: File, fields: Record<string, string | undefined> = {}): Promise<T> {
+    return this.json('/routing/renewals/routes', { method: 'POST', body: this.fileForm(file, fields) });
   }
 
   // What a fax of `pages` pages to `to` would take and cost on each sending route; nothing is sent.

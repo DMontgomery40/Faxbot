@@ -45,6 +45,28 @@ def test_the_counter_quote_takes_fax_lines_out_and_prices_one_shared_trunk(datab
     assert found['trunk']['sources'][0]['read_on'] == '2026-10-05'
 
 
+def test_a_rate_card_you_saved_for_the_trunk_comes_before_published_prices(database):  # noqa: F811
+    from api.app.routing.costs import RateCard, parse_amount
+    from api.app.routing.store import RouteStore
+    upgrade_schema(database)
+    _inventory(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    routes.replace_cards([
+        RateCard(None, 'sip', 'outbound', 'Telnyx under contract', 'USD', parse_amount('0.005'), 0, 0, 60, 60,
+                 'https://example.com/contract.pdf', datetime(2026, 9, 1), monthly_fee_micros=parse_amount('20')),
+        RateCard(None, 'sip', 'inbound', 'Telnyx received', 'USD', parse_amount('0.004'), 0, 0, 60, 60,
+                 'https://example.com/contract.pdf', datetime(2026, 9, 1))])
+    pots_quote.record_published(database, 'ooma-airdial', lines_quoted=7)
+    [found] = pots_quote.view(database, _values(), routes=routes)['quotes']
+    assert found['trunk']['rate_card'] and found['trunk']['monthly'] == '$25.00'
+    assert found['sentences'][2] == ('Faxbot can send and receive them on one shared trunk instead: at your rate card '
+                                     'for Telnyx and its published number price, 5 numbers at $1.00 a month and a '
+                                     'trunk fee of $20.00 a month, so $25.00 a month, plus $0.004 a minute for each '
+                                     'received call.')
+    assert found['trunk']['sources'][0]['label'].startswith('Your rate card: Telnyx')
+    assert found['net_monthly'] == '$174.75'
+
+
 def test_without_a_trunk_the_cheapest_published_carrier_is_shown_and_unknown_fees_are_said(database):  # noqa: F811
     upgrade_schema(database)
     _inventory(database)

@@ -15,7 +15,7 @@ const CHANNELS: ChannelsView = {
     imports: [{ id: 'import-1', format_label: 'RightFax DocTransport audit log', file_name: 'audit.log', calls: 3 }] }],
 };
 const RENEWALS: RenewalsView = {
-  sentence: null, help: { routes: 'A CSV with the columns number, user, email and cover sheet.' },
+  sentence: null, channels: CHANNELS, help: { routes: 'A CSV with the columns number, user, email and cover sheet.' },
   note: 'Faxbot only advises: it never cancels a renewal, changes a licence or contacts a vendor.',
   pages: [{ system: 'RightFax at HQ', renewal: { state: 'review', source_url: null },
     sentences: ['RightFax 22.2 renews on 31 May 2027 for $26,756.71: 82 days left to decide.',
@@ -28,8 +28,7 @@ const RENEWALS: RenewalsView = {
 
 describe('Fax server renewal', () => {
   it('reads the one page, the busy hours and the published figures beside it', async () => {
-    server.use(http.get('/routing/renewals', () => HttpResponse.json(RENEWALS)),
-      http.get('/routing/channels', () => HttpResponse.json(CHANNELS)));
+    server.use(http.get('/routing/renewals', () => HttpResponse.json(RENEWALS)));
     let counted: number | null = null;
     render(<FaxServerRenewal client={client()} canWrite={false} onCount={(count) => { counted = count; }} />);
     const section = await screen.findByTestId('fax-server-renewal');
@@ -46,13 +45,14 @@ describe('Fax server renewal', () => {
   it('saves a renewal with its parallel numbers and leaves an imported file out', async () => {
     const sent: unknown[] = [];
     const removed: string[] = [];
-    server.use(http.get('/routing/renewals', () => HttpResponse.json({ ...RENEWALS, pages: [] })),
-      http.get('/routing/channels', () => HttpResponse.json(CHANNELS)),
+    const withdrawn: unknown[] = [];
+    server.use(http.get('/routing/renewals', () => HttpResponse.json(sent.length ? RENEWALS : { ...RENEWALS, pages: [] })),
       http.put('/routing/renewals', async ({ request }) => { sent.push(await request.json()); return HttpResponse.json(RENEWALS); }),
       http.delete('/routing/channels/imports/:id', ({ params }) => {
         removed.push(String(params.id));
         return HttpResponse.json({ ...CHANNELS, systems: [] });
-      }));
+      }),
+      http.post('/routing/renewals/remove', async ({ request }) => { withdrawn.push(await request.json()); return HttpResponse.json(RENEWALS); }));
     render(<FaxServerRenewal client={client()} canWrite />);
     fireEvent.click(await screen.findByRole('button', { name: 'Enter a renewal' }));
     const dialog = await screen.findByRole('dialog');
@@ -69,14 +69,17 @@ describe('Fax server renewal', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: 'Leave audit.log out' }));
     await waitFor(() => expect(removed).toEqual(['import-1']));
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw the RightFax at HQ renewal' }));
+    await waitFor(() => expect(withdrawn).toEqual([{ system: 'RightFax at HQ' }]));
+    expect((await screen.findByTestId('fax-server-renewal')).textContent).toContain('Renewal withdrawn.');
   });
 
   it('imports call records for a named system', async () => {
     const fields: Array<Record<string, string>> = [];
-    server.use(http.post('/routing/channels/files', async ({ request }) => {
+    server.use(http.get('/routing/renewals', () => HttpResponse.json(RENEWALS)), http.post('/routing/channels/files', async ({ request }) => {
       const form = await request.formData();
       fields.push(Object.fromEntries([...form.entries()].filter(([key]) => key !== 'file').map(([key, value]) => [key, String(value)])));
-      return HttpResponse.json({ ...CHANNELS, imported: 3, skipped_count: 1 });
+      return HttpResponse.json({ ...RENEWALS, imported: 3, skipped_count: 1 });
     }));
     render(<FaxServerRenewal client={client()} canWrite />);
     fireEvent.click(await screen.findByRole('button', { name: 'Import call records' }));

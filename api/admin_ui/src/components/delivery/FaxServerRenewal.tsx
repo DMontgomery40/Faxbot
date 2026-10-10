@@ -42,6 +42,8 @@ interface RenewalPage {
 
 export interface RenewalsView {
   pages: RenewalPage[];
+  // The channel report, read with the pages so each system's calls are read once.
+  channels: ChannelsView;
   sentence: string | null;
   help: { routes: string };
   note: string;
@@ -60,7 +62,7 @@ function usable<T>(value: unknown, key: string): value is T {
   return Boolean(value && Array.isArray((value as Record<string, unknown>)[key]));
 }
 
-function ImportCalls({ client, onDone }: { client: AdminAPIClient; onDone: (next: ChannelsView, message: string) => void }) {
+function ImportCalls({ client, onDone }: { client: AdminAPIClient; onDone: (next: RenewalsView, message: string) => void }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [system, setSystem] = useState('');
@@ -74,8 +76,8 @@ function ImportCalls({ client, onDone }: { client: AdminAPIClient; onDone: (next
     setBusy(true);
     setError(null);
     try {
-      const next = await client.postFile<ChannelsView & { imported: number; skipped_count: number }>(
-        '/routing/channels/files', file, { system: system.trim(), source_format: format || undefined,
+      const next = await client.importChannelCalls<RenewalsView & { imported: number; skipped_count: number }>(
+        file, { system: system.trim(), source_format: format || undefined,
           licensed: licensed.trim() || undefined, time_zone: zone.trim() || undefined });
       setOpen(false);
       onDone(next, `Imported ${next.imported.toLocaleString()} calls.`
@@ -169,7 +171,7 @@ function ImportRoutes({ client, help, onDone }: { client: AdminAPIClient; help: 
     setBusy(true);
     setError(null);
     try {
-      const next = await client.postFile<RenewalsView & { imported: number }>('/routing/renewals/routes', file,
+      const next = await client.importRenewalRoutes<RenewalsView & { imported: number }>(file,
         { system: system.trim() });
       setOpen(false);
       onDone(next, `Imported ${next.imported.toLocaleString()} numbers.`);
@@ -201,16 +203,13 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
   client: AdminAPIClient; canWrite: boolean; onCount?: (count: number | null) => void;
 }) {
   const [renewals, setRenewals] = useState<RenewalsView | null>(null);
-  const [channels, setChannels] = useState<ChannelsView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const load = useCallback(async () => {
     try {
-      const [pages, systems] = await Promise.all([
-        client.call<unknown>({ method: 'GET', path: '/routing/renewals' }),
-        client.call<unknown>({ method: 'GET', path: '/routing/channels' })]);
-      setRenewals(usable<RenewalsView>(pages, 'pages') ? pages : null);
-      setChannels(usable<ChannelsView>(systems, 'systems') ? systems : null);
+      const pages = await client.call<unknown>({ method: 'GET', path: '/routing/renewals' });
+      setRenewals(usable<RenewalsView>(pages, 'pages') && usable<ChannelsView>((pages as RenewalsView).channels, 'systems')
+        ? pages : null);
     } catch (failure) {
       setError(failure);
       onCount?.(null);
@@ -218,18 +217,20 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
   }, [client, onCount]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (renewals && channels) onCount?.(renewals.pages.length + channels.systems.filter((item) => !item.own).length);
-  }, [renewals, channels, onCount]);
-  const leaveOut = async (id: string) => {
+    if (renewals) onCount?.(renewals.pages.length + renewals.channels.systems.filter((item) => !item.own).length);
+  }, [renewals, onCount]);
+  const write = async (request: { method: string; path: string; body?: unknown }, done: string) => {
     setError(null);
     try {
-      setChannels(await client.call<ChannelsView>({ method: 'DELETE', path: `/routing/channels/imports/${encodeURIComponent(id)}` }));
-      setRenewals(await client.call<RenewalsView>({ method: 'GET', path: '/routing/renewals' }));
+      await client.call<unknown>(request);
+      await load();
+      setMessage(done);
     } catch (failure) {
       setError(failure);
     }
   };
-  if (!renewals || !channels) return error ? <DeliveryError error={error} /> : null;
+  if (!renewals) return error ? <DeliveryError error={error} /> : null;
+  const channels = renewals.channels;
   return (
     <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }} data-testid="fax-server-renewal">
       <Typography variant="h6" component="h2">Fax server renewal</Typography>
@@ -245,6 +246,9 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
             </Typography>
           ))}
           {page.renewal?.source_url && <Link href={page.renewal.source_url} target="_blank" rel="noreferrer" variant="body2">The quote</Link>}
+          {canWrite && page.renewal && <Button size="small" aria-label={`Withdraw the ${page.system} renewal`}
+            onClick={() => void write({ method: 'POST', path: '/routing/renewals/remove', body: { system: page.system } },
+              'Renewal withdrawn.')}>Withdraw</Button>}
           {page.left && page.left.numbers.length > 0 && (
             <Typography variant="body2" color="text.secondary" mt={1}>
               Still to move: {page.left.numbers.slice(0, 20).map((item) => item.display
@@ -281,7 +285,8 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
             {item.imports.map((found) => (
               <Typography key={found.id} variant="body2" color="text.secondary">
                 {found.format_label}: {found.file_name || 'a file'}, {found.calls.toLocaleString()} calls
-                {canWrite && <Button size="small" onClick={() => void leaveOut(found.id)}
+                {canWrite && <Button size="small" onClick={() => void write({ method: 'DELETE',
+                  path: `/routing/channels/imports/${encodeURIComponent(found.id)}` }, 'File left out of the report.')}
                   aria-label={`Leave ${found.file_name || 'this file'} out`}>Leave out</Button>}
               </Typography>
             ))}
@@ -291,10 +296,7 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
       {canWrite && (
         <Stack direction="row" spacing={1} mt={2} flexWrap="wrap" useFlexGap>
           <EnterRenewal client={client} onDone={(next) => { setRenewals(next); setMessage('Renewal saved.'); }} />
-          <ImportCalls client={client} onDone={(next, text) => {
-            setChannels(next); setMessage(text);
-            void client.call<RenewalsView>({ method: 'GET', path: '/routing/renewals' }).then(setRenewals).catch(setError);
-          }} />
+          <ImportCalls client={client} onDone={(next, text) => { setRenewals(next); setMessage(text); }} />
           <ImportRoutes client={client} help={renewals.help.routes} onDone={(next, text) => { setRenewals(next); setMessage(text); }} />
         </Stack>
       )}

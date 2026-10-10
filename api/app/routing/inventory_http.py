@@ -130,7 +130,7 @@ async def pots_quotes(request: Request):
     from .pots_quote import view
     store = _store(request)
     values = _values(request)
-    return await _call(lambda: view(store.engine, values))
+    return await _call(lambda: view(store.engine, values, routes=store))
 
 
 @router.put('/pots-quotes', dependencies=[Depends(require_permission('settings:write'))])
@@ -154,7 +154,7 @@ async def record_pots_quote(payload: QuoteIn, request: Request, identity=Depends
                              actor=_who(store.engine, identity))
         except QuoteError as error:
             raise HTTPException(400, detail=str(error)) from None
-        return view(store.engine, values)
+        return view(store.engine, values, routes=store)
     return await _call(save)
 
 
@@ -170,5 +170,5 @@ async def remove_pots_quote(payload: QuoteName, request: Request, identity=Depen
             remove_quote(store.engine, payload.name, actor=_who(store.engine, identity))
         except QuoteError as error:
             raise HTTPException(404, detail=str(error)) from None
-        return view(store.engine, values)
+        return view(store.engine, values, routes=store)
     return await _call(save)

@@ -45,8 +45,8 @@ def channels(remove: str = typer.Option(None, '--remove', metavar='IMPORT',
     """Show how many calls your fax systems carried at once: at their peak, in 99 hours out of 100, and by hour of
     the day, with the licensed channels never needed."""
     api = state.api()
-    result = api.delete(f'/routing/channels/imports/{segment(remove.strip())}') if remove else \
-        api.get('/routing/channels')
+    result = (api.delete(f'/routing/channels/imports/{segment(remove.strip())}') if remove
+              else api.get('/routing/renewals'))['channels']
     state.out().result(result, lambda out: _channels(out, result))
 
 
@@ -81,7 +81,7 @@ def import_calls(file: Path = typer.Argument(..., metavar='FILE', exists=True, d
     def human(out):
         out.line(f"Imported {result['imported']:,} calls.")
         _skipped(out, result)
-        _channels(out, result)
+        _channels(out, result['channels'])
     state.out().result(result, human)
 
 

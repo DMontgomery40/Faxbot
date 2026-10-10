@@ -61,8 +61,8 @@ function usable(value: unknown): value is LineInventoryView {
   return Boolean(view && Array.isArray(view.lines) && Array.isArray(view.lists) && view.help && view.sources);
 }
 
-function ImportDialog({ client, title, button, path, help, kind, onDone }: {
-  client: AdminAPIClient; title: string; button: string; path: string; help: string; kind: 'inventory' | 'list';
+function ImportDialog({ client, title, button, help, kind, onDone }: {
+  client: AdminAPIClient; title: string; button: string; help: string; kind: 'inventory' | 'list';
   onDone: (next: Imported) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -83,7 +83,8 @@ function ImportDialog({ client, title, button, path, help, kind, onDone }: {
         date_order: dateOrder, carrier: carrier.trim() || undefined,
         kind: carrier.trim() ? listKind : undefined, file_date: fileDate || undefined,
         source_url: sourceUrl.trim() || undefined };
-      onDone(await client.postFile<Imported>(path, file, fields));
+      onDone(kind === 'inventory' ? await client.importLineInventory<Imported>(file, fields)
+        : await client.importCarrierList<Imported>(file, fields));
       setOpen(false);
     } catch (failure) {
       setError(failure);
@@ -207,9 +208,9 @@ export default function LineInventory({ client, canWrite }: { client: AdminAPICl
       {canWrite && (
         <Stack direction="row" spacing={1} mt={1}>
           <ImportDialog client={client} kind="inventory" title="Import your line inventory" button="Import line inventory"
-            path="/routing/line-inventory/files" help={view.help.inventory} onDone={done('lines')} />
+            help={view.help.inventory} onDone={done('lines')} />
           <ImportDialog client={client} kind="list" title="Import a carrier's list" button="Import carrier list"
-            path="/routing/carrier-lists/files" help={view.help.list} onDone={done('areas')} />
+            help={view.help.list} onDone={done('areas')} />
         </Stack>
       )}
       <Typography variant="body2" color="text.secondary" mt={1}>{view.note}</Typography>
