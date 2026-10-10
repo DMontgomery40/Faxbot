@@ -22,13 +22,14 @@ import TrunkAdvice from './TrunkAdvice';
 import NumberPlacement from './NumberPlacement';
 import SiteAdvice from './SiteAdvice';
 import FaxServerRenewal from './FaxServerRenewal';
+import PotsCounterQuote from './PotsCounterQuote';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal';
+  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal' | 'pots';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal'];
+  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal', 'pots'];
 
 // Each section's name, for the line that stands in for a section the address names that has nothing yet; the
 // same names as the savings map's advice cards.
@@ -38,6 +39,7 @@ const SECTION_TITLES: Record<Section, string> = {
   partners: 'Partner candidates', discovery: 'Recipients that run Faxbot', tollFree: 'Toll-free numbers on file',
   pages: 'Time lighter shading would save', relays: 'Partners that could relay', trunks: 'Your trunks compared',
   numbers: 'Where each number should live', sites: 'Calls by state', renewal: 'Fax server renewal',
+  pots: 'Fax lines in a POTS-replacement order',
 };
 
 // The element id of one section's anchor.
@@ -142,6 +144,9 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
         </Anchor>
         <Anchor section="renewal" focus={focus} count={counts.renewal}>
           <FaxServerRenewal client={client} canWrite={canWrite} onCount={callbacks.renewal} />
+        </Anchor>
+        <Anchor section="pots" focus={focus} count={counts.pots}>
+          <PotsCounterQuote client={client} canWrite={canWrite} onCount={callbacks.pots} />
         </Anchor>
       </Stack>
     </Box>

@@ -154,3 +154,54 @@ def import_routing(file: Path = typer.Argument(..., metavar='FILE', exists=True,
         _skipped(out, result)
         _pages(out, result)
     state.out().result(result, human)
+
+
+def _quotes(out, result):
+    if result.get('sentence'):
+        out.line(result['sentence'])
+    for quote in result.get('quotes') or []:
+        out.line(f"{quote['name']} at {quote['per_line']} a line a month"
+                 + (f" (from {quote['source_url']})" if quote.get('source_url') else '') + ':')
+        for sentence in quote['sentences']:
+            out.line(f'  {sentence}')
+    for item in result.get('published') or []:
+        out.line(f"Published price to start from (--published {item['id']}): {item['sentence']} {item['label']}, read "
+                 f"{local_date(item['read_on'])}: {item['source']}")
+    out.line(result.get('note') or '')
+
+
+@recommendations.command('pots', short_help='Take the fax lines out of a POTS-replacement order: the counter-quote.')
+def pots(name: str = typer.Option(None, '--name', metavar='PRODUCT', help='The product quoted, such as Ooma AirDial.'),
+         per_line: str = typer.Option(None, '--per-line', metavar='AMOUNT',
+                                      help='Its price per line a month, such as 39.95.'),
+         currency: str = typer.Option('USD', '--currency', metavar='CODE', help="The price's currency."),
+         term: int = typer.Option(None, '--term', min=1, max=120, metavar='MONTHS', help='The term in months.'),
+         lines: int = typer.Option(None, '--lines', min=1, max=100_000, metavar='LINES',
+                                   help='The lines the quote covers; your whole inventory when left out.'),
+         ports: int = typer.Option(None, '--ports', min=1, max=64, metavar='PORTS',
+                                   help='The analog ports on one device.'),
+         device_price: str = typer.Option(None, '--device-price', metavar='AMOUNT',
+                                          help='The one-time price of one device, if the quote has one.'),
+         source_url: str = typer.Option(None, '--source-url', metavar='URL', help='Where the price comes from.'),
+         source_date: str = typer.Option(None, '--source-date', metavar='DATE', help="The quote's date."),
+         published: str = typer.Option(None, '--published', metavar='ID',
+                                       help='Start from a published price Faxbot ships, such as ooma-airdial.'),
+         remove: bool = typer.Option(False, '--remove', help="Withdraw the product's quote.")):
+    """Show, for each POTS-replacement quote you entered, what taking the fax lines out of the order removes from it,
+    what one shared trunk costs for them instead, and which lines must stay. With --name and --per-line (or
+    --published), record a quote."""
+    api = state.api()
+    if remove:
+        if not name:
+            raise CliError('Name the product with --name.')
+        result = api.post('/routing/pots-quotes/remove', json={'name': name})
+    elif published or name:
+        if not published and not per_line:
+            raise CliError('Give the price per line a month with --per-line, or start from --published.')
+        result = api.put('/routing/pots-quotes', json={
+            'name': name or '', 'published': published, 'per_line': per_line or '', 'currency': currency,
+            'term_months': term, 'lines_quoted': lines, 'ports_per_device': ports, 'device_price': device_price or '',
+            'source_url': source_url, 'source_date': source_date})
+    else:
+        result = api.get('/routing/pots-quotes')
+    state.out().result(result, lambda out: _quotes(out, result))
