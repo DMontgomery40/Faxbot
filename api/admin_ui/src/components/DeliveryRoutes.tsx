@@ -8,6 +8,7 @@ import type { CarrierChargeStatus, Destination, DirectPartner, ProviderCosts, Ra
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from './access/AccessViews';
 import Destinations from './delivery/Destinations';
 import DirectPartners from './delivery/DirectPartners';
+import ExchangeRates from './delivery/ExchangeRates';
 import FindPartners from './delivery/FindPartners';
 import PlanBudgets from './delivery/PlanBudgets';
 import PlanAllocation from './delivery/PlanAllocation';
@@ -137,6 +138,7 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               <TollFreePrices items={tollFree} />
               <PlanBudgets client={client} canWrite={canWrite} />
               <PlanAllocation client={client} />
+              <ExchangeRates client={client} canWrite={canWrite} />
             </>)}
           {shows('partners') && part('partners',
             <>

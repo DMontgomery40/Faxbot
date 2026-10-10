@@ -69,7 +69,15 @@ def _background(app):
             # is read only while one is held.
             ('faxbot-power-release', repeat(_power_step(engine, delivery), interval=_power_interval(),
                                             initial_delay=15.0, warning='Faxes held while on battery could not be '
-                                                                        'checked.'))]
+                                                                        'checked.')),
+            # The ECB's reference exchange rates, read every few hours while that is on (exchange.py).
+            ('faxbot-exchange-rates', repeat(_exchange_step(engine), interval=900.0, initial_delay=60.0,
+                                             warning='Exchange rates could not be refreshed.'))]
+
+
+def _exchange_step(engine):
+    from .exchange import refresh_step
+    return lambda: refresh_step(engine)
 
 
 def _power_step(engine, delivery):
@@ -553,6 +561,11 @@ def _cost_view(cost):
         from .plan import decided_text
         view['route_explanation'] = (decided_text(cost.get('route'), cost['route_reason'])
                                      if cost['route_reason'] else None)
+    if cost.get('currency_comparison'):
+        # Its route was the cheapest once prices in different currencies were converted: the amounts and the rate
+        # as they were when it was chosen (exchange.sent_sentence).
+        view['route_explanation'] = cost['currency_comparison']
+    view.pop('currency_comparison', None)
     if cost.get('measured_choice') is None:
         view.pop('measured_choice', None)
     elif cost['measured_choice'].get('sentence'):
@@ -582,7 +595,14 @@ async def fax_cost(job_id: str, request: Request, identity=Depends(require_ident
     from .provenance import dialed_view
     # recipient_warning: what stored NPPES records said about the number when the fax was accepted (never a block).
     from .plan_allocation import explanation
-    return _cost_view(await _call(lambda: {**spending.job(job_id),
+
+    def found():
+        cost = spending.job(job_id)
+        if cost.get('route_reason') == 'cheapest_converted':
+            from .exchange import sent_sentence
+            cost['currency_comparison'] = sent_sentence(spending.routes.engine, job_id, cost.get('route'))
+        return cost
+    return _cost_view(await _call(lambda: {**found(),
                                            'dialed': dialed_view(spending.routes.engine, job_id),
                                            'recipient_warning': fax_warning(spending.routes.engine, job_id),
                                            'plan_allocation': explanation(spending.routes.engine, job_id),

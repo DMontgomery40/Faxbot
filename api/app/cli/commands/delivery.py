@@ -11,6 +11,7 @@ from .. import state
 from ..client import segment
 from ..errors import CliError, EXIT_FAILURE
 from ..output import cost_amount, local_time, money, text
+from . import exchange as exchange_commands
 
 routing = typer.Typer(help='Delivery routes, destinations, fax costs and rate cards.', no_args_is_help=True)
 intake = typer.Typer(help='The intake queue: received documents being delivered to email and other places.',
@@ -1372,6 +1373,8 @@ plans = typer.Typer(cls=_PlansGroup, help="Your plans: each plan's budget or all
                                           'setting a budget (budget), and the plans a fax service publishes '
                                           '(published, or name the service: faxbot savings plans efax).')
 plans.command('published')(routing_plans)
+# Exchange rates, shown on Prices & plans in the console (exchange.py).
+plans.add_typer(exchange_commands.rates, name='rates')
 
 
 def _day(value):

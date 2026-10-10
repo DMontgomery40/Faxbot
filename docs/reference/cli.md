@@ -870,6 +870,7 @@ $ faxbot savings plans [OPTIONS] COMMAND [ARGS]...
 * `show`: Show each plan&#x27;s normal-use budget or...
 * `allocation`: Show who gets each limited plan&#x27;s last...
 * `budget`: Set a plan&#x27;s monthly normal-use budget,...
+* `rates`: Exchange rates Faxbot compares prices in...
 
 #### `faxbot savings plans published`
 
@@ -943,6 +944,115 @@ $ faxbot savings plans budget [OPTIONS] {plan}
 * `--included-minutes COUNT`: Minutes the plan includes each month, or none.
 * `--commitment AMOUNT`: A monthly amount you have committed to spend, such as 50.
 * `--default`: Go back to Faxbot&#x27;s starting budget for this plan.
+* `--help`: Show this message and exit.
+
+#### `faxbot savings plans rates`
+
+Exchange rates Faxbot compares prices in different currencies with: the ECB reference rates and your own rates.
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: Show the exchange rates Faxbot compares...
+* `set`: Set your own rate for a currency pair,...
+* `clear`: Stop using your own rate for a currency...
+* `refresh`: Read the ECB reference rates now.
+* `reference`: Turn reading the ECB reference rates on or...
+
+##### `faxbot savings plans rates list`
+
+Show the exchange rates Faxbot compares prices with, and how old each may be.
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot savings plans rates set`
+
+Set your own rate for a currency pair, such as the one on your invoice; it is used instead of the ECB rate.
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates set [OPTIONS] {FROM} {TO} {RATE}
+```
+
+**Arguments**:
+
+* `FROM`: The currency one unit of which the rate is for, such as GBP.  [required]
+* `TO`: The currency the rate is in, such as USD.  [required]
+* `RATE`: How many TO one FROM is worth, such as 1.27.  [required]
+
+**Options**:
+
+* `--date YYYY-MM-DD`: The day the rate is for, such as the date on your invoice; today when left out.
+* `--note <str>`: Where the rate comes from, such as &quot;May invoice&quot;.
+* `--help`: Show this message and exit.
+
+##### `faxbot savings plans rates clear`
+
+Stop using your own rate for a currency pair; the ECB rate counts again.
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates clear [OPTIONS] {FROM} {TO}
+```
+
+**Arguments**:
+
+* `FROM`: One currency of the pair, such as GBP.  [required]
+* `TO`: The other currency, such as USD.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot savings plans rates refresh`
+
+Read the ECB reference rates now.
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates refresh [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot savings plans rates reference`
+
+Turn reading the ECB reference rates on or off (on by default).
+
+**Usage**:
+
+```console
+$ faxbot savings plans rates reference [OPTIONS] {on|off}
+```
+
+**Arguments**:
+
+* `on|off`: on reads the ECB reference rates; off stops reading them.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 ## `faxbot faxes`

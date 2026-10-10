@@ -41,9 +41,10 @@ REASON_TEXT = {
     'rule': 'Your sending rule chose this account first.',
     'plan_reserved': ("Your plan's last included pages or minutes go to faxes they save more on, so this fax goes by "
                       'the next cheapest route.'),
-    'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot kept your '
-                       'order between them and compared prices only within each currency.'),
-    'cheapest_converted': 'The cheapest route at the exchange rate you set.',
+    'mixed_currency': ('Your routes charge in different currencies and Faxbot has no current exchange rate between '
+                       'them, so it kept your order between them and compared prices only within each currency.'),
+    'cheapest_converted': ('The cheapest route that works reliably for this number, with prices in different '
+                           'currencies compared at a current exchange rate.'),
     'own_trunk_one_line': "Your own trunk can't call its own number with one line.",
 }
 
@@ -56,8 +57,8 @@ DECIDED_TEXT = {
     'own_number': 'This is one of your own fax numbers, so the fax went straight into Received without a phone call.',
     'plan_reserved': ("Your plan's last included pages or minutes went to faxes they saved more on, so Faxbot sent "
                       'this one by the next cheapest route.'),
-    'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot used your '
-                       'order between them instead of comparing the amounts.'),
+    'mixed_currency': ('Your routes charge in different currencies and Faxbot had no current exchange rate between '
+                       'them, so it used your order between them instead of comparing the amounts.'),
 }
 
 
@@ -91,7 +92,33 @@ def explain(choice, destination=None, dialed=None):
     return sentence
 
 
+def converted_clause(choice):
+    """'0.70 GBP, about 0.88 USD at the ECB rate of 9 October 2026' for a route whose price was compared in another
+    currency; '0.95 USD' for one compared in its own; None when its price was not compared across currencies."""
+    from .exchange import amount_text
+    if choice.compared_in is None or choice.estimated_cost_micros is None or not choice.currency:
+        return None
+    own = amount_text(choice.estimated_cost_micros, choice.currency)
+    if choice.currency == choice.compared_in or choice.conversion is None:
+        return own
+    return f'{own}, about {amount_text(choice.compared_as, choice.compared_in)} at {choice.conversion.phrase()}'
+
+
 def _explain(choice, destination=None):
+    if choice.reason == 'cheapest_converted' and choice.compared_in is not None:
+        clause = converted_clause(choice)
+        if clause is not None and choice.currency != choice.compared_in and choice.conversion is not None:
+            return f'The cheapest route that works reliably for this number: {clause}.'
+        if clause is not None and choice.conversion is not None:
+            # Its own price is in the currency the others were converted to.
+            return (f'The cheapest route that works reliably for this number: {clause}, with the other routes\' '
+                    f'prices converted to {choice.compared_in} at {choice.conversion.phrase()}.')
+    if choice.reason == 'alternative' and choice.compared_in is not None and choice.conversion is not None \
+            and choice.currency != choice.compared_in:
+        return f'Used if the routes above it are unavailable; it costs {converted_clause(choice)}.'
+    if choice.reason == 'mixed_currency' and choice.currency_note:
+        return (f'Your routes charge in different currencies and {choice.currency_note}, so Faxbot kept your order '
+                'between them and compared prices only within each currency.')
     if choice.reason == 'own_number' and destination:
         from .local import display_number
         return (f'{display_number(destination)} is one of your own fax numbers, so the fax goes straight into '
@@ -140,6 +167,42 @@ def _reserved(choices, prices):
             return ([replace(first, reason='plan_reserved')] + list(choices[1:]),
                     (hold, first.route.key, first.estimated_cost_micros))
     return choices, None
+
+
+def _currencies(candidates, prices, pages):
+    """The currencies the calling routes' known prices are in (as ``RoutePolicy.order`` reads them)."""
+    from .costs import estimate_cost
+    found = set()
+    for candidate in candidates:
+        if candidate.kind not in CALLING:
+            continue
+        price = (prices or {}).get(candidate.key)
+        micros = price.micros if price is not None else (
+            estimate_cost(candidate.card, pages) if candidate.card is not None else None)
+        currency = (price.currency if price is not None else None) or getattr(candidate.card, 'currency', None)
+        if micros is not None and currency:
+            found.add(currency)
+    return found
+
+
+def _with_conversions(choices, ranking):
+    """Each choice with the rate its price was compared through (``exchange.Conversion``), and the first route's
+    reason why money in several currencies was not compared, when it was not."""
+    from dataclasses import replace
+    if not ranking.conversions and not ranking.note:
+        return choices
+    used = next((ranking.conversions.get((choice.currency, choice.compared_in)) for choice in choices
+                 if choice.compared_in and choice.currency and choice.currency != choice.compared_in), None)
+    found = []
+    for choice in choices:
+        if choice.compared_in is not None:
+            conversion = ranking.conversions.get((choice.currency, choice.compared_in))
+            # A price already in the compared currency names the rate the others were converted at.
+            choice = replace(choice, conversion=conversion or used)
+        if choice.reason == 'mixed_currency' and ranking.note:
+            choice = replace(choice, currency_note=ranking.note)
+        found.append(choice)
+    return found
 
 
 def extra_routes(values, bound):
@@ -473,8 +536,12 @@ class RoutePlanner:
             else:
                 # Pinned when the fax was accepted; a rule that chose "cheapest" ranks only its own accounts.
                 preferred = pinned.envelope.preferred if pinned.automatic else None
+            # Prices in different currencies are compared through a current exchange rate (exchange.py); without
+            # one, money ranks only within each currency and the first route says why.
+            ranking = self._exchange(candidates, prices, pages, now)
             ordered = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
-                                   prices=prices, doubtful=incident)
+                                   prices=prices, doubtful=incident, exchange=ranking.rates)
+            ordered = _with_conversions(ordered, ranking)
             ordered, kept = _reserved(ordered, prices)
             return ordered, kept, ()
 
@@ -493,6 +560,14 @@ class RoutePlanner:
                          {key: number for key, number in dialed.items() if number != destination},
                          skipped=tuple(skipped), unreliable=unreliable, pinned=pinned, held=held,
                          hairpin=tuple(key for key in hairpin if any(c.route.key == key for c in choices)))
+
+    def _exchange(self, candidates, prices, pages, now=None):
+        """``exchange.Ranking`` for the currencies these routes charge in; empty (and nothing read) for one."""
+        from .exchange import Ranking, for_ranking
+        found = _currencies(candidates, prices, pages)
+        if len(found) < 2:
+            return Ranking()
+        return for_ranking(self.store.engine, found, today=(now.date() if now is not None else None))
 
     def _incidents(self, candidates):
         """Keys of provider candidates with an open route family incident on every transport they would use: a

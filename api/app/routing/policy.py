@@ -85,6 +85,15 @@ class RouteChoice:
     # ``cheapest_delivered`` how many routes were compared.
     delivered: object = None
     compared: int = 0
+    # The currency of ``estimated_cost_micros``; and when routes in several currencies were compared through an
+    # exchange rate, the amount it was compared as (``compared_as`` micros of ``compared_in``). The estimate itself
+    # always stays in its own currency. ``conversion`` (``exchange.Conversion``) and ``currency_note`` (why money in
+    # several currencies was not compared) are filled in by the planner, which knows where its rates came from.
+    currency: str | None = None
+    compared_as: int | None = None
+    compared_in: str | None = None
+    conversion: object = None
+    currency_note: str | None = None
 
 
 def _rate(exchange, currency, base):
@@ -155,15 +164,37 @@ class RoutePolicy:
             currencies[candidate.key] = ((price.currency if price is not None else None)
                                          or getattr(candidate.card, 'currency', None))
         chosen = []
+        compared_in = None
 
         def take(candidate, reason, compared=0):
+            known_as = converted.get(candidate.key)
             chosen.append(RouteChoice(candidate, reason, estimates[candidate.key], delivered.get(candidate.key),
-                                      compared))
+                                      compared, currency=currencies.get(candidate.key),
+                                      compared_as=round(known_as) if known_as is not None else None,
+                                      compared_in=compared_in if known_as is not None else None))
 
         local = next((c for c in candidates if c.kind == 'local'), None)
         direct = next((c for c in candidates if c.kind == 'direct'), None)
         providers = [c for c in candidates if c.kind in CALLING]
         override = next((c for c in providers if preferred is not None and c.key == preferred), None)
+        remaining = [c for c in providers if c is not override]
+
+        # Money across currencies: converted at a current rate, else ranked only within each currency, your order
+        # between them.
+        known = [candidate for candidate in remaining if estimates[candidate.key] is not None]
+        found = {currencies.get(candidate.key) for candidate in known} - {None}
+        group, converted, mixed = {}, {}, False
+        if len(found) > 1:
+            base = next(currencies[c.key] for c in known if currencies.get(c.key) is not None)
+            rates = {currency: _rate(exchange, currency, base) for currency in found}
+            if all(rate is not None for rate in rates.values()):
+                compared_in = base
+                converted = {candidate.key: estimates[candidate.key] * rates.get(currencies.get(candidate.key), 1)
+                             for candidate in known}
+            else:
+                mixed = True
+                for candidate in sorted(known, key=lambda item: position[item.key]):
+                    group.setdefault(currencies.get(candidate.key), position[candidate.key])
         # An explicit provider preference is an operator override, ahead of every
         # other route; otherwise one of the installation's own numbers is delivered
         # inside Faxbot, then a verified direct route goes first.
@@ -173,26 +204,9 @@ class RoutePolicy:
             take(local, 'own_number' if override is None else 'alternative')
         if direct is not None:
             take(direct, 'direct_peer')
-        remaining = [c for c in providers if c is not override]
         flagged = set(doubtful or ())
         reliable = [c for c in remaining if not self.unreliable(stats.get(c.key)) and c.key not in flagged]
         doubtful = [c for c in remaining if self.unreliable(stats.get(c.key)) or c.key in flagged]
-
-        # Money across currencies: converted at a rate you set, else ranked only within each currency, your order
-        # between them.
-        known = [candidate for candidate in remaining if estimates[candidate.key] is not None]
-        found = {currencies.get(candidate.key) for candidate in known} - {None}
-        group, converted, mixed = {}, {}, False
-        if len(found) > 1:
-            base = next(currencies[c.key] for c in known if currencies.get(c.key) is not None)
-            rates = {currency: _rate(exchange, currency, base) for currency in found}
-            if all(rate is not None for rate in rates.values()):
-                converted = {candidate.key: estimates[candidate.key] * rates.get(currencies.get(candidate.key), 1)
-                             for candidate in known}
-            else:
-                mixed = True
-                for candidate in sorted(known, key=lambda item: position[item.key]):
-                    group.setdefault(currencies.get(candidate.key), position[candidate.key])
 
         def cost_rank(candidate):
             estimate = estimates[candidate.key]

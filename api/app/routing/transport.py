@@ -526,6 +526,11 @@ class RoutedTransport:
         self.routes().record_decision(attempt_id=claim.attempt_id, job_id=claim.job_id,
                                       destination=plan.destination, route=ledger_key(choice.route.key),
                                       reason=choice.reason, provider_id=choice.route.provider_id)
+        if any(item.compared_in is not None for item in plan.choices):
+            # Prices in different currencies were compared through an exchange rate: how, for Sent (exchange.py).
+            from .exchange import record_uses
+            record_uses(self.routes().engine, attempt_id=claim.attempt_id, job_id=claim.job_id,
+                        choices=plan.choices)
         if choice.reason == 'plan_reserved' and getattr(plan, 'held', None) is not None:
             # Why this fax did not use its plan, with the amounts as they were, for Sent details (plan_allocation).
             from .plan_allocation import record
