@@ -14,6 +14,7 @@ from api.app.routing.costs import InvalidRateCard, RateCard, RateTerms, TimeBand
 from api.app.routing.destinations import LOCAL, DestinationClass
 from api.app.routing.predict import Link, RouteFacts, Shape, predict_from
 from api.tests.test_schema import database  # noqa: F401 (fixture)
+from api.tests.test_batching import sip  # noqa: F401 (fixture)
 
 UK = '+441132000099'
 # Monday 12 October 2026, 10:00 in London (BST, UTC+1): peak.
@@ -184,6 +185,110 @@ def test_pages_chosen_inside_a_plan_are_chosen_again_once_the_plan_is_used_up(mo
             'efax', 'efax', 'pdf_upload', plan, plan_facts(used)))
         assert sending.still_current(None, None, evaluated, configuration, {'to_number': '+12025550123'}, pdf,
                                      None) == why
+
+
+def test_the_cheapest_partition_of_a_shared_call_differs_from_arrival_order(sip):
+    """Cap 5 pages with separator pages; faxes of 1, 4 and 1 pages arrive in that order, the trunk bills whole
+    minutes with a one-minute minimum. Arrival order sends three calls (the 4-page fax alone fills a call):
+    $0.005 + about $0.00875 + $0.005. Together, the two 1-page faxes take four pages and one call, and the 4-page
+    fax goes on its own: about $0.0175 in all. The claim sends the cheaper partition's call first."""
+    from api.app.batching import store as batching
+    from api.tests.test_batching import T0, accept as batch_accept
+    configuration, delivery, *_ = sip
+    batching.BatchingSettings(configuration.engine).save('+12025550123', enabled=True, actor='principal:p1',
+                                                         max_pages=5)
+    first = batch_accept(sip, pages=1, at=T0)
+    middle = batch_accept(sip, pages=4, at=T0 + timedelta(seconds=1))
+    last = batch_accept(sip, pages=1, at=T0 + timedelta(seconds=2))
+    claim = delivery.claim('worker', now=T0 + timedelta(minutes=10))
+    assert [member.job_id for member in claim.members] == [first, last]
+    assert batching.member(configuration.engine, middle)['state'] == 'waiting'
+
+
+def test_the_partition_search_matches_a_brute_force_over_every_partition():
+    from api.app.batching import policy
+    from api.app.batching.store import _arrival_partition, _need, best_partition
+
+    def partitions(items):
+        if not items:
+            yield []
+            return
+        head, rest = items[0], items[1:]
+        for smaller in partitions(rest):
+            for index in range(len(smaller)):
+                yield smaller[:index] + [[head] + smaller[index]] + smaller[index + 1:]
+            yield [[head]] + smaller
+    rng = random.Random(1084)
+    for case in range(80):
+        rows = [{'id': f'f{index}', 'pages': rng.randint(1, 4)} for index in range(rng.randint(2, 6))]
+        cap = rng.randint(4, 9)
+        layout = rng.choice(policy.LAYOUTS)
+        step = rng.choice([1, 6, 60])
+
+        def cost(pages, step=step):
+            seconds = 11 + 12.3 * pages
+            return 5000 * max(1, -(-int(seconds) // step) * step) // 60
+        feasible = [calls for calls in partitions(rows)
+                    if all(len(call) == 1 or _need(call, layout) <= cap for call in calls)
+                    and all(layout != policy.LAYOUT_INDEX_PAGE or len(call) <= policy.INDEX_PAGE_DOCUMENTS
+                            for call in calls)]
+        best = min(sum(cost(_need(call, layout)) for call in calls) for calls in feasible)
+        arrival = sum(cost(_need(call, layout)) for call in _arrival_partition(rows, cap, layout))
+        found = best_partition(rows, cap, layout, cost)
+        if best < arrival:
+            assert found is not None and found[0] is rows[0], case
+            # The call returned belongs to a partition that costs the brute-force minimum.
+            rest = [row for row in rows if row not in found]
+            remainder = min((sum(cost(_need(call, layout)) for call in calls) for calls in partitions(rest)
+                             if all(len(call) == 1 or _need(call, layout) <= cap for call in calls)), default=0)
+            assert cost(_need(found, layout)) + remainder == best, case
+        else:
+            assert found is None, case
+
+
+def test_confirmed_long_pages_map_back_to_whole_call_pages():
+    from api.app.batching.outcomes import confirmed_originals
+    sheets = [[[1, True], [2, True], [3, True]], [[4, True], [5, False]], [[5, False], [6, True]]]
+    assert confirmed_originals(sheets, 0) == (0, 3)
+    assert confirmed_originals(sheets, 1) == (3, 5)
+    assert confirmed_originals(sheets, 2) == (4, 6)  # page 5 continues on the third long page
+    assert confirmed_originals(sheets, 3) == (6, None)
+
+
+@pytest.mark.asyncio
+async def test_a_shared_call_goes_on_long_pages_and_its_result_maps_back_to_each_fax(sip):
+    """A receiving machine that takes pages of any length: the shared call image (separator, 2 pages, separator,
+    1 page) goes as 2 long pages; every call page is recovered pixel for pixel, the long pages are listed, and a
+    call that confirmed only the first long page leaves the first fax delivered and the second unconfirmed (part
+    of it was on the long page being sent), never failed with nothing sent."""
+    from pathlib import Path
+    from api.app import conversion
+    from api.app.batching import results
+    from api.app.outbound_worker import OutboundWorker
+    from api.app.pages import capability, unpack
+    from api.tests.test_batching import Ami, NUMBER as BATCH_NUMBER, accept as batch_accept, transport, write_fax
+    configuration, delivery, _, routes, data = sip
+    capability.records_for(configuration.engine).record_observation(
+        BATCH_NUMBER, source='d' * 32, engine='hylafax', values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1},
+        now=datetime.utcnow())
+    first = batch_accept(sip, pages=2, files=True, at=datetime.utcnow() - timedelta(minutes=11))
+    second = batch_accept(sip, pages=1, files=True, at=datetime.utcnow() - timedelta(minutes=10))
+    ami = Ami()
+    assert await OutboundWorker(delivery, transport(sip, ami)).step() is True
+    [(job_id, _, tiff, attempt)] = ami.calls
+    assert job_id == first and Path(tiff).name == f'packed-{first}-{attempt}.tiff'
+    sent = conversion.read_fax_frames(tiff)
+    assert len(sent) == 2
+    call_image = conversion.read_fax_frames(str(data / f'batch-{attempt}.tiff'))
+    recovered = unpack.split_frames(sent)
+    assert [frame.tobytes() for frame in recovered] == [frame.tobytes() for frame in call_image]
+    sheets = __import__('json').loads((data / f'packed-{first}-{attempt}.sheets.json').read_text())
+    assert [[page for page, _ in sheet] for sheet in sheets] == [[1, 2, 3], [4, 5]]
+    assert results.apply_fax_result(delivery, {'JobID': first, 'AttemptID': attempt, 'Status': 'FAILED',
+                                               'Pages': '1'}) is True
+    assert delivery.get(first)['state'] == 'success'
+    assert delivery.get(second)['state'] == 'reconciliation_required'
+    assert write_fax  # the documents were written by acceptance above
 
 
 def test_the_scheduler_prices_each_hour_on_the_faxs_own_account(database):  # noqa: F811

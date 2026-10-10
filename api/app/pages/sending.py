@@ -141,6 +141,9 @@ class Account:
     mode: str
     card: object = None
     facts: object = None
+    # The number this account's call presents as caller ID for the fax's mailbox (a price by caller ID reads it).
+    caller_id: str | None = None
+    mailbox_id: str | None = None
 
     def predict(self):
         """The layout chooser's predictor on this account's facts, or None for the shared predictor."""
@@ -159,7 +162,7 @@ class Account:
         earlier calls showed and a plan's use this month are left out: they move with every fax sent."""
         facts, card = self.facts, self.card
         terms = getattr(facts, 'terms', None)
-        parts = [self.key, self.provider_id, self.mode]
+        parts = [self.key, self.provider_id, self.mode, self.caller_id]
         if card is not None:
             parts += [card.id, card.provider_id, card.currency, card.per_minute_micros, card.per_page_micros,
                       card.per_call_micros, card.billing_increment_seconds, card.minimum_seconds,
@@ -173,17 +176,25 @@ class Account:
         return hashlib.sha256(repr(parts).encode('utf-8')).hexdigest()
 
 
-def account_for(engine, values, configuration, number, *, key=None, now=None):
+def account_for(engine, values, configuration, number, *, key=None, now=None, mailbox_id=None):
     """The ``Account`` for sending by ``configuration`` to ``number``. ``key`` names the account the attempt is
-    bound to (its own rate card first, then its provider's); without it, the provider's first account."""
+    bound to (its own rate card first, then its provider's); without it, the provider's first account.
+    ``mailbox_id`` is the fax's sending mailbox: the caller ID its call presents (and a price by caller ID) follows
+    that mailbox's reply number, resolved as the call resolves it."""
     route = configuration.provider_id
     mode = how_sent(configuration)
     if key is None:
         return Account(route, route, mode, card=_card(engine, route))
     from ..routing.pricing import account_facts
-    facts = account_facts(engine, values, key, number, provider=route, now=now)
+    facts = account_facts(engine, values, key, number, provider=route, now=now, mailbox_id=mailbox_id)
     terms = facts.terms
-    return Account(key, route, mode, card=terms.card if terms is not None and not facts.refused else None, facts=facts)
+    caller = None
+    from ..config_values import ConfigurationValues
+    if isinstance(values, ConfigurationValues):
+        from ..routing.origin_classes import presented_caller_id
+        caller, _ = presented_caller_id(values, key, engine=engine, mailbox_id=mailbox_id)
+    return Account(key, route, mode, card=terms.card if terms is not None and not facts.refused else None, facts=facts,
+                   caller_id=caller, mailbox_id=mailbox_id)
 
 
 @dataclass(frozen=True)
@@ -399,21 +410,33 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
     from . import friendly as fax_friendly
     from .resolution import is_standard, standard_frames
     from .trim import rendered_pages, trim_frames
-    if engine is None or getattr(claim, 'members', None):
+    shared = bool(getattr(claim, 'members', None))
+    if engine is None or (shared and account.mode != 'image'):
         return None
     job_id, attempt_id = claim.job_id, claim.attempt_id
     if not (_HEX32.fullmatch(str(job_id)) and _HEX32.fullmatch(str(attempt_id))):
         return None
     from ..routing.sender_pins import pinned
-    if pinned(engine, job.get('recipient_number') or job.get('to_number')):
+    binding = pinned(engine, job.get('recipient_number') or job.get('to_number'))
+    if binding and not compare:
         return None  # a registered-sender recipient's copy is binding: the pages go as they are (sender_pins, N17)
     route, mode = account.provider_id, account.mode
     root = Path(str(pdf)).parent
     cache = cache or RasterCache(root, job_id, attempt_id)
     # A fax accepted by an earlier build may have encoded pages written over its fax image: made again from the
     # original document, once, so this attempt chooses from the original (codec/send.py).
-    restore_original_image(engine, job_id, pdf, tiff if mode == 'image' else None)
+    if not shared:
+        restore_original_image(engine, job_id, pdf, tiff if mode == 'image' else None)
     allowed = permission_for(engine, values, account, job, rule=rule)
+    if binding or shared:
+        # A registered sender's binding copy, or a shared call (several faxes on one call image, each already
+        # screened for itself, batching/image.py): only long pages may change it (a shared call only), never
+        # trimmed, encoded, lightened or kept at another resolution.
+        # Compared with other accounts on the pages as they are only: nothing packed, trimmed, encoded, lightened or
+        # kept at another resolution (the lossless coding of those same pixels is still chosen).
+        from dataclasses import replace as replaced
+        allowed = replaced(allowed, packing_ok=allowed.packing_ok and shared and not binding, trim_ok=False,
+                           match_ok=False, codec_ok=False, lighten=False, whiten=False)
     number, chosen, cap = allowed.number, allowed.chosen, allowed.cap
     packing_ok, trim_ok, match_ok, codec_ok = allowed.packing_ok, allowed.trim_ok, allowed.match_ok, allowed.codec_ok
     requests = []
@@ -503,7 +526,8 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
     changed = not (layout is None and not trimmed_pages and matched is None and rendering is None)
     work = {'choice': choice, 'source': source, 'resolution': resolution, 'cap': cap, 'usable': usable,
             'rendered': rendered, 'matched': matched is not None, 'trimmed_pages': trimmed_pages,
-            'trimmed_rows': trimmed_rows, 'changed': changed, 'original_frames': len(frames)}
+            'trimmed_rows': trimmed_rows, 'changed': changed, 'original_frames': len(frames),
+            'frames': frames}
     selected = next(option for option in options
                     if option.rendering == picked['rendering'] and option.layout == picked['layout'])
     return Evaluated(account, allowed, len(frames), options, selected,
@@ -563,6 +587,10 @@ def publish(engine, evaluated, claim, pdf, tiff, *, now=None):
             if before and after:
                 seconds = (seconds or 0) + max(0, (sum(before) - sum(after)) // LINE_BITS_PER_SECOND)
         records = capabilities.records_for(engine)
+        if layout == 'dense' and getattr(claim, 'members', None):
+            # A shared call on long pages: which call pages each long page carries, so its result maps the long
+            # pages the engine confirms back to each fax's own pages (batching/results.py).
+            _write_sheets(out_tiff, work['frames'], cap.limit)
         if layout is not None or trimmed_pages or matched:
             records.record_change(
                 job_id=job_id, attempt_id=attempt_id, number=number, route=route, original_pages=frames_count,
@@ -599,7 +627,8 @@ def still_current(engine, values, evaluated, configuration, job, pdf, tiff, *, r
     if (cache.digest(pdf), cache.digest(image) if image is not None else None) != evaluated.sources:
         return "the fax's document changed"
     fresh = account_for(engine, values, configuration, job.get('to_number'),
-                        key=account.key if account.facts is not None else None, now=now)
+                        key=account.key if account.facts is not None else None, now=now,
+                        mailbox_id=account.mailbox_id)
     if fresh.fingerprint() != account.fingerprint():
         return "the account's price for this number changed"
     if evaluated.permission is not None and permission_for(
@@ -648,12 +677,26 @@ def prepare(engine, values, configuration, claim, job, pdf, tiff, *, rule=None, 
             published.update(prepared=prepared, evaluated=selected, pdf=str(pdf))
         return prepared
     try:
-        chosen = account_for(engine, values, configuration, job.get('to_number'), key=account, now=now)
+        chosen = account_for(engine, values, configuration, job.get('to_number'), key=account, now=now,
+                             mailbox_id=getattr(handoff, 'mailbox_id', None))
         evaluated = evaluate(engine, values, chosen, claim, job, pdf, tiff, rule=rule, seal=seal, now=now)
         return publish(engine, evaluated, claim, pdf, tiff, now=now) if evaluated is not None else None
     except Exception:
         logging.getLogger(__name__).warning('Fax pages could not be prepared; they go as they are.', exc_info=True)
         return None
+
+
+def _write_sheets(out_tiff, frames, limit):
+    """``packed-<fax>-<attempt>.sheets.json``: for each long page, the call pages on it as ``[page, whole]``."""
+    import json
+    from . import packing
+    layout = packing.layout_for(frames, limit)
+    sheets = [[[piece.original + 1, piece.top == 0 and piece.rows == frames[piece.original].height]
+               for piece in sheet.pieces] for sheet in layout.sheets]
+    path = Path(str(out_tiff)).with_suffix('.sheets.json')
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(sheets), encoding='utf-8')
+    temporary.replace(path)
 
 
 def _usable_codings(engine, values, route, mode, number, cap):

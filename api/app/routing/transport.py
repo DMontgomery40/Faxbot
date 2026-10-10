@@ -76,6 +76,13 @@ class _Planned(tuple):
         return found
 
 
+def _job_mailbox(job_id):
+    """The fax's sending mailbox, as the call reads it (``ami.job_mailbox``: None for no mailbox, or when it cannot
+    be read; the call then shows the organization's number and is priced at it)."""
+    from ..ami import job_mailbox
+    return job_mailbox(job_id)
+
+
 def _extras(planned):
     return getattr(planned, 'profile', None), getattr(planned, 'prices', None)
 
@@ -268,9 +275,12 @@ class RoutedTransport:
         dial = claim_dial_state(self.store, claim, job.get('dial'))
         from .pricing import prices_for
         # A queued fax under sending rules sees a scarce plan's room after the faxes it is held for (plan_allocation).
+        # The mailbox the fax was sent from: its call presents that mailbox's reply number, and a price by caller ID
+        # follows it (resolved exactly as the call resolves it, ami.job_mailbox).
+        mailbox = _job_mailbox(claim.job_id)
         prices = prices_for(routes, revision.values, job['to_number'], job.get('pages'), pinned=pinned,
                             bound=bound, dial=dial, job_id=claim.job_id if pinned is not None else None,
-                            measured=measured)
+                            measured=measured, mailbox_id=mailbox)
         plan = planner.plan(to_number=job['to_number'], bound=bound, values=revision.values,
                             pages=job.get('pages'), alternates=True, dial=dial,
                             tried=planner.tried(claim.job_id, claim.attempt_id),
@@ -287,7 +297,8 @@ class RoutedTransport:
         if why is not None:
             return joint.Joint(limit=why)
         return joint.measure(self.store, revision, profile, claim, plan, job,
-                             bound=self._bound_for(revision, profile, _pinned(plan)),
+                             bound=self._bound_for(revision, profile, _pinned(plan)), mailbox_id=_job_mailbox(
+                                 claim.job_id),
                              configuration_for=lambda key: _account_route_configuration(revision, key),
                              ensure_artifact=ensure_route_artifact)
 
@@ -298,7 +309,7 @@ class RoutedTransport:
         from . import joint, selections
         selected = measured.selection(key) if measured is not None and key is not None else None
         summary = selections.summary(plan, measured, key, prices) if selected is not None else None
-        handoff = joint.Handoff(claim.attempt_id, key, selected, summary)
+        handoff = joint.Handoff(claim.attempt_id, key, selected, summary, _job_mailbox(claim.job_id))
         return _HandedOver(self.inner.prepare(claim), handoff,
                            record=(lambda found: self._record_selection(claim, found)) if record else None)
 

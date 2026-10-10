@@ -68,6 +68,7 @@ class Handoff:
     account: str | None
     selected: object = None
     summary: dict | None = None
+    mailbox_id: str | None = None        # the fax's sending mailbox: its call presents that mailbox's reply number
     # Filled by page preparation when it publishes ``selected``: {'prepared', 'evaluated', 'pdf'}.
     published: dict = field(default_factory=dict, compare=False)
 
@@ -120,7 +121,7 @@ def compares(claim, plan):
 
 
 def measure(store, revision, profile, claim, plan, job, *, bound, configuration_for, ensure_artifact=None,
-            now=None):
+            now=None, mailbox_id=None):
     """``Joint`` for this attempt: every calling account the plan may use (and any its cost cap left out on the
     page-count price) measured and priced on its own tariff. ``configuration_for(key)`` builds an account's
     configuration from the accepted revision (raising ``routes.RouteUnavailable``); ``ensure_artifact`` makes the
@@ -145,11 +146,11 @@ def measure(store, revision, profile, claim, plan, job, *, bound, configuration_
         return configuration
     return measure_document(engine, values, claim, plan, job, pdf, tiff, configuration_for=configured,
                             rule=_layout_rule(engine, job_id), seal=KeySeal(store.configuration), now=now,
-                            deadline=deadline_for(claim))
+                            deadline=deadline_for(claim), mailbox_id=mailbox_id)
 
 
 def measure_document(engine, values, claim, plan, job, pdf, tiff, *, configuration_for, rule=None, seal=None,
-                     now=None, deadline=None):
+                     now=None, deadline=None, mailbox_id=None):
     """``Joint`` for one document: each calling account in ``plan`` (and any its cost cap left out on the
     page-count price) measured and priced on its own tariff, from the same pages. The worker (``measure``) and the
     document preview (``predict_http``) both come here, so for the same document, rules, tariffs and recipient they
@@ -185,7 +186,8 @@ def measure_document(engine, values, claim, plan, job, pdf, tiff, *, configurati
         # The same fax image the captured transport hands this account (outbound_transport.CapturedTransport).
         image = tiff if configuration.traits.get('requires_tiff') is True else None
         try:
-            account = sending.account_for(engine, values, configuration, number, key=key, now=now)
+            account = sending.account_for(engine, values, configuration, number, key=key, now=now,
+                                          mailbox_id=mailbox_id)
             evaluated = sending.evaluate(engine, values, account, claim, dialed, pdf, image, rule=rule, seal=seal,
                                          now=now, cache=cache, compare=True)
         except (conversion.DocumentConversionError, OSError, coding.CodingRefused, packing.NotPackable,

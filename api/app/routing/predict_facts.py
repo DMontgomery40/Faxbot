@@ -517,12 +517,16 @@ def _extra_trunk(values, account):
     return found.values if found is not None else None
 
 
-def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None):
+def facts_for(route_key, destination, *, now=None, engine=None, values=None, data=None, account=None, site=None,
+              mailbox_id=None):
     """The ``RouteFacts`` for one route and number, from the installation when it has a database.
 
     ``account`` is the account the call would use (its key; ``route_key`` when not given): an extra trunk is
     priced by its own carrier's card, and an origin-rated row for where its calls start (``origin_rates``)
     prices the call when one matches. ``site`` prices it as if it started from that site instead.
+    ``mailbox_id``: the mailbox the fax is sent from, so a deck priced by caller ID reads the number the call
+    presents for that mailbox (its reply number, as ``ami.originate_fields_for`` sets it); None for a quote with no
+    fax, priced at the organization's number.
     """
     values = _values() if values is None else values
     engine = _engine() if engine is None else engine
@@ -568,7 +572,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
         from .origin_rates import rated_terms
         try:
             rated, row = rated_terms(list(dict.fromkeys([account, identity])), number, where, values=values,
-                                     account_key=account, engine=engine, site=site)
+                                     account_key=account, engine=engine, site=site, mailbox_id=mailbox_id)
         except DeliveryStoreError as error:
             # Saved rows or prices by state could not be read: the card's own price, and the cause logged.
             # Anything else is a bug and raises.

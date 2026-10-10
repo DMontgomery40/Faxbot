@@ -87,7 +87,7 @@ def _now(now):
     return (now or datetime.now(timezone.utc)).replace(tzinfo=None, microsecond=0)
 
 
-def account_facts(engine, values, key, destination, *, provider=None, now=None, site=None):
+def account_facts(engine, values, key, destination, *, provider=None, now=None, site=None, mailbox_id=None):
     """The ``predict.RouteFacts`` one account's call to ``destination`` is priced with: its own rate card when it
     has one, else its provider's, for the number's class and where the call starts. The one tariff contract route
     ranking and page preparation share (JOINT-OPTIMIZER-AUDIT step 1), so an extra account is never priced by its
@@ -98,11 +98,12 @@ def account_facts(engine, values, key, destination, *, provider=None, now=None, 
     facts_key = key
     if key != provider and RouteStore(engine).card_for(key) is None:
         facts_key = provider
-    return facts_for(facts_key, destination, now=_now(now), engine=engine, values=values, account=key, site=site)
+    return facts_for(facts_key, destination, now=_now(now), engine=engine, values=values, account=key, site=site,
+                     mailbox_id=mailbox_id)
 
 
 def price(routes, values, key, destination, pages, *, provider=None, now=None, layout='normal', number='original',
-          site=None, hold=None, shape=None, facts=None):
+          site=None, hold=None, shape=None, facts=None, mailbox_id=None):
     """The ``Price`` of one fax of ``pages`` pages to ``destination`` by account ``key``.
 
     An origin-rated row for where the account's calls start prices it when one matches (``origin_rates``);
@@ -121,7 +122,8 @@ def price(routes, values, key, destination, pages, *, provider=None, now=None, l
         if key != provider and routes.card_for(key) is None:
             facts_key = provider
         from .predict_facts import facts_for
-        facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site)
+        facts = facts_for(facts_key, destination, now=moment, engine=engine, values=values, account=key, site=site,
+                          mailbox_id=mailbox_id)
     measured = shape is not None
     if shape is None:
         shape = Shape(max(int(pages or 1), 1), None, 'standard', layout if layout in ('normal', 'dense') else 'normal')
@@ -164,13 +166,14 @@ def _accounts(values):
 
 
 def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dial=None, keys=None, now=None,
-               job_id=None, measured=None):
+               job_id=None, measured=None, mailbox_id=None):
     """``{account key: Price}`` for the accounts a fax may use; an account that cannot be priced is left out.
 
     ``job_id``: the queued fax being planned. Its scarce plans are priced after the room held for other faxes
     (``plan_allocation.hold_for``); without it every plan is priced against its whole room, as for a quote.
     ``measured``: ``{account key: (predict.Shape, predict.RouteFacts)}``, the pages each account would actually
     send as measured (``routing.joint``); those accounts are priced by them, the others by the page count.
+    ``mailbox_id``: the fax's sending mailbox, so a price by caller ID follows the number its call presents.
     """
     import sqlalchemy as sa
     from . import dialing
@@ -206,7 +209,7 @@ def prices_for(routes, values, to_number, pages, *, pinned=None, bound=None, dia
         try:
             found[key] = price(routes, values, key, number, pages, provider=provider, now=now,
                                number='alternate' if number != destination else 'original', hold=holds.get(key),
-                               shape=shape, facts=facts)
+                               shape=shape, facts=facts, mailbox_id=mailbox_id)
         except (DeliveryStoreError, sa.exc.SQLAlchemyError, InvalidRateCard) as error:
             # This account's prices or plan could not be read: it is left out, and the cause logged. Anything else
             # (a bug in pricing or in the plan's allocation) raises.

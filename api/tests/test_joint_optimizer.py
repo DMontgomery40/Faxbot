@@ -699,3 +699,61 @@ def test_a_trunk_with_no_published_price_abroad_is_priced_by_its_own_carrier_rec
     plan, prices = plan_for(live, UK)
     assert prices['sip'].micros is not None and [choice.route.key for choice in plan.choices] == ['sip']
     assert plan.choices[0].reason in ('cheapest', 'configured', 'known_cheapest')
+
+
+# M1: the presented caller ID is part of the contract (mailbox reply numbers, priced by caller ID) ---------------
+
+@pytest.mark.asyncio
+async def test_a_mailbox_fax_is_priced_by_the_caller_id_its_call_presents(database, tmp_path, monkeypatch):
+    """The organization's reply number is an EEA number confirmed on the trunk; the Billing mailbox's reply number
+    is a trunk DID nobody confirmed. A fax from Billing to Austria presents the Billing number, so the route choice
+    prices it at the deck's surcharged row, not the organization's cheaper EEA row; a fax from no mailbox keeps the
+    organization's price. The mailbox is read exactly as the call reads it (ami.job_mailbox)."""
+    from api.app import ami
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.routing import origin_classes, reply_number
+    from api.app.routing.pricing import prices_for
+    from api.app.routing.seed import load_cards
+    from api.tests.test_origin_classes import AT_LANDLINE, GERMAN_CALLER, rows as deck_rows
+    billing_did = '+13035550142'
+    env = installation(database, tmp_path, {
+        **BASE, 'FAX_BACKEND': 'sip', 'FAX_OUTBOUND_ROUTES': '', 'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_AUTH': 'ip',
+        'SIP_TRUNK_HOST': 'sip.telnyx.com', 'SIP_TRUNK_CALLER_ID': GERMAN_CALLER,
+        'SIP_TRUNK_DIDS': f'{GERMAN_CALLER},{billing_did}', 'FAX_REPLY_NUMBER': GERMAN_CALLER,
+        'FAX_REPLY_NUMBERS': f'billing={billing_did}', 'INBOUND_ENABLED': 'true', 'FAX_DEFAULT_COUNTRY': 'US'},
+        outbound=ProviderConfiguration('sip', traits={'requires_tiff': True}))
+    env.routes.seed_cards(load_cards())
+    monkeypatch.setattr(ami, '_database', lambda: database)
+    monkeypatch.setattr(reply_number, 'mailbox_routes', lambda engine, values: [
+        reply_number.Route(billing_did, 'billing', 'Billing'), reply_number.Route(GERMAN_CALLER, 'front', 'Front')])
+    origin_classes.import_deck(database, 'sip-telnyx', deck_rows())
+    origin_classes.record_eligibility(database, 'sip', GERMAN_CALLER, bought_here=False, evidence='Synthetic order')
+    values = env.configuration.read().active.values
+    organization = prices_for(env.routes, values, AT_LANDLINE, 1, keys=['sip'])['sip']
+    boxed = prices_for(env.routes, values, AT_LANDLINE, 1, keys=['sip'], mailbox_id='billing')['sip']
+    assert (organization.origin, boxed.origin) == ('caller:eea', 'caller:unconfirmed')
+    assert boxed.micros > 9 * organization.micros > 0
+    # The route choice of a real fax from Billing: the mailbox the call reads, the caller ID it presents, the price.
+    job = accept(env, to=AT_LANDLINE, pages=1, mailbox='billing')
+    plain = accept(env, to=AT_LANDLINE, pages=1)
+    # A first fax to a new country waits for approval (the dialing guard); approved by a second person, as usual.
+    from api.app.routing.holds import HoldStore
+    from api.tests.test_rules_delivery import BEN, holds
+    for fax in (job, plain):
+        for hold in holds(env, fax):
+            HoldStore(env.delivery).approve(hold['id'], version=hold['version'], actor=BEN, actor_name='Ben')
+    assert (ami.job_mailbox(job), ami.job_mailbox(plain)) == ('billing', None)
+    fields = ami.originate_fields_for(values, job, AT_LANDLINE, '/tmp/fax.tif', mailbox_id=ami.job_mailbox(job))
+    assert fields['CallerID'] == billing_did
+    routed = RoutedTransport(type('Inner', (), {'store': env.delivery})(), direct=None, route_store=env.routes)
+    for fax, other, expected in ((job, plain, boxed), (plain, job, organization)):
+        claim = env.delivery.claim('worker-test', exclude=(other,))
+        assert claim.job_id == fax
+        planned = routed._plan(claim)
+        assert (planned.prices['sip'].micros, planned.prices['sip'].origin) == (expected.micros, expected.origin)
+        env.delivery.defer(claim)
+    from api.app.config_profiles import ProviderConfiguration as Configuration
+    from api.app.pages.sending import account_for
+    account = account_for(database, values, Configuration('sip', traits={'requires_tiff': True}), AT_LANDLINE,
+                          key='sip', mailbox_id='billing')
+    assert account.caller_id == billing_did and account.facts.terms.card.per_minute_micros == 155_000

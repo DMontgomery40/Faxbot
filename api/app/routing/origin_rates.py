@@ -254,7 +254,8 @@ def rows_for(identities, engine=None) -> list:
     return found
 
 
-def rated_terms(identities, destination, where, *, values, account_key, engine=None, sites=None, site=None):
+def rated_terms(identities, destination, where, *, values, account_key, engine=None, sites=None, site=None,
+                mailbox_id=None):
     """(RateTerms, the row) for an origin row that prices this call, or (None, None).
 
     ``identities`` are the card identities to read rows for, the account's own first (``sinch-uk``, then
@@ -271,8 +272,9 @@ def rated_terms(identities, destination, where, *, values, account_key, engine=N
     from .origin_classes import class_terms
     from .database import DeliveryStoreError
     try:
+        # ``mailbox_id``: the sending mailbox, whose reply number the call presents (ami.job_mailbox).
         classed, quote = class_terms(identities, destination, where, values=values, account_key=account_key,
-                                     engine=engine)
+                                     engine=engine, mailbox_id=mailbox_id)
     except DeliveryStoreError as error:
         # The decks could not be read: the prices below, and the cause logged. Anything else raises.
         import logging
