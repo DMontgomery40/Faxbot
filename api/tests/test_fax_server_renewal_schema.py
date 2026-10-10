@@ -12,9 +12,9 @@ NOW = datetime(2026, 10, 10, 9, 0)
 PRIOR = '0077_line_inventory'  # re-chained at merge
 
 
-def test_0078_is_the_head_and_validates(database):  # noqa: F811
+def test_0078_follows_0077_and_validates(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_fax_server_renewal.REVISION == '0078_fax_server_renewal' == schema.HEAD
+    assert schema_fax_server_renewal.REVISION == '0078_fax_server_renewal' == schema.FAX_SERVER_RENEWAL
     assert schema.LINE_INVENTORY == PRIOR
     assert schema_fax_server_renewal.TABLES <= schema.STRICT_TABLES
     assert schema_fax_server_renewal.TABLES <= _tables(database)

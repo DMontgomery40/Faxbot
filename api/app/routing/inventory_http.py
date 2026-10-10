@@ -6,6 +6,7 @@ orders, ports or cancels a line, or contacts a carrier.
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..access.http import require_identity
 from ..access.route_policy import require_permission
@@ -98,4 +99,76 @@ async def import_carrier_list(request: Request, identity=Depends(require_identit
             raise HTTPException(400, detail=str(error)) from None
         return {**view(store.engine, values), 'imported': len(parsed.items), 'skipped': parsed.skipped,
                 'skipped_count': parsed.skipped_count, 'layout': parsed.layout}
+    return await _call(save)
+
+
+# -- the POTS-replacement counter-quote (N23) ----------------------------------------------------------------------
+
+class QuoteIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(default='', max_length=100)
+    published: str | None = Field(default=None, max_length=40)
+    per_line: str = Field(default='', max_length=32)
+    currency: str = Field(default='USD', min_length=3, max_length=3)
+    term_months: int | None = Field(default=None, ge=1, le=120)
+    lines_quoted: int | None = Field(default=None, ge=1, le=100_000)
+    ports_per_device: int | None = Field(default=None, ge=1, le=64)
+    device_price: str = Field(default='', max_length=32)
+    source_url: str | None = Field(default=None, max_length=512)
+    source_date: str | None = Field(default=None, max_length=10)
+    note: str = Field(default='', max_length=2000)
+
+
+class QuoteName(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(min_length=1, max_length=100)
+
+
+@router.get('/pots-quotes', dependencies=[Depends(require_permission('settings:read'))])
+async def pots_quotes(request: Request):
+    """Each POTS-replacement quote you entered, with the fax lines it could leave out and one shared trunk instead."""
+    from .pots_quote import view
+    store = _store(request)
+    values = _values(request)
+    return await _call(lambda: view(store.engine, values, routes=store))
+
+
+@router.put('/pots-quotes', dependencies=[Depends(require_permission('settings:write'))])
+async def record_pots_quote(payload: QuoteIn, request: Request, identity=Depends(require_identity)):
+    """Record a POTS-replacement quote (or start from a published price). Earlier entries stay as history."""
+    from .pots_quote import QuoteError, record_published, record_quote, view
+    store = _store(request)
+    values = _values(request)
+    dated = _day(payload.source_date, "quote's date")
+
+    def save():
+        try:
+            if payload.published:
+                record_published(store.engine, payload.published, lines_quoted=payload.lines_quoted,
+                                 term_months=payload.term_months, actor=_who(store.engine, identity))
+            else:
+                record_quote(store.engine, payload.name, per_line=payload.per_line, currency=payload.currency,
+                             term_months=payload.term_months, lines_quoted=payload.lines_quoted,
+                             ports_per_device=payload.ports_per_device, device_price=payload.device_price or None,
+                             source_url=payload.source_url or None, source_date=dated, note=payload.note or None,
+                             actor=_who(store.engine, identity))
+        except QuoteError as error:
+            raise HTTPException(400, detail=str(error)) from None
+        return view(store.engine, values, routes=store)
+    return await _call(save)
+
+
+@router.post('/pots-quotes/remove', dependencies=[Depends(require_permission('settings:write'))])
+async def remove_pots_quote(payload: QuoteName, request: Request, identity=Depends(require_identity)):
+    """Withdraw a POTS-replacement quote; its history stays."""
+    from .pots_quote import QuoteError, remove_quote, view
+    store = _store(request)
+    values = _values(request)
+
+    def save():
+        try:
+            remove_quote(store.engine, payload.name, actor=_who(store.engine, identity))
+        except QuoteError as error:
+            raise HTTPException(404, detail=str(error)) from None
+        return view(store.engine, values, routes=store)
     return await _call(save)

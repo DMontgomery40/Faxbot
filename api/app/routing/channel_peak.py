@@ -118,7 +118,7 @@ def _rows(text):
 
 def detect(text):
     """The format a call-record file looks like, or None."""
-    rows = _rows(text)[:5]
+    rows = _rows('\n'.join(text[:65_536].splitlines()[:5]))
     if not rows:
         return None
     names = {normal(cell) for cell in rows[0]}
@@ -355,7 +355,7 @@ def percentile(values, share=PERCENTILE):
     return ordered[max(0, math.ceil(share * len(ordered)) - 1)]
 
 
-def report(calls, *, licensed=None, time_zone=None):
+def report(calls, *, licensed=None, time_zone=None, own=False):
     """What the calls say about channels: peak, hourly 99th percentile, hour-of-day profile, channels never used."""
     intervals = [(call.started_at, max(call.ended_at, call.started_at)) for call in calls]
     if not intervals:
@@ -388,16 +388,21 @@ def report(calls, *, licensed=None, time_zone=None):
         else:
             result['never_used'] = max(0, licensed - peak)
             result['never_used_basis'] = 'peak'
-    result['sentence'] = _sentence(result)
+    result['sentence'] = _sentence(result, own=own)
     return result
 
 
-def _sentence(found):
+def _sentence(found, *, own=False):
     days = found['days']
     text = (f"{found['calls']:,} {'call' if found['calls'] == 1 else 'calls'} over {days:,} "
             f"{'day' if days == 1 else 'days'}: at most {found['peak']} at once, and in 99 hours out of 100 no more "
             f"than {found['p99']}.")
     licensed = found.get('licensed')
+    if licensed and own:
+        never = found.get('never_used', 0)
+        return text + (f" Your trunks allow {licensed} calls at once; {never} of them were never needed at the same "
+                       'time as the others.' if never else f' Your trunks allow {licensed} calls at once, and every '
+                       'one was needed at the busiest moment.')
     if licensed:
         never = found.get('never_used', 0)
         if found.get('never_used_basis') == 'channels':
@@ -517,8 +522,18 @@ def faxbot_calls(engine, *, now=None, days=WINDOW_DAYS):
     return found
 
 
-def view(engine, values=None, *, now=None):
-    """Each system's channel report: Faxbot's own trunk calls, and each system you imported calls for."""
+def system_view(name, found, measured):
+    """One imported system as the channel report shows it."""
+    return {'system': name, 'own': False,
+            'source': ', '.join(sorted({FORMAT_LABELS[row['source_format']] for row in found})),
+            'report': measured, 'imports': [_import_view(row) for row in found]}
+
+
+def view(engine, values=None, *, now=None, loaded=None, licensed_for=None):
+    """Each system's channel report: Faxbot's own trunk calls, and each system you imported calls for.
+
+    ``loaded`` ({system: ``system_calls``}) reuses calls already read; ``licensed_for`` ({system: channels})
+    measures against the licence you entered with its renewal."""
     from ..people_time import installation_zone_name
     zone = getattr(values, 'time_zone', None) if values is not None else None
     zone = zone if zone is not None else installation_zone_name()
@@ -527,14 +542,13 @@ def view(engine, values=None, *, now=None):
     licensed_own = _own_lines(values)
     if own:
         systems.append({'system': 'Faxbot', 'own': True, 'source': f'Faxbot\'s own trunk calls, last {WINDOW_DAYS} '
-                        'days', 'report': report(own, licensed=licensed_own, time_zone=zone), 'imports': []})
+                        'days', 'report': report(own, licensed=licensed_own, time_zone=zone, own=True),
+                        'imports': []})
     names = list(dict.fromkeys(row['system'] for row in imports(engine)))
     for name in names:
-        calls, licensed, _, found = system_calls(engine, name)
-        systems.append({'system': name, 'own': False,
-                        'source': ', '.join(sorted({FORMAT_LABELS[row['source_format']] for row in found})),
-                        'report': report(calls, licensed=licensed, time_zone=zone),
-                        'imports': [_import_view(row) for row in found]})
+        calls, licensed, _, found = (loaded or {}).get(name) or system_calls(engine, name)
+        licensed = (licensed_for or {}).get(name) or licensed
+        systems.append(system_view(name, found, report(calls, licensed=licensed, time_zone=zone)))
     return {'systems': systems,
             'sentence': None if systems else ('No call records yet. Import another fax server\'s call records, or '
                                               'Faxbot measures its own once its trunk carries calls.'),

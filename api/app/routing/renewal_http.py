@@ -32,15 +32,6 @@ def _day(text, what):
         raise HTTPException(400, detail=f'Write the {what} as 2027-05-31.') from None
 
 
-@router.get('/channels', dependencies=[Depends(require_permission('settings:read'))])
-async def channels(request: Request):
-    """Calls at once at their peak, for Faxbot's own trunk and each fax server whose call records you imported."""
-    from .channel_peak import view
-    store = _store(request)
-    values = _values(request)
-    return await _call(lambda: view(store.engine, values))
-
-
 @router.post('/channels/files', dependencies=[Depends(require_permission('settings:write'))])
 async def import_channel_calls(request: Request, identity=Depends(require_identity), file: UploadFile = File(...),
                                system: str = Form(..., min_length=1, max_length=100),
@@ -50,7 +41,8 @@ async def import_channel_calls(request: Request, identity=Depends(require_identi
                                date_order: str = Form(default='mdy', max_length=3),
                                numbers: str | None = Form(default=None, max_length=20_000)):
     """Import another fax server's or phone system's call records for one system."""
-    from .channel_peak import CallFileError, import_calls, parse_calls, view
+    from .channel_peak import CallFileError, import_calls, parse_calls
+    from .renewal import view
     store = _store(request)
     values = _values(request)
     data = await _read(file, MAX_CALL_FILE, 'file')
@@ -74,7 +66,8 @@ async def import_channel_calls(request: Request, identity=Depends(require_identi
 @router.delete('/channels/imports/{import_id}', dependencies=[Depends(require_permission('settings:write'))])
 async def remove_channel_import(import_id: str, request: Request, identity=Depends(require_identity)):
     """Leave one imported file of call records out of the report; its calls stay as history."""
-    from .channel_peak import CallFileError, remove_import, view
+    from .channel_peak import CallFileError, remove_import
+    from .renewal import view
     store = _store(request)
     values = _values(request)
 
@@ -89,7 +82,8 @@ async def remove_channel_import(import_id: str, request: Request, identity=Depen
 
 @router.get('/renewals', dependencies=[Depends(require_permission('settings:read'))])
 async def renewals(request: Request):
-    """One page per fax server renewal: amount and date, channels at peak, the parallel run, what is left to move."""
+    """One page per fax server renewal (amount and date, channels at peak, the parallel run, what is left to move),
+    and the channel report for Faxbot's own trunk and each fax server whose call records you imported."""
     from .renewal import view
     store = _store(request)
     values = _values(request)

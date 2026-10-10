@@ -90,6 +90,7 @@ config.attributes["schema_test_lines"] = importlib.import_module(package + ".sch
 config.attributes["schema_after_answer"] = importlib.import_module(package + ".schema_after_answer")
 config.attributes["schema_line_inventory"] = importlib.import_module(package + ".schema_line_inventory")
 config.attributes["schema_fax_server_renewal"] = importlib.import_module(package + ".schema_fax_server_renewal")
+config.attributes["schema_pots_quote"] = importlib.import_module(package + ".schema_pots_quote")
 
 
 def migrate(connection):

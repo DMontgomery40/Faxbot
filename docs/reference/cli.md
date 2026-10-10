@@ -405,6 +405,7 @@ $ faxbot savings opportunities [OPTIONS] COMMAND [ARGS]...
 * `import-calls`: Import another fax server&#x27;s or phone system&#x27;s call records for one system.
 * `renewal`: One page for a fax server&#x27;s renewal; record it with --system.
 * `import-routing`: Import a fax server&#x27;s number-to-user routing (number, user, email, cover sheet).
+* `pots`: Take the fax lines out of a POTS-replacement order: the counter-quote.
 
 #### `faxbot savings opportunities sending`
 
@@ -672,6 +673,33 @@ $ faxbot savings opportunities import-routing [OPTIONS] {FILE}
 **Options**:
 
 * `--system NAME`: The fax server it comes from.  [required]
+* `--help`: Show this message and exit.
+
+#### `faxbot savings opportunities pots`
+
+Show, for each POTS-replacement quote you entered, what taking the fax lines out of the order removes from it,
+what one shared trunk costs for them instead, and which lines must stay. With --name and --per-line (or
+--published), record a quote.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities pots [OPTIONS]
+```
+
+**Options**:
+
+* `--name PRODUCT`: The product quoted, such as Ooma AirDial.
+* `--per-line AMOUNT`: Its price per line a month, such as 39.95.
+* `--currency CODE`: The price&#x27;s currency.  [default: USD]
+* `--term MONTHS`: The term in months.  [1&lt;=x&lt;=120]
+* `--lines LINES`: The lines the quote covers; your whole inventory when left out.  [1&lt;=x&lt;=100000]
+* `--ports PORTS`: The analog ports on one device.  [1&lt;=x&lt;=64]
+* `--device-price AMOUNT`: The one-time price of one device, if the quote has one.
+* `--source-url URL`: Where the price comes from.
+* `--source-date DATE`: The quote&#x27;s date.
+* `--published ID`: Start from a published price Faxbot ships, such as ooma-airdial.
+* `--remove`: Withdraw the product&#x27;s quote.
 * `--help`: Show this message and exit.
 
 ### `faxbot savings capabilities`

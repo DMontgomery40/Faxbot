@@ -156,6 +156,8 @@ def test_imports_are_kept_overlapping_files_count_a_call_once_and_faxbot_measure
     shown = channel_peak.view(database, _values(TIME_ZONE='UTC'), now=now)
     own = next(system for system in shown['systems'] if system['own'])
     assert own['report']['peak'] == 2 and own['report']['calls'] == 2
+    # Faxbot's own limit is the calls at once its trunks allow, not a licence.
+    assert 'Your trunks allow' in own['report']['sentence'] and 'licensed' not in own['report']['sentence']
     rightfax = next(system for system in shown['systems'] if system['system'] == 'RightFax at HQ')
     assert rightfax['report']['calls'] == 3 and rightfax['report']['never_used'] == 5
     assert len(rightfax['imports']) == 2 and rightfax['source'] == 'RightFax DocTransport audit log'
@@ -205,6 +207,17 @@ def test_the_renewal_page_reads_amount_channels_parallel_run_and_what_is_left(da
     assert found['channels']['never_used'] == 5 and found['channels']['per_channel'] == '$3,344.59'
     assert found['sentences'][1].endswith('those 5 channels are $16,722.94 of it, if it is priced by channel.')
     assert (found['parallel']['received'], found['parallel']['received_ok']) == (2, 1)
+    # Sent faxes are the whole installation's: the sentence says so.
+    assert found['sentences'][2].endswith('(1 complete). Faxbot sent 0 faxes in all since 1 February 2027 '
+                                          '(0 delivered).')
+    renewal.record_renewal(database, 'RightFax at HQ', renews_on=date(2027, 5, 31), amount='26756.71',
+                           licensed_channels=8, parallel_numbers=['303-555-0100', '303-555-0199'],
+                           parallel_since=date(2027, 2, 1), now=now)
+    two = renewal.page(database, _values(), 'RightFax at HQ', now=now)
+    assert two['sentences'][2].endswith('1 of these numbers is on no Faxbot account yet, so faxes to it still reach '
+                                        'only the old server.')
+    assert [item['on_faxbot'] for item in two['parallel']['numbers']] == [True, False]
+    assert renewal.view(database, _values(), now=now)['channels']['systems'][0]['report']['licensed'] == 8
     assert found['left']['count'] == 2 and found['left']['users'] == 1
     assert found['sentences'][3] == '2 of its 3 numbers are not on Faxbot yet, for 1 user.'
     assert {item['id'] for item in found['reference']} == {'cuyahoga-rightfax', 'rightfax-support', 'sr140-cdw'}
