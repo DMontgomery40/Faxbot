@@ -16,6 +16,7 @@ recorded calls.
 """
 from pathlib import Path
 import tempfile
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
@@ -203,9 +204,10 @@ def _document_pages(source, folder, stem='document'):
     return frames, pdf, tiff
 
 
-def _coded_view(engine, values, number, facts, frames, measured, resolution):
+def _coded_view(engine, values, number, facts, frames, measured, resolution, *, requested=None):
     """One route's prediction for these pages: Faxbot's own engines with the coding they would be asked for (and
-    why), any other route with the pages as Faxbot prepares them (a fax service codes them itself)."""
+    why), any other route with the pages as Faxbot prepares them (a fax service codes them itself). ``requested``:
+    the fax engine the sender would choose (``POST /fax`` engine)."""
     from ..pages import coding
     pages = len(frames)
     if facts.route_key != 'sip':
@@ -214,7 +216,8 @@ def _coded_view(engine, values, number, facts, frames, measured, resolution):
     from .. import hylafax_engine
     from ..pages.capability import records_for
     usable = coding.usable_for(engine, values, number, recipient=hylafax_engine.recipient_limits(engine, number),
-                               capability=records_for(engine).capability(number) if engine is not None else None)
+                               capability=records_for(engine).capability(number) if engine is not None else None,
+                               requested=requested)
     choice = coding.best_coding(frames, usable.codings, ecm=usable.ecm, measured=measured)
     shape = Shape(pages, tuple(measured['MMR']), resolution, 'normal', measured,
                   choice.priced)
@@ -305,20 +308,21 @@ def _configuration(revision, key, bound, outbound):
     return route_configuration(revision, key)
 
 
-def measured_plan(engine, revision, number, claim, pdf, tiff, pages, actor, *, outbound=None):
+def measured_plan(engine, revision, number, claim, pdf, tiff, pages, actor, *, outbound=None, requested=None):
     """``(views, plan_view)`` for this document sent now by ``actor``: each account the rules allow priced on its own
     measured best pages, in the order the delivery worker ranks them, and the account it would bind with the
     runner-up and one sentence (``plan_view`` None when no account could be measured). The same functions as the
     worker: ``preview_plan`` (``RoutedTransport._plan``) and ``joint.measure_document`` (``joint.measure``).
     ``outbound`` is the outbound profile's configuration, which a fax accepted now is bound to (its default
-    sending account), as the worker uses the fax's own accepted profile."""
+    sending account), as the worker uses the fax's own accepted profile. ``requested``: the fax engine the sender
+    would choose (``POST /fax`` engine), measured as the delivery worker measures a fax that kept it."""
     from ..accounts import default_sending_key
     from . import joint, selections
     values = revision.values
     plan, prices, decision = preview_plan(engine, revision, number, pages, actor)
     bound = default_sending_key(values)
     found = joint.measure_document(
-        engine, values, claim, plan, {'to_number': number, 'pages': pages}, pdf, tiff,
+        engine, values, claim, plan, {'to_number': number, 'pages': pages, 'engine_request': requested}, pdf, tiff,
         configuration_for=lambda key: _configuration(revision, key, bound, outbound), rule=_layout_rule(decision))
     if found.measured:
         plan, prices, decision = preview_plan(engine, revision, number, pages, actor, measured=found.measured)
@@ -351,6 +355,10 @@ def measured_plan(engine, revision, number, claim, pdf, tiff, pages, actor, *, o
 @router.post('/predict')
 async def predict_document(request: Request, to: str = Form(..., min_length=1, max_length=40),
                            file: UploadFile = File(...),
+                           engine_choice: Literal['auto', 'builtin', 'hylafax'] = Form(
+                               'auto', alias='engine', description='The fax engine you would choose for this fax '
+                               '(as on POST /fax): auto (Faxbot chooses, the default), builtin or hylafax. A call '
+                               'over your SIP trunk is then measured and priced as that engine sends it.'),
                            identity=Depends(require_permission('fax:send', resource='personal'))):
     """What this document faxed to ``to`` would take and cost, and the account and pages Faxbot would send it with;
     estimates only, nothing is sent or kept. Your sending rules decide its accounts as for a fax you send now, every
@@ -369,6 +377,7 @@ async def predict_document(request: Request, to: str = Form(..., min_length=1, m
     values = snapshot.active.values
     number = _number(to, values)
     engine, _ = installation_engine(request.app)
+    requested = None if engine_choice == 'auto' else engine_choice
     limit = int(getattr(values, 'max_file_size_mb', 10) or 10) * 1024 * 1024
     with tempfile.TemporaryDirectory(prefix='faxbot-dry-run-') as folder:
         source, total = Path(folder) / 'source', 0
@@ -389,14 +398,15 @@ async def predict_document(request: Request, to: str = Form(..., min_length=1, m
             measured = coding.measure(frames)
             revision = snapshot.active
             views, plan_view = measured_plan(engine, revision, number, claim, pdf, tiff, len(frames), identity.actor,
-                                             outbound=_outbound(request, snapshot))
+                                             outbound=_outbound(request, snapshot), requested=requested)
             if not views:
                 # No account could be measured: each one priced from the document's pages as they are.
                 from .predict_facts import facts_for
                 facts = [facts_for(route, number, values=values, engine=engine)
                          for route in _routes(request, snapshot)]
                 resolution = conversion.frames_resolution(frames)
-                views = [_coded_view(engine, values, number, item, frames, measured, resolution) for item in facts]
+                views = [_coded_view(engine, values, number, item, frames, measured, resolution, requested=requested)
+                         for item in facts]
             return frames, measured, classify(number, getattr(values, 'fax_default_country', 'US')), views, plan_view
         try:
             frames, measured, where, views, plan_view = await run_lifecycle_step(read)

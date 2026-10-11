@@ -1321,6 +1321,13 @@ def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tm
     assert result['measured_sentence'] in human and 'Phaxio: Billed as 1 page at $0.07 a page;' in human
     missing = cli('costs', 'predict', '--to', '+12025550123', '--file', tmp_path / 'nothing.pdf')
     assert missing.exit_code != 0
+    # The fax engine you would choose (as faxbot send --engine), measured with the document only.
+    chosen = cli.json('costs', 'predict', '--to', '+12025550123', '--file', letter, '--engine', 'builtin')
+    assert chosen['pages'] == 1
+    alone = cli('costs', 'predict', '--to', '+12025550123', '--engine', 'builtin')
+    assert alone.exit_code != 0 and 'Use --engine with --file' in alone.stdout + alone.stderr
+    wrong = cli('costs', 'predict', '--to', '+12025550123', '--file', letter, '--engine', 'fast')
+    assert wrong.exit_code != 0 and 'Choose --engine auto, builtin or hylafax.' in wrong.stdout + wrong.stderr
 
 
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):

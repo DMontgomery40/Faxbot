@@ -1185,10 +1185,12 @@ class AdminAPIClient {
 
   // The same for the document itself: its pages drawn and each coding measured on them; nothing is sent or kept.
   // Only the number and the file go: never a patient's details.
-  async predictDocument(to: string, file: File): Promise<DocumentPrediction> {
+  async predictDocument(to: string, file: File, engine: FaxEngineRequest = 'auto'): Promise<DocumentPrediction> {
     const form = new FormData();
     form.append('to', normalizeFaxDestination(to));
     form.append('file', file);
+    // The fax engine the sender would choose (as on Send): a trunk call is measured as that engine sends it.
+    if (engine !== 'auto') form.append('engine', engine);
     return this.json('/routing/predict', { method: 'POST', body: form });
   }
 

@@ -357,6 +357,7 @@ $ faxbot savings predict [OPTIONS]
 * `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
 * `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
 * `--file <file>`: Price this document (PDF or plain text) instead: Faxbot measures each fax coding on its own pages. --pages, --layout and --resolution then come from the document.
+* `--engine ENGINE`: With --file: the fax engine you would choose for the fax (as faxbot send --engine): auto, builtin or hylafax. A call over your SIP trunk is then measured as that engine sends it.  [default: auto]
 * `--help`: Show this message and exit.
 
 ### `faxbot savings analysis`
