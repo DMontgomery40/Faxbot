@@ -264,7 +264,7 @@ def jbig_settings(pages, tools, *, tuned=False, check=False):
     def size(job):
         index, options, mx = job
         return _jbig_size(tools, pbms[index][0], pbms[index][1], options, mx)
-    workers = max(1, min(len(jobs), os.cpu_count() or 1))
+    workers = max(1, min(len(jobs), processors()))
     if workers == 1:
         sizes = [size(job) for job in jobs]
     else:
@@ -433,34 +433,63 @@ def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
 # MH, MR and MMR are measured by libtiff page by page, CPU work during which Pillow keeps the interpreter lock: a
 # document of at least PARALLEL_PAGES pages is measured by up to MEASURE_WORKERS processes side by side, each page
 # exactly as here (defect 71: a 30-page dry run took 49-87 s on a 4-processor install). Smaller documents, and the
-# tests' decode-again check, stay in this process.
+# tests' decode-again check, stay in this process. The processes run at a lower priority (MEASURE_NICENESS), so live
+# calls and the console come first.
 PARALLEL_PAGES = 6
 MEASURE_WORKERS = 8
+MEASURE_NICENESS = 10
 _POOL = None
+_POOL_STOPPED = False  # the processes could not start or stopped working: this process measures from now on
 _POOL_LOCK = threading.Lock()
+
+
+def processors():
+    """The processors this process may run on (its CPU set, which a container or LXC may limit), at least 1."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def _lower_priority():
+    try:
+        os.nice(MEASURE_NICENESS)
+    except OSError:
+        pass
 
 
 def _measuring_pool():
     """The processes that measure pages (started once, on first use, and kept for later documents), or None on a
-    single processor."""
-    global _POOL
-    workers = min(os.cpu_count() or 1, MEASURE_WORKERS)
+    single processor or once they could not start or stopped working (said once in the log)."""
+    global _POOL, _POOL_STOPPED
+    workers = min(processors(), MEASURE_WORKERS)
     if workers < 2:
         return None
     with _POOL_LOCK:
+        if _POOL_STOPPED:
+            return None
         if _POOL is None:
             import multiprocessing
             from concurrent.futures import ProcessPoolExecutor
-            # Started fresh, never forked from this threaded server process.
-            _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'))
+            try:
+                # Started fresh, never forked from this threaded server process.
+                _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'),
+                                            initializer=_lower_priority)
+            except (OSError, ValueError, RuntimeError):
+                logging.getLogger(__name__).warning('The processes that measure fax pages could not start; this '
+                                                    'process measures the pages one at a time.', exc_info=True)
+                _POOL_STOPPED = True
+                return None
         return _POOL
 
 
 def _forget_pool(pool):
-    global _POOL
+    """The measuring processes stopped working: they are not used again by this process (said once)."""
+    global _POOL, _POOL_STOPPED
     with _POOL_LOCK:
         if _POOL is pool:
             _POOL = None
+        _POOL_STOPPED = True
     pool.shutdown(wait=False, cancel_futures=True)
 
 
@@ -611,7 +640,9 @@ def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
         found[key] = {name: list(bits) for name, bits in result.items()}
         try:
             if shared:
-                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                # The installation's alone: the cache folder and each of its folders.
+                Path(where.shared).mkdir(mode=0o700, parents=True, exist_ok=True)
+                path.parent.mkdir(mode=0o700, exist_ok=True)
             _write_kept(path, found)
             if shared:
                 _prune_shared(path.parent)

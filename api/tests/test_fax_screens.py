@@ -556,7 +556,7 @@ def test_a_long_document_is_screened_side_by_side_exactly_as_one_page_at_a_time(
         if found is None:
             return None
         page, changed, fidelity_found = found
-        return page.tobytes(), page.size, changed, fidelity_found
+        return page.tobytes(), page.size, page.info.get('dpi'), changed, fidelity_found
     here = [outcome(friendly._screen_one(job)) for job in jobs]
     side_by_side = [(frame.tobytes(), outcome(found)) for frame, found in friendly._screened_pages(iter(jobs))]
     assert [found for _, found in side_by_side] == here

@@ -361,3 +361,29 @@ def test_measurements_are_kept_by_the_pages_and_mh_and_mmr_are_taken_under_anoth
     # The shared cache holds counts only, readable by the installation alone.
     [kept] = list(shared.glob('*/*.json'))
     assert kept.stat().st_mode & 0o077 == 0 and kept.parent.stat().st_mode & 0o077 == 0
+    assert shared.stat().st_mode & 0o077 == 0
+
+
+def test_processes_that_cannot_start_leave_the_pages_measured_here_and_are_not_tried_again(monkeypatch, caplog):
+    """No /dev/shm, a process limit or another refusal to start: the pages are measured here, with the same result,
+    said once; this process does not try to start them again for every later fax."""
+    import concurrent.futures
+    pages = _long_document()
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MMR'))
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    monkeypatch.setattr(coding, 'processors', lambda: 4)
+    started = []
+
+    def refused(*args, **kwargs):
+        started.append(1)
+        raise OSError('synthetic: no semaphores')
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', refused)
+    with caplog.at_level('WARNING'):
+        assert coding.measure(pages, codings=('MH', 'MMR')) == here
+        assert coding.measure(pages, codings=('MH', 'MMR')) == here
+    assert started == [1]
+    assert [record.getMessage() for record in caplog.records].count(
+        'The processes that measure fax pages could not start; this process measures the pages one at a time.') == 1
