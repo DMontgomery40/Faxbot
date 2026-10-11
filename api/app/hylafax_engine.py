@@ -959,6 +959,8 @@ NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
 _REASONS = (
     (re.compile(r'busy', re.IGNORECASE), 'The fax did not go through: the line was busy.'),
     (re.compile(r'no answer', re.IGNORECASE), 'The fax did not go through: no one answered.'),
+    # Phase B training never succeeded (E105, E137, E156): no page was sent.
+    (re.compile(r'fail\w* to train', re.IGNORECASE), 'The fax machines could not agree on a speed; no page was sent.'),
     # "No response to MPS/EOP/PPS/...": a page went out and its confirmation never came back.
     (re.compile(r'no response to', re.IGNORECASE), NOT_CONFIRMED),
     (re.compile(r'no carrier|no remote fax|not a fax', re.IGNORECASE),
@@ -972,8 +974,13 @@ _REASONS = (
 # mismatch (E013), and no T.30 answer within T1 (E102 receiving, E126 sending). After any other ending
 # the pages may have arrived: npages counts only confirmed pages, and "No response to EOP" (E151) follows
 # a page the other machine may well have printed.
+# Phase B training that never succeeded: "Failure to train modems" (E105), "Failure to train remote modem at
+# 2400 bps or minimum speed" (E137) and "Unspecified failure to train with receiver" (E156). The other machine
+# may have named itself (its CSI) first, but no page data follows failed training, so these end before fax
+# data even after that exchange (#73: HP's test line, 10 October 2026).
+_TRAINING_FAILED = frozenset({'E105', 'E137', 'E156'})
 _BEFORE_FAX_DATA = frozenset({'E001', 'E002', 'E003', 'E004', 'E005', 'E007', 'E008', 'E009', 'E010', 'E011',
-                              'E013', 'E102', 'E126'})
+                              'E013', 'E102', 'E126'}) | _TRAINING_FAILED
 _BEFORE_FAX_DATA_TEXT = re.compile(r'busy|no answer|no carrier', re.IGNORECASE)
 
 
@@ -1020,15 +1027,32 @@ def exchanged(payload: dict) -> bool:
                 or _text64(payload, 'data_format_b64', 32))
 
 
-def ended_before_fax_data(payload: dict, status_text: str) -> bool:
-    """Whether the engine's own code (or, without one, its words) says the call ended before any fax data."""
+def _status_code(payload: dict, status_text: str) -> str:
+    """The engine's own code (``E156``), from the result or, without it, from its words; '' when none."""
     code = payload.get('status_code') if isinstance(payload.get('status_code'), str) else ''
     if not code:
         found = re.search(r'\{(E[0-9]{3})\}', status_text or '')
         code = found.group(1) if found else ''
+    return code
+
+
+def ended_before_fax_data(payload: dict, status_text: str) -> bool:
+    """Whether the engine's own code (or, without one, its words) says the call ended before any fax data."""
+    code = _status_code(payload, status_text)
     if code:
         return code in _BEFORE_FAX_DATA
     return bool(_BEFORE_FAX_DATA_TEXT.search(status_text or ''))
+
+
+def training_failed(payload: dict, status_text: str) -> bool:
+    """Whether the engine's code says Phase B training never succeeded (``_TRAINING_FAILED``) and its session log
+    shows it never did on this call. The same codes also end a retrain after the other machine asked for one (RTN)
+    on a page it may have printed; that call trained first, so the engine reports the speed or coding it agreed
+    (bin/notify keeps them only after "TRAINING succeeded"). Without the session log (no session time) nothing
+    shows the call never trained, so it stays unconfirmed."""
+    return (_status_code(payload, status_text) in _TRAINING_FAILED
+            and isinstance(payload.get('session_seconds'), int)
+            and not _text64(payload, 'signal_rate_b64', 32) and not _text64(payload, 'data_format_b64', 32))
 
 
 def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
@@ -1036,7 +1060,7 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
 
     ``done`` is a delivered fax. A job that never dialed failed for certain,
     and so did a call that ended before any fax data (busy, no answer, no fax
-    machine, no T.30 answer; see _BEFORE_FAX_DATA): another route may send it.
+    machine, no T.30 answer, training that never succeeded; see _BEFORE_FAX_DATA): another route may send it.
     With some pages confirmed it failed and is never sent again by itself
     (``partly_sent``). Every other ending after a dial may have delivered pages
     that were never confirmed, so it waits for a person (uncertain, category
@@ -1058,7 +1082,9 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
         if why == 'failed':
             if pages:
                 return 'failed', failure_sentence(status_text, pages), 'partly_sent'
-            if not exchanged(payload) and ended_before_fax_data(payload, status_text):
+            # Training that never succeeded ends before fax data even after the other machine named itself.
+            if ((not exchanged(payload) or training_failed(payload, status_text))
+                    and ended_before_fax_data(payload, status_text)):
                 return 'failed', failure_sentence(status_text, 0), None
             return UNCERTAIN, NOT_CONFIRMED, 'pages_unconfirmed'
     return UNCERTAIN, None, None

@@ -172,7 +172,8 @@ async def lifespan(application: FastAPI):
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     # Start without the fax engine rather than lock people out of the
                     # console that fixes it; the client keeps retrying in the background.
-                    if not await ami_client.settle(AMI_STARTUP_WAIT_SECONDS):
+                    # With sending off no fax waits for it, so startup does not either.
+                    if not settings.fax_disabled and not await ami_client.settle(AMI_STARTUP_WAIT_SECONDS):
                         logging.getLogger(__name__).warning(ami_client.engine_message())
                 async with AsyncExitStack() as stack:
                     _mount_enabled_mcp(application, mounts)
@@ -535,17 +536,23 @@ def _provider_requires_ami(provider_id: str) -> bool:
 
 
 def _ami_required() -> bool:
-    """Connect AMI when sending is on and Asterisk serves this installation.
+    """Connect AMI when Asterisk serves this installation.
 
     That is when the provider in either direction needs AMI, or when an extra
     outbound route (FAX_OUTBOUND_ROUTES) does: a fax routed to SIP as an
     alternative is sent through the same Asterisk connection.
+
+    Also while sending is off, so a new trunk can be checked (and Apply and
+    connect can restart Asterisk) before sending is turned on; then only when
+    Asterisk shares Faxbot's data folder (``sip_trunk.engine_managed``), so a
+    test run never reaches for an Asterisk that is not there. Sending itself
+    stays off: the outbound store claims no fax while sending is off.
     """
-    if settings.fax_disabled:
+    from . import sip_trunk
+    if not (providerHasTrait("any", "requires_ami")
+            or any(_provider_requires_ami(identity) for identity in settings.outbound_route_providers)):
         return False
-    if providerHasTrait("any", "requires_ami"):
-        return True
-    return any(_provider_requires_ami(identity) for identity in settings.outbound_route_providers)
+    return not settings.fax_disabled or sip_trunk.engine_managed(settings)
 
 
 def _deliveries():

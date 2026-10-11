@@ -295,3 +295,15 @@ def test_every_service_keeps_its_logs_small(path):
         logging = base[name].get('logging') or {}
         assert logging.get('driver') == 'json-file', (path.name, name)
         assert logging.get('options') == {'max-size': '10m', 'max-file': '3'}, (path.name, name)
+
+
+def test_the_fax_engine_gets_dev_null_in_its_spool_without_creating_a_device():
+    """#70: in an unprivileged container (a Proxmox LXC) Docker leaves the image's spool dev/null out and nothing may
+    create a device, so hfaxd never came up and the service restarted forever. The host's /dev/null is mounted
+    there instead, read and written as /dev/null; no start step changes ownership or modes across the spool,
+    which would reach the host's device through that mount."""
+    engine = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']['hylafax']
+    assert '/dev/null:/var/spool/hylafax/dev/null' in engine['volumes']
+    assert 'MKNOD' not in engine['cap_add']
+    start = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
+    assert not re.search(r'\b(chown|chmod|chgrp)\s+(-[a-zA-Z]*R|--recursive)', start)

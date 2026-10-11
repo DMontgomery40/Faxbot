@@ -528,6 +528,52 @@ def test_a_send_that_ended_before_any_fax_data_failed_for_certain(status, code, 
     assert hylafax_engine.result_outcome(payload) == ('failed', sentence, None)
 
 
+TRAINING = [('Failure to train modems {E105}', 'E105'),
+            ('Failure to train remote modem at 2400 bps or minimum speed {E137}', 'E137'),
+            ('Unspecified failure to train with receiver {E156}', 'E156')]
+
+
+@pytest.mark.parametrize('status, code', TRAINING)
+@pytest.mark.parametrize('with_code', [True, False], ids=['code', 'words'])
+def test_a_send_whose_training_never_succeeded_failed_for_certain_after_the_other_machine_named_itself(
+        status, code, with_code):
+    """#73, acceptance 10 October 2026: HP's test line sent its CSI, then HylaFAX gave up with "Unspecified failure
+    to train with receiver {E156}", 0 pages. No page data follows failed training, so another route may send it;
+    it waited for a person instead, with the number held for 30 minutes."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code if with_code else '',
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=45)
+    assert hylafax_engine.result_outcome(payload) == (
+        'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
+
+
+@pytest.mark.parametrize('status, code', TRAINING)
+@pytest.mark.parametrize('trained, session', [
+    ({'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR')}, 60),
+    ({'data_format_b64': b64('2-D MR')}, 60),
+    ({}, None),
+], ids=['retrain-after-rtn', 'coding-agreed', 'no-session-log'])
+def test_a_training_failure_after_a_page_may_have_gone_out_stays_uncertain(status, code, trained, session):
+    """The same codes end a retrain after the other machine asked for one (RTN) on a page it may have printed: that
+    call trained first, so the engine reports what it agreed. Without the session log nothing shows the call never
+    trained. Either way the fax waits for a person and is never sent again by itself."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code,
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=session, **trained)
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
+
+
+@pytest.mark.parametrize('status, code', [
+    ('No response to EOP repeated 3 tries {E151}', 'E151'),
+    ('No response to MPS repeated 3 tries {E150}', 'E150'),
+    ('Unable to transmit page (giving up after RTN) {E130}', 'E130'),
+    ('Unable to transmit page (NAK at all possible signalling rates) {E132}', 'E132'),
+])
+def test_a_send_whose_page_may_have_gone_out_stays_uncertain_after_the_other_machine_named_itself(status, code):
+    """The guard beside #73: an ending after page data could have gone out keeps waiting for a person."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code,
+                     remote_station_b64=b64('HP TEST LINE'))
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
+
+
 def test_no_response_to_means_the_pages_were_not_confirmed():
     assert hylafax_engine.failure_sentence('No response to EOP repeated 3 tries {E151}', 0) == \
         hylafax_engine.NOT_CONFIRMED
@@ -602,9 +648,11 @@ def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publis
     services = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']
     base = services['hylafax']
     # The engine parses fax and TLS data from strangers: only its own folders, its settings read-only,
-    # and never Faxbot's data folder (so never Asterisk's files there either).
+    # and never Faxbot's data folder (so never Asterisk's files there either). The one host path is /dev/null,
+    # mounted as the spool's dev/null for unprivileged containers (#70; test_sip_compose.py).
     assert 'ports' not in base and sorted(base['volumes']) == [
-        'hylafax-out:/faxdata/hylafax-out', 'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
+        '/dev/null:/var/spool/hylafax/dev/null', 'hylafax-out:/faxdata/hylafax-out',
+        'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
     assert not any(item.startswith('faxdata') for item in base['volumes'])
     assert 'hylafax-settings:/faxdata/hylafax' in services['api']['volumes']
     assert 'hylafax-out:/faxdata/hylafax-out:ro' in services['api']['volumes']

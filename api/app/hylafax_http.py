@@ -326,16 +326,42 @@ def _require_engine(x_internal_secret):
         raise HTTPException(401, detail='Invalid internal secret')
 
 
-def _require_receiving(path):
-    """Receiving over the trunk is off, or another provider receives: for the engine's reports a state that
-    may change, so 503 (the engine keeps the report and sends it again), never 404."""
-    from .inbound.http import _require_route
+def _require_receiving(path, payload):
+    """Receiving is off, or the trunk the call came in on does not receive: for the engine's reports a state
+    that may change, so 503 (the engine keeps the report and sends it again), never 404. The gate is
+    Asterisk's (``inbound.http.handover_account``)."""
+    from .inbound.http import handover_account
     try:
-        _require_route('sip', path)
+        handover_account(path, payload)
     except HTTPException as error:
         if error.status_code != 404:
             raise
         raise HTTPException(503, detail='Receiving over the SIP trunk is off; the fax engine keeps its report.') from None
+
+
+# Received calls already marked as held by the engine, with the reason: the engine posts again every few seconds.
+_HELD = {}
+
+
+def _held(request, payload):
+    """A received fax the engine keeps because Faxbot refused its hand-over: its call reads why (Recent calls),
+    never "came in, but no pages arrived". Recorded once per call and reason; the hand-over that is taken
+    later replaces it with the received fax."""
+    from .sip_calls import NOT_HANDED_OVER
+    call_id = str(payload.get('uniqueid') or '')
+    reason = 'not_receiving' if not settings.inbound_enabled else 'trunk_off'
+    if not call_id or _HELD.get(call_id) == reason:
+        return
+    call = payload.get('call') if isinstance(payload.get('call'), dict) else {}
+    row = _engine_receive(request, call_id, success=False,
+                          pages=call.get('pages') if isinstance(call.get('pages'), int) else None,
+                          station=hylafax_engine._text64(call, 'remote_station_id_b64', 40),
+                          reason=f'{NOT_HANDED_OVER}: {reason}', did=payload.get('to_number'),
+                          caller=payload.get('from_number'), inbound_fax_id=None, trunk=payload.get('trunk'))
+    if row is not None:
+        if len(_HELD) >= 1000:
+            _HELD.clear()
+        _HELD[call_id] = reason
 
 
 @router.post('/_internal/hylafax/inbound')
@@ -344,7 +370,12 @@ async def engine_inbound(request: Request, payload: dict = Body(...),
     """A fax the engine received: the same hand-over as Asterisk's, for images in the engine's out folder only."""
     from .inbound.http import receive_handover
     _require_engine(x_internal_secret)
-    _require_receiving('/_internal/hylafax/inbound')
+    try:
+        _require_receiving('/_internal/hylafax/inbound', payload)
+    except HTTPException as error:
+        if error.status_code == 503:
+            await run_lifecycle_step(lambda: _held(request, payload))
+        raise
     poll = await run_lifecycle_step(lambda: _poll_of(request, payload))
     if poll is not None:
         # A fax collected by polling: from the number Faxbot called (the engine's line had no caller).
@@ -419,7 +450,7 @@ async def engine_receive_failed(request: Request, payload: dict = Body(...),
                                 x_internal_secret: Optional[str] = Header(default=None)):
     """A call the engine answered that left no fax (hylafax/bin/sessions): its record and sentence."""
     _require_engine(x_internal_secret)
-    _require_receiving('/_internal/hylafax/received-failed')
+    _require_receiving('/_internal/hylafax/received-failed', payload)
     engine_id = payload.get('engine_id') if isinstance(payload.get('engine_id'), str) else ''
     key = payload.get('key') if isinstance(payload.get('key'), str) else ''
     token = payload.get('token') if isinstance(payload.get('token'), str) else ''

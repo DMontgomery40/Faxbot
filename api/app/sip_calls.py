@@ -79,6 +79,8 @@ HANDOVER_REASONS = {
     'no_secret': 'the fax engine has no inbound secret yet; select Apply and connect',
     'refused': "Faxbot refused the fax engine's inbound secret; select Apply and connect",
     'not_receiving': 'receiving faxes is turned off in Faxbot',
+    # Only the SSL Fax engine's hand-over can tell this apart (hylafax_http._held); the engine keeps the fax.
+    'trunk_off': 'receiving over the SIP trunk is turned off in Faxbot',
     'unreadable': 'Faxbot could not read the received image',
     'unreachable': 'Faxbot could not be reached',
     'failed': 'Faxbot answered with an error',
