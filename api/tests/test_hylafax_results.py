@@ -4,6 +4,7 @@ the engine's own secret and folders."""
 import base64
 from datetime import datetime, timedelta
 import itertools
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -164,14 +165,19 @@ def test_only_the_engine_switches_to_audio_after_its_t38_call_heard_no_fax_machi
     assert not switched and engine and set(engine) == {'2026-10-05T01:00:40Z'}
 
 
-def test_an_audio_engine_call_does_not_switch_anything(calls, monkeypatch):
-    engine = []
+def test_an_audio_engine_call_that_heard_no_fax_machine_never_moves_it_to_audio_but_asks_for_t38_again(
+        calls, monkeypatch):
+    """engine_t38_restored itself does nothing unless the engine is on audio fax (test_hylafax_engine)."""
+    engine, back, switched = [], [], []
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', switched.append)
     monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
     calls.record_engine_call(engine_event('0'), now=NOW)
     calls.record_engine_call(trunk_event('DISABLED', ''), now=NOW)
     engine_side(calls, 'No carrier detected {E002}')
     sip_calls.engine_audio_check(calls.for_attempt(ATTEMPT)[-1])
-    assert calls.for_attempt(ATTEMPT)[-1]['verdict'] == sip_calls.NO_FAX_SIGNAL and not engine
+    assert calls.for_attempt(ATTEMPT)[-1]['verdict'] == sip_calls.NO_FAX_SIGNAL
+    assert not engine and not switched and back == [True]
 
 
 # Restarts -----------------------------------------------------------------------------------------------
@@ -241,6 +247,7 @@ class ResultStore:
 
     def observe(self, job_id, **fields):
         self.calls.append(('observed', fields['status'], fields['error']))
+        self.category = fields.get('error_category')
         return True
 
 
@@ -350,6 +357,35 @@ def test_a_failed_send_gets_the_engines_sentence_and_only_the_engine_goes_to_aud
     answer, calls, switched = result_route(monkeypatch, payload, row)
     assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.NO_SIGNAL)]
     assert not switched and engine == ['2026-10-05T01:00:40Z']
+
+
+@pytest.mark.parametrize('verdict, category', [
+    (sip_calls.NO_FAX_SIGNAL, None), (sip_calls.CLEARED_AT_ONCE, None), ('no_media_back', None),
+    ('no_fax_answer', None),
+    # Unchanged here: a call judged person-answered fails and takes no other route by itself (category_for).
+    (sip_calls.PERSON_ANSWERED, sip_calls.PERSON_ANSWERED),
+])
+def test_a_failed_audio_send_keeps_its_failover_while_the_engine_goes_back_to_t38(monkeypatch, verdict, category):
+    """The 2026-10-11 outage: on audio, Telnyx ended each call 3 s after its own T.38 request. The fax is observed
+    failed with the same category as before the switch-back existed (no category: its next route takes it); only
+    the engine's next call changes."""
+    row = {'verdict': verdict, 'ended_at': '2026-10-11T07:28:00Z', 't38': 'no', 'direction': 'outbound',
+           'error_cause': verdict + ': No carrier detected E002'}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'No carrier detected {E002}').decode()}
+    audio, back, stores = [], [], []
+
+    class Kept(ResultStore):
+        def __init__(self):
+            super().__init__()
+            stores.append(self)
+    monkeypatch.setattr(sys.modules[__name__], 'ResultStore', Kept)
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: audio.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
+    answer, calls, switched = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.verdict_sentence(verdict))]
+    assert stores[0].category == category
+    assert not switched and audio == [] and back == [True]
 
 
 def test_a_send_the_other_machine_answered_carries_the_engines_own_reason(monkeypatch):

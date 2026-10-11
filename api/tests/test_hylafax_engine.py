@@ -633,20 +633,124 @@ def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows(
     assert all(len(sentence) <= 80 and sentence.endswith('.') for sentence in sentences), sentences
 
 
-@pytest.mark.parametrize('row, switched', [
-    ({'verdict': 'no_fax_signal', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, True),
-    ({'verdict': 'no_fax_signal', 't38': 'no', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    ({'verdict': 'remote_fax_failed', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    ({'verdict': 'sent', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    (None, False),
+@pytest.mark.parametrize('verdict, t38, direction, change', [
+    ('no_fax_signal', 'yes', 'outbound', 'audio'), ('no_fax_signal', 'yes', 'inbound', 'audio'),
+    # On audio, every way a send heard no fax machine puts the engine back on T.38 (2026-10-11: Telnyx ended
+    # each audio call 3 s after its own T.38 request, which nothing answered).
+    ('no_fax_signal', 'no', 'outbound', 't38'), ('cleared_at_once', 'no', 'outbound', 't38'),
+    ('person_answered', 'no', 'outbound', 't38'), ('no_media_back', 'no', 'outbound', 't38'),
+    ('no_fax_answer', 'no', 'outbound', 't38'),
+    # A received call that left no fax may be a person or a nuisance call: nothing changes.
+    ('no_fax_signal', 'no', 'inbound', None), ('no_media_back', 'no', 'inbound', None),
+    # A fax machine answered, the call is not over, or nothing failed: nothing changes.
+    ('remote_fax_failed', 'no', 'outbound', None), ('wrong_station', 'no', 'outbound', None),
+    ('sent', 'no', 'outbound', None), ('no_fax_signal', 'unknown', 'outbound', None),
+    ('remote_fax_failed', 'yes', 'outbound', None), ('cleared_at_once', 'yes', 'outbound', None),
+    ('sent', 'yes', 'outbound', None), (None, None, None, None),
 ])
-def test_an_engine_t38_call_that_heard_no_fax_machine_moves_only_the_engine_to_audio(monkeypatch, row, switched):
+def test_an_engine_call_that_heard_no_fax_machine_moves_only_the_engine_between_t38_and_audio(
+        monkeypatch, verdict, t38, direction, change):
     from app import sip_calls, sip_fax_mode
-    installation, engine = [], []
+    installation, audio, back = [], [], []
     monkeypatch.setattr(sip_fax_mode, '_on_fax_event', installation.append)
-    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: audio.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
+    row = None if verdict is None else {'verdict': verdict, 't38': t38, 'direction': direction,
+                                        'ended_at': '2026-10-05T11:19:12Z'}
     sip_calls.engine_audio_check(row)
-    assert not installation and bool(engine) == switched
+    assert not installation
+    assert (audio, back) == {'audio': (['2026-10-05T11:19:12Z'], []), 't38': ([], [True]), None: ([], [])}[change]
+
+
+@pytest.mark.asyncio
+async def test_an_audio_call_that_heard_no_fax_machine_puts_the_engine_back_on_t38_only_from_audio(
+        tmp_path, monkeypatch):
+    from app import audit, config, sip_calls
+
+    class Connected(FakeAmi):
+        def __init__(self):
+            super().__init__()
+            self._connected = asyncio.Event()
+            self._connected.set()
+    values, ami_now, events = trunk_values(tmp_path), Connected(), []
+    monkeypatch.setattr(config, 'settings', values)
+    monkeypatch.setattr(ami, 'ami_client', ami_now)
+    monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: events.append((event, fields)))
+    audio_failed = {'verdict': sip_calls.NO_FAX_SIGNAL, 't38': 'no', 'direction': 'outbound',
+                    'ended_at': '2026-10-11T04:29:18Z'}
+    # On T.38 already: nothing to undo, nothing recorded, nothing sent to Asterisk.
+    assert hylafax_engine.engine_t38_restored() is False
+    sip_calls.engine_audio_check(audio_failed)
+    await asyncio.gather(*hylafax_engine._pending_tasks)
+    assert events == [] and ami_now.deletes == [] and hylafax_engine.engine_t38_off(values) is None
+    # On audio (one T.38 call heard no fax machine): the next audio failure puts it back, once.
+    hylafax_engine.note_t38_failure(values, '2026-10-11T03:56:56Z')
+    sip_calls.engine_audio_check(audio_failed)
+    sip_calls.engine_audio_check(audio_failed)  # the other half of the same call
+    await asyncio.gather(*hylafax_engine._pending_tasks)
+    assert hylafax_engine.engine_t38_off(values) is None
+    assert hylafax_engine.call_settings(values, PEER, engine=True).t38 is True
+    assert events == [('sslfax_engine_t38_restored', {'backend': 'sip', 'reason': 'no_fax_signal_on_audio'})]
+    assert ami_now.deletes == [('faxbot-engine', 't38')] and ami_now.puts == []
+
+
+@pytest.mark.asyncio
+async def test_the_engine_alternates_between_t38_and_audio_and_never_stays_on_a_mode_that_fails(
+        tmp_path, monkeypatch):
+    """T.38 fails, audio fails, T.38 fails again: each failure moves the engine's next call to the other mode,
+    and Asterisk's copy for received calls follows each move."""
+    from app import audit, config, sip_calls
+
+    class Connected(FakeAmi):
+        def __init__(self):
+            super().__init__()
+            self._connected = asyncio.Event()
+            self._connected.set()
+    values, ami_now = trunk_values(tmp_path), Connected()
+    monkeypatch.setattr(config, 'settings', values)
+    monkeypatch.setattr(ami, 'ami_client', ami_now)
+    monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: None)
+    modes = []
+    for t38 in ('yes', 'no', 'yes', 'no'):
+        sip_calls.engine_audio_check({'verdict': sip_calls.NO_FAX_SIGNAL, 't38': t38, 'direction': 'outbound',
+                                      'ended_at': None})
+        await asyncio.gather(*hylafax_engine._pending_tasks)
+        modes.append(hylafax_engine.call_settings(values, PEER, engine=True).t38)
+    assert modes == [False, True, False, True]
+    assert ami_now.puts == [('faxbot-engine', 't38', 'audio')] * 2
+    assert ami_now.deletes == [('faxbot-engine', 't38')] * 2
+
+
+def test_an_audio_engine_call_never_asks_the_carrier_for_t38():
+    """The engine's dial handler adds T.38 negotiation and the RFC 6913 T.38 preference only on a gateway call."""
+    dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    lines = dialplan.split('[faxbot-engine-dial]\n', 1)[1].split('\n\n', 1)[0].splitlines()
+    steps = [line.split(',', 2)[2] if line.startswith('exten') else line.strip()[len('same => n'):].lstrip(',')
+             for line in lines]
+
+    def run(gateway, preference):
+        done, at, labels = [], 0, {}
+        for index, step in enumerate(steps):
+            if step.startswith('('):
+                labels[step[1:step.index(')')]] = index
+        while at < len(steps):
+            step = steps[at].split(')', 1)[1].lstrip(',') if steps[at].startswith('(') else steps[at]
+            if step.startswith('GotoIf('):
+                variable, wanted, label = (step.split('${')[1].split('}')[0], step.split('!= "')[1].split('"')[0],
+                                           step.split('?')[1].rstrip(')'))
+                value = {'FAXBOT_GATEWAY': gateway, 'FAXBOT_PREFERENCE': preference}[variable]
+                if value != wanted:
+                    at = labels[label]
+                    continue
+            elif step.startswith('Return('):
+                break
+            else:
+                done.append(step)
+            at += 1
+        return [step for step in done if 'FAXOPT' in step or 'Accept-Contact' in step]
+    asks = ['Set(FAXOPT(negotiate_both)=yes)', 'Set(PJSIP_HEADER(add,Accept-Contact)=*\\;+sip.fax="t38")']
+    assert run('yes', '1') == asks and run('yes', '0') == asks[:1]
+    assert run('no', '1') == run('no', '0') == []
 
 
 def test_the_engines_own_audio_choice_changes_only_its_calls_and_apply_clears_it(tmp_path, monkeypatch):
