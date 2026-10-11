@@ -251,7 +251,7 @@ def permission_for(engine, values, account, job, *, rule=None):
     codec_ok = setting_for(engine, number, chosen) is not None
     # The codings this call may use, measured on each candidate's pages (pages/coding.py): Faxbot's own engines on
     # the trunk only, since a fax service codes the pages itself.
-    usable = _usable_codings(engine, values, route, mode, number, cap)
+    usable = _usable_codings(engine, values, route, mode, number, cap, requested=job.get('engine_request'))
     return Permission(number, chosen, cap, packing_ok, trim_ok, match_ok, codec_ok, lighten, why, whiten, usable)
 
 
@@ -739,9 +739,10 @@ def _write_sheets(out_tiff, frames, limit):
     temporary.replace(path)
 
 
-def _usable_codings(engine, values, route, mode, number, cap):
+def _usable_codings(engine, values, route, mode, number, cap, *, requested=None):
     """The codings a call to ``number`` may request (``pages.coding.usable_for``), or None when Faxbot's own engines
-    do not place it or the records it reads cannot be read (logged; the engines then code as they always did)."""
+    do not place it or the records it reads cannot be read (logged; the engines then code as they always did).
+    ``requested``: the engine the fax's sender chose (``outbound_store.requested_engine_on``)."""
     if route != 'sip' or mode != 'image':
         return None
     import sqlalchemy as sa
@@ -750,7 +751,7 @@ def _usable_codings(engine, values, route, mode, number, cap):
     from . import coding
     try:
         recipient = hylafax_engine.recipient_limits(engine, number)
-        return coding.usable_for(engine, values, number, recipient=recipient, capability=cap)
+        return coding.usable_for(engine, values, number, recipient=recipient, capability=cap, requested=requested)
     except (sa.exc.SQLAlchemyError, DeliveryStoreError):
         logging.getLogger(__name__).warning('The fax codings this number takes could not be read; the call codes its '
                                             'pages as usual.', exc_info=True)
