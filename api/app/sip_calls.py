@@ -73,6 +73,10 @@ NO_DATA_VERDICTS = frozenset({'no_media_back', 'no_t38_data_back', 'no_fax_data_
 NOT_HANDED_OVER = 'not_handed_over'
 VERDICTS = NO_DATA_VERDICTS | {'no_fax_answer', 'remote_fax_failed', NOT_HANDED_OVER, NO_FAX_SIGNAL, PERSON_ANSWERED,
                                 WRONG_STATION, CLEARED_AT_ONCE}
+# Verdicts of an answered engine call on which the engine heard no fax machine. On an audio call the carrier's
+# own T.38 request, which nothing answers, ends the call within seconds; depending on whether sound came back
+# and how soon, engine_verdict names that no_fax_signal, cleared_at_once or person_answered.
+NO_FAX_HEARD = frozenset({NO_FAX_SIGNAL, CLEARED_AT_ONCE, PERSON_ANSWERED, 'no_media_back', 'no_fax_answer'})
 # What the Asterisk notify script prints when a hand-over fails, and the plain
 # reason after "A fax was received but could not be handed to Faxbot: ".
 HANDOVER_REASONS = {
@@ -1167,12 +1171,18 @@ def _on_engine_missed(event):
 
 def engine_audio_check(row):
     """An engine call on T.38 on which the engine heard no fax machine moves the engine (not the built-in
-    engine, not the installation's T.38 setting) to audio fax from its next call on. Runs when any part of
-    the call arrives; recorded once. Call from the event loop."""
-    if row is None or row.get('verdict') != NO_FAX_SIGNAL or row.get('t38') != 'yes':
+    engine, not the installation's T.38 setting) to audio fax from its next call on; an engine send on audio
+    that heard no fax machine either puts it back on T.38 (engine_t38_restored). Runs when any part of the
+    call arrives; recorded once. Call from the event loop."""
+    if row is None:
         return
     from . import hylafax_engine
-    hylafax_engine.engine_t38_failed(at=row.get('ended_at'))
+    if row.get('t38') == 'yes':
+        if row.get('verdict') == NO_FAX_SIGNAL:
+            hylafax_engine.engine_t38_failed(at=row.get('ended_at'))
+    elif row.get('t38') == 'no' and row.get('direction') == 'outbound' and row.get('verdict') in NO_FAX_HEARD:
+        # Sends only: a voice call or a nuisance call to the fax line also leaves no fax.
+        hylafax_engine.engine_t38_restored()
 
 
 def attach(ami_client, engine):
