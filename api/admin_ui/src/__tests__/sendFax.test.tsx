@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import AdminAPIClient from '../api/client';
+import AdminAPIClient, { RETRY_MISMATCH } from '../api/client';
 import SendFax, { ENGINE_CHOICES } from '../components/SendFax';
 import { PENDING_SEND_LIFETIME_MS } from '../components/sendIntent';
 import { server } from '../test/server';
@@ -204,6 +204,16 @@ describe('Send keeps the send identity across a reload', () => {
       setItem.mockRestore();
       getItem.mockRestore();
     }
+  });
+
+  it("says in plain words when a retry doesn't match the fax sent before, and links Sent", async () => {
+    server.use(http.post('/fax', () => HttpResponse.json(
+      { detail: 'Idempotency-Key already belongs to a different fax request.' }, { status: 409 })));
+    openSend();
+    await send('+15551234567', document());
+    expect(await screen.findByText(RETRY_MISMATCH)).toBeTruthy();
+    expect(screen.queryByText(/Idempotency|409|To retry without creating a duplicate/)).toBeNull();
+    expect(screen.getByTestId('send-open-sent')).toBeTruthy();
   });
 });
 
@@ -518,7 +528,7 @@ describe('Before sending', () => {
       await late;
       return HttpResponse.json({ number: params.number, display_name: null, notes: null, preferred_route: null,
         accepts_references: false, version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null,
-        // The carrier trunk is set up, so the fax engine is offered too.
+        // The carrier trunk is set up, so the fax engine is offered once the fax will place a call.
         available_routes: [{ route: 'sip', label: 'Telnyx' }],
         recommended_routes: [{ route: 'local', label: 'This Faxbot', reason: 'own_number',
           explanation: 'One of your own fax numbers.', estimated_cost_one_page: null, rate: null,
@@ -544,10 +554,13 @@ describe('Before sending', () => {
     release();
     expect(above(await screen.findByTestId('send-by-call', {}, { timeout: 2000 }))).toBe(true);
     expect(above(await screen.findByTestId('send-now', {}, { timeout: 2000 }))).toBe(true);
-    expect(above(await screen.findByTestId('send-engine', {}, { timeout: 2000 }))).toBe(true);
     expect(screen.queryByTestId('send-by-call-pending')).toBeNull();
     expect(screen.queryByTestId('send-now-pending')).toBeNull();
     expect(screen.queryByTestId('send-engine-pending')).toBeNull();
+    // One of your own numbers goes straight into Received with no call, so no engine, until a real call is asked for.
+    expect(screen.queryByTestId('send-engine')).toBeNull();
+    fireEvent.click(screen.getByTestId('send-by-call').querySelector('input') as HTMLInputElement);
+    expect(above(await screen.findByTestId('send-engine'))).toBe(true);
     expect(above(await screen.findByTestId('send-recipient-check', {}, { timeout: 2000 }))).toBe(false);
   });
 
@@ -697,6 +710,36 @@ describe('The fax engine for one fax', () => {
     expect(screen.queryByTestId('send-engine-pending')).toBeNull();
     attachAndSend(document());
     await waitFor(() => expect(posted).toEqual([null]));
+  });
+
+  it('retries after a reload with the engine picked before, so the server sees the same fax', async () => {
+    server.use(routesFor({ '+12025550123': ['sip'] }));
+    const answers: Answer[] = ['lost', 'accepted'];
+    const posted: string[] = [];
+    server.use(http.post('/fax', async ({ request }) => {
+      posted.push(`${request.headers.get('Idempotency-Key')} ${(await request.formData()).get('engine')}`);
+      if (answers.shift() === 'lost') return HttpResponse.error();
+      return HttpResponse.json({ id: 'b'.repeat(32), status: 'queued', delivery_state: 'ready' }, { status: 202 });
+    }));
+    const first = openSend();
+    fireEvent.change(numberBox(), { target: { value: '+12025550123' } });
+    await chooseEngine(/^Built-in engine/);
+    attachAndSend(document());
+    expect(await screen.findByText(lostAnswer)).toBeTruthy();
+    first.unmount(); // the page is reloaded, and with it the pick
+
+    openSend();
+    fireEvent.change(numberBox(), { target: { value: '+12025550123' } });
+    await screen.findByTestId('send-engine', {}, { timeout: 2000 });
+    attachAndSend(document());
+    expect(await screen.findByText(/^Fax queued/)).toBeTruthy();
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toBe(posted[0]);
+    expect(posted[0]).toMatch(/ builtin$/);
+    // Accepted: nothing is kept, and the next fax starts on Automatic.
+    expect(window.sessionStorage.getItem('faxbot_pending_send')).toBeNull();
+    fireEvent.change(numberBox(), { target: { value: '+12025550123' } });
+    await waitFor(() => expect(screen.getByTestId('send-engine').textContent).toContain('Automatic'), { timeout: 2000 });
   });
 
   it('leaves it out for someone who may not see routes', async () => {

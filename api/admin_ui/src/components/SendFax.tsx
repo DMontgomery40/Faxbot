@@ -27,7 +27,9 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { FaxRefusedError, isForbidden, normalizeFaxDestination, type FaxPatient } from '../api/client';
+import AdminAPIClient, {
+  FaxRefusedError, FaxRetryMismatchError, isForbidden, normalizeFaxDestination, type FaxPatient,
+} from '../api/client';
 import type { AdminConfig, FaxEngineRequest, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
@@ -286,11 +288,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     return () => { live = false; };
   }, [client]);
   // The fax engine for this one fax, offered when a trunk is among the number's routes, so one of Faxbot's own
-  // engines may place its call. Automatic unless the sender picks one; posted only while it is offered.
+  // engines may place its call; one of your own numbers places no call unless Send by call is ticked. Automatic
+  // unless the sender picks one; posted only while it is offered.
   const [engine, setEngine] = useState<FaxEngineRequest>('auto');
   const enginePending = numberKey !== null && (localPending || trunkKeys === null);
   const engineOffered = !enginePending && numberKey !== null && localFor?.number === numberKey
-    && localFor.routes.some((key) => trunkKeys!.has(key));
+    && localFor.routes.some((key) => trunkKeys!.has(key)) && (!ownNumber || byCall);
   const chosenEngine: FaxEngineRequest = engineOffered ? engine : 'auto';
   // A recipient's health record system (a FHIR route) among this number's routes asks for the patient; someone
   // who may not see the routes can add the patient on request.
@@ -403,10 +406,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     setResult(null);
 
     try {
+      // The engine this send asks for: the pick while it is offered, or the one the earlier send asked for.
+      let postedEngine = engineOffered && engine !== 'auto' ? engine : undefined;
       if (!intentRef.current || intentRef.current.destination !== destination || intentRef.current.file !== file) {
-        // The same document to the same number after a reload continues that send.
+        // The same document to the same number after a reload continues that send, with the engine it asked for.
         const fingerprint = sendFingerprint(destination, file!);
         const earlier = loadPendingSend(fingerprint);
+        if (earlier) {
+          postedEngine = earlier.engine;
+          setEngine(earlier.engine ?? 'auto');
+        }
         intentRef.current = earlier
           ? { key: earlier.key, destination, file: file!, queueOnly: earlier.queueOnly,
             maxFileSizeBytes: earlier.maxFileSizeBytes, fingerprint, createdAt: earlier.createdAt }
@@ -417,12 +426,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       const intent = intentRef.current;
       // Kept before the upload starts, so a lost answer can be retried with the same key.
       savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
-        maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
+        maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt, engine: postedEngine });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
           byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
-          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient,
-          engine: engineOffered ? engine : undefined });
+          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -455,7 +463,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       setResult({
         type: 'error',
         message: `${err instanceof TypeError ? "Couldn't reach the server, so the fax may or may not have been submitted."
-          : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
+          : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current
+            && !(err instanceof FaxRetryMismatchError) ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
         sentLink: true,
       });
     } finally {

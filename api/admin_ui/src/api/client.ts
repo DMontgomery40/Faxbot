@@ -206,6 +206,10 @@ export function plainRefusal(error: unknown): string | null {
 export class FaxRefusedError extends Error {}
 // The fax may or may not have been accepted: Send keeps the number and document and links Sent.
 export class FaxUnconfirmedError extends Error {}
+// A retry whose send key already belongs to a different fax (the server's 409): nothing new was sent, and the fax
+// sent before may be in Sent. Send links Sent and does not offer the same retry again.
+export const RETRY_MISMATCH = "This retry doesn't match the fax you sent before; check Faxes → Sent before sending it again.";
+export class FaxRetryMismatchError extends Error {}
 
 // The server's fixed refusal for plugin routes while provider plugins are turned off.
 const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
@@ -990,8 +994,10 @@ class AdminAPIClient {
         if (detail === 'Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.') {
           throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
         }
-        if (detail === 'Idempotency-Key already belongs to a different fax request.'
-            || detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
+        if (detail === 'Idempotency-Key already belongs to a different fax request.') {
+          throw new FaxRetryMismatchError(RETRY_MISMATCH);
+        }
+        if (detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
           throw new Error(detail);
         }
       }
