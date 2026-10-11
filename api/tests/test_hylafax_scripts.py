@@ -388,10 +388,10 @@ def entrypoint(tmp_path):
                    'FAXBOT_ENGINE_READY_SECONDS': '3', 'HOME': str(tmp_path)}
     started = []
 
-    def start():
+    def start(**extra):
         # The engine's own lines go to a file: the daemons it starts keep their output open after it exits.
         with open(tmp_path / 'engine.log', 'w') as log:
-            process = subprocess.Popen([bash, str(ROOT / 'hylafax' / 'entrypoint.sh')], env=environment,
+            process = subprocess.Popen([bash, str(ROOT / 'hylafax' / 'entrypoint.sh')], env={**environment, **extra},
                                        stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         started.append(process)
         return process
@@ -506,6 +506,24 @@ def test_a_daemon_that_stops_is_noticed_and_the_engine_starts_again(entrypoint, 
     assert _wait(lambda: process.poll() is not None)
     assert process.returncode == 1
     assert (_status(data)['state'], _status(data)['reason']) == (state, reason)
+
+
+def test_the_session_logs_are_read_when_one_is_added_and_with_each_check_of_the_lines(entrypoint):
+    """Each reading of the session logs starts a few programs, so the running engine reads them when a session
+    log was added and with each check of the lines, not every few seconds."""
+    start, root, data = entrypoint
+
+    def readings():
+        calls = (root / 'calls').read_text().splitlines()
+        return sum(1 for call in calls if call.startswith('runuser') and call.endswith('/sessions'))
+    process = start(FAXBOT_ENGINE_LIVENESS_SECONDS='30')
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    time.sleep(2.5)  # the first round reads them once (nothing was read before)
+    before = readings()
+    time.sleep(3.5)
+    assert readings() == before and process.poll() is None
+    (root / 'var' / 'spool' / 'hylafax' / 'log' / 'c00000001').write_text('a new session\n')
+    assert _wait(lambda: readings() == before + 1, 5)
 
 
 def test_a_modem_lock_left_by_a_restart_never_keeps_a_line_out_of_service(entrypoint):

@@ -485,15 +485,20 @@ registration_refused() {
 
 line_down=''
 next_check=$((SECONDS + liveness_seconds))
+sessions_checked=$spool/etc/faxbot-sessions-checked
 while sleep "$check_seconds"; do
   # Received faxes and kept reports go to Faxbot (as uucp, like every other engine script).
   if compgen -G "$state/received/*.ticket" >/dev/null; then
     runuser -u uucp -- env FAXBOT_DATA="$data" FAXBOT_ENGINE_OUT="$out" FAXBOT_HYLAFAX_SPOOL="$spool" \
       FAXBOT_ENGINE_STATE="$state" /usr/local/lib/faxbot-engine/handover || true
   fi
-  # Received calls that left no fax get a report too (from the session logs).
-  runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
-    /usr/local/lib/faxbot-engine/sessions || true
+  # Received calls that left no fax get a report too (from the session logs): read when a session log was
+  # added since the last reading, and with each check of the lines (a session open then may have finished).
+  if [ "$spool/log" -nt "$sessions_checked" ] || (( SECONDS >= next_check )); then
+    : > "$sessions_checked"
+    runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
+      /usr/local/lib/faxbot-engine/sessions || true
+  fi
   if compgen -G "$state/results/*.report" >/dev/null; then
     runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
       /usr/local/lib/faxbot-engine/deliver || true
