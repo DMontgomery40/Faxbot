@@ -26,7 +26,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured', 'operator_settled'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -129,6 +129,39 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
     connection.execute(events.insert().values(id=uuid4().hex, job_id=job_id,
         attempt_id=attempt_id, kind=kind, dedupe_key=dedupe_key,
         details=json.dumps(details or {}, sort_keys=True, separators=(',', ':')), created_at=now))
+
+
+# What a person's settlement of an uncertain fax (work/certainty_service.settle) makes of its delivery.
+SETTLED_STATES = {'delivered': 'success', 'not_delivered': 'failed'}
+
+
+def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt_id, outcome, actor, now):
+    """End a fax waiting for review by a person's decision, in the caller's write transaction; True when it did.
+
+    Delivered makes the delivery ``success`` and not delivered makes it ``failed``, so it stops holding its number
+    (``capacity.HOLDING``) and the next fax to that number goes at once, instead of waiting out ``capacity.HOLD``
+    (defect 45). Only a delivery still waiting for review on that same attempt changes, as a compare-and-set on its
+    version: a provider result that came first, or a fax already sent again, is left as it is. The attempt keeps
+    what the provider said (its phase stays ``uncertain``), so no route fallback ever picks the fax up: nothing is
+    sent again unless the person asks for it. The decision is kept as an ``operator_settled`` event.
+    """
+    state = SETTLED_STATES.get(outcome)
+    if state is None:
+        return False
+    row = connection.execute(sa.select(deliveries.c.state, deliveries.c.attempt_id, deliveries.c.version).where(
+        deliveries.c.id == job_id)).mappings().one_or_none()
+    if row is None or row['state'] != 'reconciliation_required' or row['attempt_id'] != attempt_id:
+        return False
+    changed = connection.execute(deliveries.update().where(
+        deliveries.c.id == job_id, deliveries.c.version == row['version'],
+        deliveries.c.state == 'reconciliation_required', deliveries.c.attempt_id == attempt_id).values(
+        state=state, version=row['version'] + 1, updated_at=now, claim_expires_at=None, next_poll_at=None))
+    if changed.rowcount != 1:
+        return False
+    connection.execute(jobs.update().where(jobs.c.id == job_id).values(status=state, updated_at=now))
+    _event(connection, events, job_id, 'operator_settled', now, attempt_id=attempt_id,
+           details={'outcome': outcome, 'state': state, 'actor': actor})
+    return True
 
 
 def _routes_reach(values):

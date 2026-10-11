@@ -10,6 +10,7 @@ import sqlalchemy as sa
 
 from api.tests.test_schema import database  # noqa: F401 - fixture
 from api.tests.test_access_policy import NOW, World
+from api.app.routing.database import utcnow
 from api.app.work import certainty_checks as checks
 from api.app.work.certainty import CertaintyStore, CertaintyWorker, PartnerQuestion, query_id, resend_id
 from api.app.work.certainty_service import CertaintyConflict, CertaintyForbidden, CertaintyInputError, CertaintyService
@@ -204,10 +205,10 @@ def test_a_partners_signed_answer_settles_it_and_the_person_who_decides_is_recor
     assert last['kind'] == 'settled' and last['actor_principal_id'] == 'dana'
     assert details['evidence'][0] == {'kind': 'partner', 'result': 'delivered',
                                       'text': 'Lakeside Hospital signed a receipt for this document.'}
-    # The fax's own delivery record is never changed by settling.
+    # Settled as delivered, the fax's own delivery ends as delivered, so its number is free (defect 45).
     with cw.engine.connect() as connection:
         assert connection.execute(sa.select(cw.certainty.deliveries.c.state).where(
-            cw.certainty.deliveries.c.id == 'fax-1')).scalar() == 'reconciliation_required'
+            cw.certainty.deliveries.c.id == 'fax-1')).scalar() == 'success'
     with pytest.raises(CertaintyConflict, match='already settled'):
         cw.service.settle(dana, item['id'], outcome='unknown', reason='second thoughts', version=2)
 
@@ -385,6 +386,105 @@ def test_not_delivered_send_again_is_a_new_fax_linked_to_the_first(cw):
     linked = cw.service.for_fax(dana, new_id)
     assert linked == {'items': [], 'about': {'fax_id': 'fax-1', 'kind': 'resend'}}
     assert cw.service.for_fax(dana, 'fax-1')['items'][0]['resend_fax_id'] == new_id
+
+
+@pytest.fixture
+def lane(database, tmp_path):  # noqa: F811
+    """A real delivery store on the certainty world's database: faxes to one number, one call at a time."""
+    from api.app.config_store import ConfigurationStore
+    from api.app.config_values import ConfigurationValues
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.outbound_store import OutboundStore
+    world = CertaintyWorld(database, tmp_path)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    snapshot = configuration.initialize(
+        ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false'}), actor='test',
+        providers={'outbound': ProviderConfiguration('phaxio', credentials={'api_key': 'synthetic-key'})})
+    world.delivery = OutboundStore(configuration)
+
+    def accept(job_id):
+        moment = utcnow()
+        configuration.accept_outbound(snapshot.active, {
+            'id': job_id, 'to_number': NUMBER, 'file_name': 'referral.pdf', 'tiff_path': '', 'status': 'queued',
+            'pages': 3, 'created_at': moment, 'updated_at': moment})
+        (tmp_path / f'{job_id}.pdf').write_bytes(b'%PDF-1.4 synthetic referral')
+        world.resource('resource-' + job_id, 'outbound', 'legacy', 'legacy', fax_job_id=job_id)
+    world.accept_fax = accept
+    return world
+
+
+def _uncertain_then_waiting(lane):
+    """fax-a's call went out and its result never came; fax-b to the same number waits for it."""
+    lane.accept_fax('fax-a')
+    claim = lane.delivery.claim('worker')
+    assert claim.job_id == 'fax-a'
+    lane.delivery.begin_submission(claim)
+    lane.delivery.record_uncertain(claim)
+    lane.accept_fax('fax-b')
+    assert lane.delivery.claim('worker') is None  # the number is held for fax-a's unknown result
+    lane.feed(now=utcnow())
+    return lane.item_for('fax-a')
+
+
+@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success')])
+def test_settling_ends_the_fax_and_frees_its_number_at_once(lane, outcome, state):
+    """Defect 45 (live, 2026-10-11): a fax settled as not delivered stayed "Needs review" and held its number for
+    up to 30 minutes, so the next fax to it waited. Delivered or not delivered now ends the delivery in the same
+    transaction, with an event in its history, and the next fax to the number is claimable at once."""
+    owner = lane.operator('owner', role='role_owner')
+    item = _uncertain_then_waiting(lane)
+    attempt = lane.delivery.get('fax-a')['attempt_id']
+    lane.service.settle(owner, item['id'], outcome=outcome, reason='Front desk checked the tray', version=1)
+    record = lane.delivery.get('fax-a')
+    assert record['state'] == state
+    with lane.engine.connect() as connection:
+        job = connection.execute(sa.select(lane.certainty.jobs.c.status).where(
+            lane.certainty.jobs.c.id == 'fax-a')).scalar()
+        phase = connection.execute(sa.select(lane.certainty.attempts.c.phase).where(
+            lane.certainty.attempts.c.id == attempt)).scalar()
+    # The attempt keeps what the provider said, so no route fallback (phase 'failed' only) ever sends it again.
+    assert job == state and phase == 'uncertain'
+    settled = [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
+    assert len(settled) == 1 and json.loads(settled[0]['details'])['outcome'] == outcome
+    assert json.loads(settled[0]['details'])['actor'] == 'principal:owner'
+    claim = lane.delivery.claim('worker')
+    assert claim is not None and claim.job_id == 'fax-b'
+    assert lane.job_count() == 2  # nothing was sent again
+
+
+def test_cant_tell_keeps_the_fax_waiting_for_review_and_its_number_held(lane):
+    owner = lane.operator('owner', role='role_owner')
+    item = _uncertain_then_waiting(lane)
+    lane.service.settle(owner, item['id'], outcome='unknown', reason='Nobody at the recipient knows', version=1)
+    assert lane.delivery.get('fax-a')['state'] == 'reconciliation_required'
+    assert not [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
+    assert lane.delivery.claim('worker') is None
+
+
+def test_not_delivered_and_sent_again_frees_the_number_for_the_new_fax(lane):
+    """Sending again works as before: a new fax, linked to the first; the first fax ends as failed, so the new one
+    (and fax-b) no longer wait for its unknown result."""
+    owner = lane.operator('owner', role='role_owner')
+    item = _uncertain_then_waiting(lane)
+    settled = lane.service.settle(owner, item['id'], outcome='not_delivered', reason='Front desk says no fax came',
+                                  version=1, send_again=True, send=lane.accept('owner'))
+    assert settled['resend_fax_id'] == resend_id(item['id']) and lane.accepted[0][0] == resend_id(item['id'])
+    assert lane.delivery.get('fax-a')['state'] == 'failed'
+    assert lane.delivery.claim('worker').job_id == 'fax-b'
+
+
+def test_a_result_that_arrived_first_is_never_overwritten_by_the_settlement(lane):
+    owner = lane.operator('owner', role='role_owner')
+    item = _uncertain_then_waiting(lane)
+    record = lane.delivery.get('fax-a')
+    with lane.engine.connect() as connection:
+        profile = connection.execute(sa.select(lane.certainty.attempts.c.profile_id).where(
+            lane.certainty.attempts.c.id == record['attempt_id'])).scalar()
+    assert lane.delivery.observe('fax-a', attempt_id=record['attempt_id'], profile_id=profile, provider_sid=None,
+                                 status='success', event_key='synthetic-late-success') is True
+    lane.service.settle(owner, item['id'], outcome='not_delivered', reason='Front desk says no fax came', version=1)
+    assert lane.delivery.get('fax-a')['state'] == 'success'
+    assert not [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
 
 
 def test_only_the_owner_or_someone_who_may_confirm_receipt_settles(cw):
