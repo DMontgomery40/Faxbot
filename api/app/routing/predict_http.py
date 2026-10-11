@@ -395,7 +395,9 @@ async def predict_document(request: Request, to: str = Form(..., min_length=1, m
             # Named as an accepted fax's files are, so measuring and its caches stay inside this folder.
             claim = SimpleNamespace(job_id=uuid4().hex, attempt_id=uuid4().hex, members=())
             frames, pdf, tiff = _document_pages(source, folder, stem=claim.job_id)
-            measured = coding.measure(frames)
+            # Kept by the pages' fingerprint, so the same document is not measured again by a later estimate or by
+            # its own delivery (pages.coding.MeasureCache).
+            measured = coding.measure_cached(frames, coding.MeasureCache(shared=coding.shared_cache(values)))
             revision = snapshot.active
             views, plan_view = measured_plan(engine, revision, number, claim, pdf, tiff, len(frames), identity.actor,
                                              outbound=_outbound(request, snapshot), requested=requested)

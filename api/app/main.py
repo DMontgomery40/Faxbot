@@ -216,11 +216,17 @@ async def lifespan(application: FastAPI):
                     application.router.routes.remove(mount)
                 close_audit_logger()
     finally:
-        runtime.close()
-        application.state.configuration_runtime = None
-        application.state.access_runtime = None
-        application.state.credential_transport = None
-        application.state.runtime_active = False
+        # The processes that measure fax pages (pages/coding.py) stop with the API, not after it; the runtime closes
+        # whatever happens to them.
+        try:
+            from .pages.coding import stop_measuring
+            await asyncio.to_thread(stop_measuring)
+        finally:
+            runtime.close()
+            application.state.configuration_runtime = None
+            application.state.access_runtime = None
+            application.state.credential_transport = None
+            application.state.runtime_active = False
 
 
 app = FastAPI(
