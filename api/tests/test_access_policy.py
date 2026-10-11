@@ -354,6 +354,163 @@ def test_reset_required_users_have_no_ordinary_authority_or_visibility(world, de
         assert not world.control.dominates_principal_on(connection, actor, 'alice', now=NOW).allowed
 
 
+GRANT_SCOPES = ('installation', 'personal-alice', 'mailbox-box', 'legacy', 'resource-out', 'resource-incoming',
+                'missing', '')
+
+
+def _grantable_one_by_one(control, connection, actor, resource):
+    """What ``can_grant_on`` allows, asked one permission at a time (what /auth/me asked before grantable_on)."""
+    from api.app.access.catalog import PERMISSIONS
+    from api.app.access.types import ScopedPermission
+    return frozenset(permission for permission in PERMISSIONS if control.can_grant_on(
+        connection, actor, (ScopedPermission(permission, resource),), now=NOW).allowed)
+
+
+def _effective_one_by_one(control, connection, actor, resource):
+    """effective_access_on as it was: one _allowed_query per permission."""
+    from api.app.access.catalog import PERMISSIONS
+    source = control._current_source_on(connection, actor, NOW)
+    if not control._valid_ref(resource) or source.reset_required:
+        return frozenset()
+    return frozenset(permission for permission in PERMISSIONS if connection.execute(
+        control._allowed_query(actor, source, permission, resource_id=resource.id)).first() is not None)
+
+
+def _complete_owner_one_by_one(control, connection, actor):
+    """is_complete_owner_on as it was: one coverage query per permission at the installation."""
+    from api.app.access.catalog import PERMISSIONS
+    source = control._current_source_on(connection, actor, NOW)
+    if source.reset_required:
+        return False
+    if not source.bootstrap and not control._owner_assignment_on(connection, actor.principal_id):
+        return False
+    return all(connection.execute(control._coverage_query(actor, source, permission, 'installation')).first()
+               is not None for permission in PERMISSIONS)
+
+
+def _grant_case(world, case):
+    """(control, actor) for one kind of grant: direct, by group, at a container, through a key, revoked, none."""
+    from api.app.access.types import BootstrapEvidence
+    actor = world.user('alice')
+    world.user('bob')
+    world.outbound('out', 'personal-alice', 'personal')
+    world.insert('mailboxes', id='box', label='Front desk')
+    world.resource('mailbox-box', 'mailbox', 'installation', 'installation', mailbox_id='box')
+    world.insert('inbound_faxes', id='incoming', status='received', backend='sip', received_at=NOW)
+    world.resource('resource-incoming', 'inbound', 'mailbox-box', 'mailbox', inbound_fax_id='incoming')
+    world.insert('access_groups', id='team', name='team', normalized_name='team', description='')
+    world.insert('access_memberships', group_id='team', principal_id='alice')
+    world.role('custom', ['users:read', 'fax:read', 'inbound:read', 'settings:read', 'work:read'])
+    control = world.control
+    if case in ('owner', 'reset_required', 'root_disabled', 'assignment_removed'):
+        world.assignment('alice', 'role_owner')
+    if case == 'reset_required':
+        world.update('access_users', 'alice', password_change_required=1)
+    if case == 'root_disabled':
+        world.update('access_resources', 'installation', enabled=0)
+    if case == 'assignment_removed':
+        assignments = world.tables['access_assignments']
+        with world.engine.begin() as connection:
+            connection.execute(assignments.delete().where(assignments.c.principal_id == 'alice'))
+    if case == 'administrator':
+        world.assignment('alice', 'role_administrator')
+    if case == 'viewer':
+        world.assignment('alice', 'role_fax_viewer')
+    if case in ('viewer_personal', 'container_disabled'):
+        world.assignment('alice', 'role_fax_viewer', 'personal-alice')
+    if case == 'container_disabled':
+        world.update('access_resources', 'personal-alice', enabled=0)
+    if case in ('group', 'group_disabled', 'role_disabled'):
+        world.assignment(None, 'role_fax_operator', group='team')
+        world.assignment(None, 'custom', 'mailbox-box', group='team')
+        world.assignment('alice', 'role_auditor', 'personal-alice')
+    if case == 'group_disabled':
+        world.update('access_groups', 'team', enabled=0)
+    if case == 'role_disabled':
+        world.update('access_roles', 'custom', enabled=0)
+    if case == 'custom_mailbox':
+        world.assignment('alice', 'custom', 'mailbox-box')
+        world.assignment('alice', 'custom', 'personal-alice')
+    if case in ('key_ceiling', 'key_session_ceiling', 'key_no_ceiling'):
+        actor = key_context(world, session=case == 'key_session_ceiling')
+        world.assignment('alice', 'role_owner')
+        if case != 'key_no_ceiling':
+            ceiling(world, 'fax:read', 'personal-alice')
+            ceiling(world, 'settings:read')
+            ceiling(world, 'inbound:read', 'mailbox-box')
+            ceiling(world, 'users:read', 'mailbox-box')
+    if case == 'bootstrap':
+        fingerprint = 'c' * 64
+        control = AccessControl(world.store, current_bootstrap_fingerprint_on=lambda connection: fingerprint)
+        actor = PrincipalContext('bootstrap', 1, BootstrapEvidence(fingerprint, None), 'key:env')
+    return control, actor
+
+
+@pytest.mark.parametrize('case', ['owner', 'administrator', 'viewer', 'viewer_personal', 'group', 'group_disabled',
+                                  'role_disabled', 'custom_mailbox', 'key_ceiling', 'key_session_ceiling',
+                                  'key_no_ceiling', 'bootstrap', 'reset_required', 'root_disabled',
+                                  'container_disabled', 'assignment_removed', 'nothing'])
+def test_grantable_in_one_pass_equals_asking_permission_by_permission(world, case):
+    """grantable_on gives exactly what can_grant_on allows one permission at a time, for every kind of grant and
+    every kind of scope (the installation, a person's sent faxes, a mailbox, unassigned faxes, one fax, a missing
+    resource and an invalid one), in far fewer queries (/auth/me's grantable list, defect 40)."""
+    from api.app.access.catalog import PERMISSIONS
+    control, actor = _grant_case(world, case)
+    statements = []
+
+    def count(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    with world.store.transaction() as connection:
+        sa.event.listen(world.engine, 'before_cursor_execute', count)
+        found, effective = {}, {}
+        try:
+            for scope in GRANT_SCOPES:
+                statements.clear()
+                expected = _grantable_one_by_one(control, connection, actor, ResourceRef(scope))
+                asked = len(statements)
+                statements.clear()
+                found[scope] = control.grantable_on(connection, actor, ResourceRef(scope), now=NOW)
+                assert found[scope] == expected, scope
+                assert len(statements) <= 10 and (asked >= 3 * len(PERMISSIONS) or not expected), (scope, asked)
+                # What the actor may do there (effective_access_on), also in one pass.
+                reference = _effective_one_by_one(control, connection, actor, ResourceRef(scope))
+                statements.clear()
+                assert control.effective_access_on(connection, actor, ResourceRef(scope), now=NOW) == reference, scope
+                assert len(statements) <= 10, (scope, len(statements))
+                effective[scope] = reference
+            assert control.is_complete_owner_on(connection, actor, now=NOW) is _complete_owner_one_by_one(
+                control, connection, actor)
+        finally:
+            sa.event.remove(world.engine, 'before_cursor_execute', count)
+    installation = found['installation']
+    if case in ('owner', 'administrator', 'group', 'custom_mailbox', 'key_ceiling'):
+        assert any(effective[scope] for scope in ('resource-out', 'resource-incoming', 'personal-alice'))
+    assert found['missing'] == found[''] == frozenset()
+    if case == 'custom_mailbox':
+        assert (found['mailbox-box'], found['personal-alice']) == ({'inbound:read', 'work:read'}, {'fax:read'})
+    if case in ('key_ceiling', 'key_session_ceiling'):
+        assert (installation, found['personal-alice'], found['mailbox-box']) == (
+            {'settings:read'}, {'fax:read'}, {'inbound:read'})
+    # The cases really differ: everything, part, or nothing at the installation.
+    assert (installation == PERMISSIONS) is (case in ('owner', 'bootstrap'))
+    if case in ('viewer', 'administrator', 'key_ceiling', 'group'):
+        assert installation and installation != PERMISSIONS
+    if case in ('nothing', 'reset_required', 'root_disabled', 'assignment_removed', 'key_no_ceiling', 'viewer_personal'):
+        assert installation == frozenset()
+
+
+def test_grantable_in_one_pass_fails_like_the_per_permission_check_for_a_stale_credential(world):
+    from api.app.access.types import StaleCredentialError
+    actor = world.user('alice')
+    world.assignment('alice', 'role_owner')
+    world.update('access_principals', 'alice', security_version=2)
+    with world.store.transaction() as connection:
+        with pytest.raises(StaleCredentialError):
+            _grantable_one_by_one(world.control, connection, actor, ResourceRef('installation'))
+        with pytest.raises(StaleCredentialError):
+            world.control.grantable_on(connection, actor, ResourceRef('installation'), now=NOW)
+
+
 @pytest.mark.parametrize('session', [False, True])
 def test_bootstrap_requires_live_callback_and_tracks_rotation_and_clear(world, session):
     from api.app.access.types import BootstrapEvidence, StaleCredentialError

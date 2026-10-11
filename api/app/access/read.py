@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from .catalog import PERMISSIONS
 from .mutation_types import MutationDeniedError, MutationReason
 from .sessions import SessionCursor
-from .types import ResourceRef, ScopedPermission
+from .types import ResourceRef
 
 INSTALLATION = ResourceRef('installation')
 INSTALLATION_NAME = 'Whole installation'
@@ -374,8 +374,9 @@ class AccessReads:
             source = self._source(connection, actor, now)
             is_owner = (not source.bootstrap and not source.reset_required
                         and self.control.is_complete_owner_on(connection, actor, now=now))
-            grantable = [] if source.reset_required else sorted(p for p in PERMISSIONS if self.control.can_grant_on(
-                connection, actor, (ScopedPermission(p, INSTALLATION),), now=now).allowed)
+            # Exactly the permissions can_grant_on allows one at a time, in one pass (policy.grantable_on).
+            grantable = [] if source.reset_required else sorted(
+                self.control.grantable_on(connection, actor, INSTALLATION, now=now))
         return {'is_owner': is_owner, 'grantable': {'installation': grantable}}
 
     # -- groups ----------------------------------------------------------

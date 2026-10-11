@@ -243,6 +243,36 @@ class AccessControl:
         return resource.c.kind == 'installation'
 
     @staticmethod
+    def _applicability_kind(permission):
+        """Which branch of ``_applicability`` a permission takes: permissions with the same kind get the same
+        predicate."""
+        if permission == 'fax:send':
+            return 'send'
+        if permission in OUTBOUND_PERMISSIONS:
+            return 'outbound'
+        if permission in INBOUND_PERMISSIONS:
+            return 'inbound'
+        return 'installation'
+
+    @staticmethod
+    def _wanted(permissions):
+        """The permissions as a one-column subquery of literals (``permission_id``), to be correlated into the
+        predicates where one permission literal stood."""
+        literals = [sa.select(sa.literal(permission, sa.String()).label('permission_id'))
+                    for permission in sorted(permissions)]
+        return (sa.union_all(*literals) if len(literals) > 1 else literals[0]).subquery('wanted')
+
+    def _allowed_many_query(self, context, source, permissions, resource_id):
+        """``_allowed_query(..., resource_id=resource_id)`` for several permissions of one applicability kind, in one
+        query: one row for each permission it would find."""
+        resource, parent, tree, valid = self._resource_query()
+        wanted = self._wanted(permissions)
+        return sa.select(wanted.c.permission_id).select_from(tree.join(wanted, sa.true())).where(
+            valid, self._applicability(sorted(permissions)[0], resource, context),
+            self._authority_predicate(context, source, wanted.c.permission_id, resource, parent),
+            resource.c.id == resource_id)
+
+    @staticmethod
     def _valid_ref(resource):
         return type(resource) is ResourceRef and _text(resource.id)
 
@@ -306,8 +336,16 @@ class AccessControl:
         source = self._current_source_on(connection, context, now)
         if not self._valid_ref(resource) or source.reset_required:
             return frozenset()
-        return frozenset(permission for permission in PERMISSIONS if
-                         connection.execute(self._allowed_query(context, source, permission, resource_id=resource.id)).first() is not None)
+        # Exactly the permissions whose _allowed_query finds the resource, one query per kind of applicability
+        # (at most four) instead of one per permission.
+        groups = {}
+        for permission in sorted(PERMISSIONS):
+            groups.setdefault(self._applicability_kind(permission), []).append(permission)
+        found = set()
+        for permissions in groups.values():
+            found.update(connection.execute(
+                self._allowed_many_query(context, source, permissions, resource.id)).scalars())
+        return frozenset(found)
 
     @_safe_storage
     def visible_resource_ids_on(self, connection, context, permission, kind, *, now):
@@ -338,6 +376,39 @@ class AccessControl:
         return sa.select(resource.c.id).select_from(tree).where(valid, resource.c.id == resource_id,
             resource.c.kind.in_(self._scope_kinds(permission)),
             self._authority_predicate(context, source, permission, resource, parent))
+
+    def _coverage_many_query(self, context, source, permissions, resource_id, kinds):
+        """``_coverage_query`` for several permissions sharing the scope ``kinds``, in one query: one row for each
+        permission it would find. The same predicate, with the permission a column of a list of literals instead of
+        one literal; ``_authority_predicate`` branches only on the source, never on the permission."""
+        resource, parent, tree, valid = self._resource_query()
+        wanted = self._wanted(permissions)
+        return sa.select(wanted.c.permission_id).select_from(tree.join(wanted, sa.true())).where(
+            valid, resource.c.id == resource_id, resource.c.kind.in_(kinds),
+            self._authority_predicate(context, source, wanted.c.permission_id, resource, parent))
+
+    @_safe_storage
+    def grantable_on(self, connection, actor, resource: ResourceRef, *, now):
+        """The permissions ``actor`` may grant at ``resource``: exactly those for which ``can_grant_on`` with that one
+        permission at ``resource`` is allowed, worked out in at most four queries (one per scope kind) after one
+        check of the credential, instead of one ``can_grant_on`` per permission, each checking the credential again
+        (/auth/me asked 38 times inside the access write transaction)."""
+        source = self._current_source_on(connection, actor, now)
+        self.store.require_lock_on(connection)
+        if source.reset_required or not self._valid_ref(resource):
+            return frozenset()
+        return self._covered_on(connection, actor, source, resource.id)
+
+    def _covered_on(self, connection, actor, source, resource_id):
+        """The permissions whose ``_coverage_query`` at ``resource_id`` finds a row, one query per scope kind."""
+        groups = {}
+        for permission in sorted(PERMISSIONS):
+            groups.setdefault(self._scope_kinds(permission), []).append(permission)
+        found = set()
+        for kinds, permissions in groups.items():
+            found.update(connection.execute(
+                self._coverage_many_query(actor, source, permissions, resource_id, kinds)).scalars())
+        return frozenset(found)
 
     @_safe_storage
     def scope_projection_on(self, connection, permissions: frozenset[str], resource: ResourceRef):
@@ -388,8 +459,8 @@ class AccessControl:
             return False
         if not source.bootstrap and not self._owner_assignment_on(connection, actor.principal_id):
             return False
-        return all(connection.execute(self._coverage_query(actor, source, permission, 'installation')).first() is not None
-                   for permission in PERMISSIONS)
+        # Every permission covered at the installation: the same coverage, worked out in one pass (_covered_on).
+        return self._covered_on(connection, actor, source, 'installation') == PERMISSIONS
 
     @_safe_storage
     def is_complete_owner_on(self, connection, actor, *, now):
