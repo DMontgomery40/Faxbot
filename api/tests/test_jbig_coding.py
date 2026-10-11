@@ -309,15 +309,65 @@ def test_a_long_document_is_measured_side_by_side_exactly_as_one_page_at_a_time(
     here = coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning)
     monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
     assert coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning) == here
-    # When the processes stop working, the pages are measured here, the same way.
-    from concurrent.futures.process import BrokenProcessPool
 
-    class Broken:
-        def map(self, *args, **kwargs):
-            raise BrokenProcessPool('synthetic')
-    monkeypatch.setattr(coding, '_measuring_pool', lambda: Broken())
-    monkeypatch.setattr(coding, '_forget_pool', lambda pool: None)
-    assert coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning) == here
+
+class StandInPool:
+    """A measuring pool that runs each page here, or fails as asked: on ``submit`` (the processes start then) or in
+    a page's result."""
+    _max_workers = 2
+
+    def __init__(self, *, on_submit=None, on_result=None):
+        self.on_submit, self.on_result = on_submit, on_result
+
+    def submit(self, function, job):
+        import concurrent.futures
+        if self.on_submit is not None:
+            raise self.on_submit
+        future = concurrent.futures.Future()
+        if self.on_result is not None:
+            future.set_exception(self.on_result)
+        else:
+            future.set_result(function(job))
+        return future
+
+
+def pool_failures():
+    from concurrent.futures import CancelledError
+    from concurrent.futures.process import BrokenProcessPool
+    # (where, what, the processes given up for good, what is said)
+    return [
+        pytest.param('result', BrokenProcessPool('synthetic'), True, 'stopped', id='the processes died'),
+        pytest.param('submit', BrokenProcessPool('synthetic'), True, 'stopped', id='already dead when submitted'),
+        pytest.param('submit', OSError(11, 'synthetic: cannot start a process'), True, 'could not start',
+                     id='a process cannot start'),
+        pytest.param('result', CancelledError(), False, None, id='shut down under it by another caller'),
+        pytest.param('submit', RuntimeError('cannot schedule new futures after shutdown'), False, None,
+                     id='shut down before it'),
+        pytest.param('result', OSError(5, 'synthetic: one page'), False, 'A page could not be',
+                     id='one page failed in its process'),
+    ]
+
+
+@pytest.mark.parametrize('where, error, given_up, said', pool_failures())
+def test_a_failing_pool_leaves_the_document_measured_here_and_only_dead_processes_are_given_up(
+        monkeypatch, caplog, where, error, given_up, said):
+    """Eng's review of #99: the pages are measured here, the same, whatever went wrong; only processes that died or
+    cannot start are not used again. Processes shut down under a document by another caller (``CancelledError``),
+    or one page failing in its process, leave them in use for the next document."""
+    pages = _long_document()
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MR', 'MMR'))
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    pool = StandInPool(**{'on_' + where: error})
+    forgotten = []
+    monkeypatch.setattr(coding, '_measuring_pool', lambda: pool)
+    monkeypatch.setattr(coding, '_forget_pool', forgotten.append)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    with caplog.at_level('WARNING'):
+        assert coding.measure(pages, codings=('MH', 'MR', 'MMR')) == here
+    assert forgotten == ([pool] if given_up else [])
+    messages = ' '.join(record.getMessage() for record in caplog.records)
+    assert (said in messages) if said else messages == ''
 
 
 def test_every_jbig_setting_runs_side_by_side_and_the_first_smallest_still_wins(tmp_path):
@@ -362,6 +412,13 @@ def test_measurements_are_kept_by_the_pages_and_mh_and_mmr_are_taken_under_anoth
     [kept] = list(shared.glob('*/*.json'))
     assert kept.stat().st_mode & 0o077 == 0 and kept.parent.stat().st_mode & 0o077 == 0
     assert shared.stat().st_mode & 0o077 == 0
+    # Eng's review of #99: measurements kept by another release (another MEASURE_VERSION) are measured again.
+    asked.clear()
+    monkeypatch.setattr(coding, 'MEASURE_VERSION', coding.MEASURE_VERSION + 1)
+    assert coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR')) == first
+    assert asked == [('MH', 'MR', 'MMR')]
+    assert coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR')) == first
+    assert asked == [('MH', 'MR', 'MMR')]  # and kept under the new one
 
 
 def test_processes_that_cannot_start_leave_the_pages_measured_here_and_are_not_tried_again(monkeypatch, caplog):
@@ -427,3 +484,32 @@ def test_measuring_always_leaves_one_processor_free(monkeypatch, cpus, workers, 
     monkeypatch.setattr(coding, '_jbig_size', size)
     coding.jbig_settings(list(_long_document(2)), ('pbmtojbg', 'jbgtopbm'), tuned=True)
     assert max(seen) <= workers
+
+
+def test_the_measuring_processes_stop_with_the_api_and_start_again_when_needed(monkeypatch):
+    import concurrent.futures
+    monkeypatch.setattr(coding, 'processors', lambda: 4)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    pools = []
+
+    class Recorded:
+        def __init__(self, **kwargs):
+            self.shut = []
+            pools.append(self)
+
+        def shutdown(self, **kwargs):
+            self.shut.append(kwargs)
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', Recorded)
+    first = coding._measuring_pool()
+    coding.stop_measuring()
+    assert first.shut == [{'wait': True, 'cancel_futures': True}] and coding._POOL is None
+    coding.stop_measuring()  # nothing to stop
+    assert coding._measuring_pool() is not first and len(pools) == 2
+
+
+def test_the_jbig_encoder_runs_at_the_measuring_priority(monkeypatch):
+    monkeypatch.setattr(coding.shutil, 'which', lambda name: '/usr/bin/nice' if name == 'nice' else None)
+    assert coding._lowered(['pbmtojbg', '-q']) == ['/usr/bin/nice', '-n', '10', 'pbmtojbg', '-q']
+    monkeypatch.setattr(coding.shutil, 'which', lambda name: None)
+    assert coding._lowered(['pbmtojbg', '-q']) == ['pbmtojbg', '-q']

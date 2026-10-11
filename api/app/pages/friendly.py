@@ -310,8 +310,9 @@ def _screen_one(job):
 def _screened_pages(jobs):
     """(today's page, ``_screen_one``) for each page, in order. A document of at least ``coding.PARALLEL_PAGES``
     pages is screened by the measuring processes side by side, a few pages ahead at a time, so only those pages are
-    held at once (defect 71); a smaller one here. When the processes stop working (logged), the pages not yet done
-    are screened here; the result is the same either way."""
+    held at once (defect 71); a smaller one here. When the processes stop working, cannot start, are shut down
+    under this document or fail on one page, the pages not yet done are screened here (``coding._measured_side_by_side``
+    tells the causes apart the same way); the result is the same either way."""
     from concurrent.futures.process import BrokenProcessPool
     from . import coding
     jobs = iter(jobs)
@@ -329,33 +330,49 @@ def _screened_pages(jobs):
         return
     ahead = max(2, 2 * (getattr(pool, '_max_workers', 1) or 1))
     pending = []
-    stopped = False
+    stopped = False  # the rest of this document is screened here
+
+    def here_from_now():
+        nonlocal stopped
+        stopped = True
+        coding._cancel([future for _, future in pending if future is not None])
+
+    def pool_stopped():
+        logging.getLogger(__name__).warning('The processes that screen fax pages stopped; the pages left are '
+                                            'screened one at a time.', exc_info=True)
+        coding._forget_pool(pool)
+        here_from_now()
 
     def take():
-        nonlocal stopped
         job, future = pending.pop(0)
-        if not stopped:
+        if not stopped and future is not None:
             try:
                 return job[1], future.result()
-            except (BrokenProcessPool, OSError):
-                logging.getLogger(__name__).warning('The processes that screen fax pages stopped; the pages left '
-                                                    'are screened one at a time.', exc_info=True)
-                coding._forget_pool(pool)
-                stopped = True
+            except BrokenProcessPool:  # (a RuntimeError: before ``coding.pool_gone_errors``)
+                pool_stopped()
+            except coding.pool_gone_errors():
+                here_from_now()  # another caller, or the API stopping, shut the processes down
+            except OSError:
+                # One page failed in its process: this document only; the processes stay.
+                logging.getLogger(__name__).warning('A page could not be screened in a measuring process; this '
+                                                    'document is screened here.', exc_info=True)
+                here_from_now()
         return job[1], _screen_one(job)
 
     def submit(job):
-        nonlocal stopped
         future = None
         if not stopped:
             try:
                 future = pool.submit(_screen_one, job)
-            except (BrokenProcessPool, RuntimeError):
-                # A pool that broke, or was shut down after another caller found it broken.
-                logging.getLogger(__name__).warning('The processes that screen fax pages stopped; the pages left are '
-                                                    'screened one at a time.', exc_info=True)
+            except BrokenProcessPool:
+                pool_stopped()
+            except OSError:
+                # Submitting starts the processes: one that cannot start (EAGAIN, EPERM).
+                coding._could_not_start()
                 coding._forget_pool(pool)
-                stopped = True
+                here_from_now()
+            except coding.pool_gone_errors():
+                here_from_now()
         pending.append((job, future))
     for job in window:
         submit(job)

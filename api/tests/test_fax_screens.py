@@ -15,6 +15,7 @@ import subprocess
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 import pytest
 
+from api.tests.test_jbig_coding import StandInPool, pool_failures
 from app import conversion
 from app.pages import fidelity, friendly, screens
 
@@ -561,16 +562,28 @@ def test_a_long_document_is_screened_side_by_side_exactly_as_one_page_at_a_time(
     side_by_side = [(frame.tobytes(), outcome(found)) for frame, found in friendly._screened_pages(iter(jobs))]
     assert [found for _, found in side_by_side] == here
     assert [frame for frame, _ in side_by_side] == [job[1].tobytes() for job in jobs]
-    import os
-    assert coding._measuring_pool() is not None or (os.cpu_count() or 1) < 2  # the processes did the work
-    # When the processes stop working, the pages left are screened here, the same way.
-    from concurrent.futures.process import BrokenProcessPool
+    assert coding._measuring_pool() is not None or coding.measuring_workers() < 2  # the processes did the work
 
-    class Broken:
-        _max_workers = 2
 
-        def submit(self, *args, **kwargs):
-            raise BrokenProcessPool('synthetic')
-    monkeypatch.setattr(coding, '_measuring_pool', lambda: Broken())
-    monkeypatch.setattr(coding, '_forget_pool', lambda pool: None)
-    assert [outcome(found) for _, found in friendly._screened_pages(iter(jobs))] == here
+@pytest.mark.parametrize('where, error, given_up, said', pool_failures())
+def test_a_failing_pool_leaves_the_document_screened_here_and_only_dead_processes_are_given_up(
+        corpus, monkeypatch, caplog, where, error, given_up, said):
+    """Eng's review of #99, as for measuring (test_jbig_coding): the pages left are screened here, the same; only
+    processes that died or cannot start are not used again."""
+    from app.pages import coding
+    jobs = [(corpus[name][0], corpus[name][1], None) for name in sorted(corpus)] * 2
+
+    def outcome(found):
+        page, changed, fidelity_found = found
+        return page.tobytes(), page.size, page.info.get('dpi'), changed, fidelity_found
+    here = [outcome(friendly._screen_one(job)) for job in jobs]
+    pool = StandInPool(**{'on_' + where: error})
+    forgotten = []
+    monkeypatch.setattr(coding, '_measuring_pool', lambda: pool)
+    monkeypatch.setattr(coding, '_forget_pool', forgotten.append)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    with caplog.at_level('WARNING'):
+        assert [outcome(found) for _, found in friendly._screened_pages(iter(jobs))] == here
+    assert forgotten == ([pool] if given_up else [])
+    messages = ' '.join(record.getMessage() for record in caplog.records)
+    assert (said in messages) if said else messages == ''

@@ -232,15 +232,22 @@ def jbig_setting(page, tools, *, tuned=False, check=False):
     return jbig_settings((page,), tools, tuned=tuned, check=check)[0]
 
 
+def _lowered(command):
+    """``command`` run at the measuring processes' lower priority (``MEASURE_NICENESS``) through ``nice``, or as it
+    is where there is no ``nice``. (Not ``preexec_fn``: these run from threads.)"""
+    nice = shutil.which('nice')
+    return [nice, '-n', str(MEASURE_NICENESS), *command] if nice else list(command)
+
+
 def _jbig_size(tools, pbm, page_bytes, options, mx):
     """Bytes of one PBM page in JBIG with one setting; with ``page_bytes`` (``check``), decoded again and refused
-    unless it is that page."""
+    unless it is that page. The encoder runs at a lower priority, as the measuring processes do."""
     from PIL import Image
     encoder, decoder = tools
-    encoded = subprocess.run([encoder, *jbig_arguments(options, mx)], input=pbm, capture_output=True, check=True,
-                             timeout=JBIG_TIMEOUT_SECONDS).stdout
+    encoded = subprocess.run(_lowered([encoder, *jbig_arguments(options, mx)]), input=pbm, capture_output=True,
+                             check=True, timeout=JBIG_TIMEOUT_SECONDS).stdout
     if page_bytes is not None:
-        decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
+        decoded = subprocess.run(_lowered([decoder]), input=encoded, capture_output=True, check=True,
                                  timeout=JBIG_TIMEOUT_SECONDS).stdout
         with Image.open(io.BytesIO(decoded)) as back:
             if back.convert('1').tobytes() != page_bytes:
@@ -468,7 +475,7 @@ def _lower_priority():
 def _measuring_pool():
     """The processes that measure pages (started once, on first use, and kept for later documents), or None on a
     single processor or once they could not start or stopped working (said once in the log)."""
-    global _POOL, _POOL_STOPPED
+    global _POOL
     workers = measuring_workers()
     if workers < 2:
         return None
@@ -482,22 +489,47 @@ def _measuring_pool():
                 # Started fresh, never forked from this threaded server process.
                 _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'),
                                             initializer=_lower_priority)
-            except (OSError, ValueError, RuntimeError):
-                logging.getLogger(__name__).warning('The processes that measure fax pages could not start; this '
-                                                    'process measures the pages one at a time.', exc_info=True)
-                _POOL_STOPPED = True
+            except (OSError, ValueError, RuntimeError, ImportError, NotImplementedError):
+                # ImportError, NotImplementedError: no working sem_open (no /dev/shm).
+                _could_not_start()
                 return None
         return _POOL
 
 
+def _could_not_start():
+    global _POOL_STOPPED
+    logging.getLogger(__name__).warning('The processes that measure fax pages could not start; this process '
+                                        'measures the pages one at a time.', exc_info=True)
+    _POOL_STOPPED = True
+
+
 def _forget_pool(pool):
-    """The measuring processes stopped working: they are not used again by this process (said once)."""
+    """The measuring processes stopped working (``BrokenProcessPool``) or could not start: they are not used again
+    by this process (said once by the caller). Pages other callers had waiting are cancelled; those callers measure
+    their pages themselves (``pool_gone_errors``)."""
     global _POOL, _POOL_STOPPED
     with _POOL_LOCK:
         if _POOL is pool:
             _POOL = None
         _POOL_STOPPED = True
     pool.shutdown(wait=False, cancel_futures=True)
+
+
+def stop_measuring():
+    """Stop the measuring processes when the API stops (``main.lifespan``), waiting for the pages being measured;
+    a later document starts them again."""
+    global _POOL
+    with _POOL_LOCK:
+        pool, _POOL = _POOL, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def pool_gone_errors():
+    """What a page's future raises when its pool was shut down under it, by another caller that found the pool
+    broken or by the API stopping: measure here, without blaming the pool again."""
+    from concurrent.futures import CancelledError
+    return (CancelledError, RuntimeError)
 
 
 def _page_measures(job):
@@ -513,24 +545,63 @@ def _page_measures(job):
 
 def _measured_side_by_side(pages, names, tuning):
     """{coding: bits of each page} for ``names`` (MH, MR, MMR), measured by the measuring processes; {} when they
-    are not used (a small document, one processor) or stopped working (logged; measured here instead)."""
+    are not used (a small document, one processor) or did not measure this document (measured here instead):
+
+    - the processes stopped working (``BrokenProcessPool``) or could not start (an ``OSError`` starting them): logged,
+      and not used again by this process;
+    - another caller shut them down under these pages (``pool_gone_errors``): nothing more to say;
+    - one page failed in its process (an ``OSError``): logged; this document only, the processes stay.
+
+    A page's own refusal (``CodingRefused``) is raised as it is, as here."""
     from concurrent.futures.process import BrokenProcessPool
     if not names or len(pages) < PARALLEL_PAGES:
         return {}
     pool = _measuring_pool()
     if pool is None:
         return {}
-    jobs = [(page.size, _dpi(page), page.tobytes(), names, tuning) for page in pages]
+    futures = []
     try:
-        found = list(pool.map(_page_measures, jobs))
-    except (BrokenProcessPool, OSError, RuntimeError):
-        # RuntimeError: the pool was shut down after another caller found it broken. A page's own refusal
-        # (CodingRefused) is raised as it is; anything else wrong is raised again when the pages are measured here.
-        logging.getLogger(__name__).warning('The processes that measure fax codings stopped; the pages are measured '
-                                            'one at a time.', exc_info=True)
+        for page in pages:
+            futures.append(pool.submit(_page_measures, (page.size, _dpi(page), page.tobytes(), names, tuning)))
+    except BrokenProcessPool:  # (a RuntimeError: before ``pool_gone_errors``)
+        _cancel(futures)
+        _stopped_working(pool)
+        return {}
+    except OSError:
+        # Submitting starts the processes: one that cannot start (EAGAIN, EPERM).
+        _cancel(futures)
+        _could_not_start()
         _forget_pool(pool)
         return {}
+    except pool_gone_errors():
+        _cancel(futures)
+        return {}
+    try:
+        found = [future.result() for future in futures]
+    except BrokenProcessPool:  # (a RuntimeError: before ``pool_gone_errors``)
+        _cancel(futures)
+        _stopped_working(pool)
+        return {}
+    except pool_gone_errors():
+        _cancel(futures)
+        return {}
+    except OSError:
+        _cancel(futures)
+        logging.getLogger(__name__).warning('A page could not be measured in a measuring process; this document is '
+                                            'measured here.', exc_info=True)
+        return {}
     return {name: tuple(bits[index] for bits in found) for index, name in enumerate(names)}
+
+
+def _cancel(futures):
+    for future in futures:
+        future.cancel()
+
+
+def _stopped_working(pool):
+    logging.getLogger(__name__).warning('The processes that measure fax codings stopped; the pages are measured one '
+                                        'at a time.', exc_info=True)
+    _forget_pool(pool)
 
 
 def digest(raster_pages) -> str:
@@ -554,6 +625,9 @@ def cache_path(tiff_path):
 UNTUNED = ('MH', 'MMR')
 # The shared measurement cache keeps at most this many documents in each of its 256 folders (newest kept).
 SHARED_PER_FOLDER = 32
+# Part of every kept measurement's key: bump it whenever ``measure`` (or anything it measures with) changes what it
+# returns, so measurements kept by an earlier release are measured again rather than read back.
+MEASURE_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -617,7 +691,8 @@ def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
     measured again; a cache that cannot be written is only logged (the measurement itself is returned either way)."""
     where = cache if isinstance(cache, MeasureCache) else MeasureCache(path=cache)
     fingerprint = digest(raster_pages)
-    key = fingerprint + ';' + (tuning.key() if tuning is not None else 'estimate')
+    prefix = f'{fingerprint};v{MEASURE_VERSION};'
+    key = prefix + (tuning.key() if tuning is not None else 'estimate')
     wanted = tuple(_known(CODINGS if codings is None else codings))
     files = [(Path(where.path), False)] if where.path is not None else []
     if where.shared is not None:
@@ -626,7 +701,7 @@ def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
     entries = {}
     for found in kept:
         for name, value in found.items():
-            if isinstance(name, str) and name.startswith(fingerprint + ';') and isinstance(value, dict):
+            if isinstance(name, str) and name.startswith(prefix) and isinstance(value, dict):
                 entries.setdefault(name, value)
     found = entries.get(key)
     if isinstance(found, dict) and all(name in found or name == 'JBIG' for name in wanted):
