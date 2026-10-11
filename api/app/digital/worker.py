@@ -73,10 +73,13 @@ class DigitalWorker:
         self.mailbox_factory = mailbox_factory  # (account) -> Mailbox-like, for tests
         self.problems = {}                      # account key -> the last mailbox problem, for health
         self.left = {}                          # account key -> UIDs left in its mailbox while receiving is off
+        self._store = None                      # the DigitalStore, built on the first step (it reflects its tables)
 
     def step(self, now=None):
         values = self.values()
-        store = DigitalStore(self.engine)
+        if self._store is None:
+            self._store = DigitalStore(self.engine)
+        store = self._store
         delivery = self.delivery() if self.delivery else None
         accounts = {account.key: account for account in digital_accounts(values)}
         for account in accounts.values():

@@ -69,6 +69,11 @@ NOT_FOUND = 'This uncertain fax was not found.'
 CHANGED = 'This item changed; reload and try again.'
 FORBIDDEN = 'You do not have permission to do this.'
 SETTLE_PERMISSION = 'fax:reconcile'
+# How long an uncertain fax needs on the line is worked out again only when something it depends on changes: the
+# fax, its route, its call record, or the quarter hour (a learned busy hour starts on one in every time zone).
+PREDICTION_PERIOD_MINUTES = 15
+# The automatic findings that are not kept: nothing to say yet.
+NOT_KEPT = ('unavailable', 'not_done', 'asking', 'unknown')
 
 
 class CertaintyError(Exception):
@@ -143,6 +148,33 @@ class CertaintyStore:
                                                        tables['access_users'])
         self.mailboxes, self.mailbox_settings = tables['mailboxes'], tables['work_mailbox_settings']
         self.sources = checks.CheckSources(engine)
+        # {item id: (what the prediction depended on, predicted seconds)}; see ``predictor``.
+        self._predictions = {}
+
+    # -- the call's predicted length -------------------------------------------------------------------
+    def predictor(self, item, job, facts, *, now):
+        """``predict(route)`` for ``checks.call_record_reading``: the seconds the whole fax needs on the line.
+
+        The answer is kept per item and given again while nothing it depends on has changed: the fax's number,
+        pages and document, the route, the call record (``facts``) and the quarter hour of ``now``. A prediction
+        that could not be made is never kept.
+        """
+        now = now or utcnow()
+        quarter = now.replace(minute=now.minute - now.minute % PREDICTION_PERIOD_MINUTES, second=0, microsecond=0)
+        record = facts.get('record')
+        call = (tuple(sorted(record.items())) if record else None, facts.get('carrier_seconds'), facts.get('carrier'),
+                facts.get('provider_seconds'))
+
+        def predict(route):
+            inputs = (route, job.get('to_number'), job.get('pages'), job.get('tiff_path'), call, quarter)
+            kept = self._predictions.get(item['id'])
+            if kept is not None and kept[0] == inputs:
+                return kept[1]
+            seconds = checks.predicted_seconds(route, job.get('to_number'), job, now=now)
+            if seconds is not None:
+                self._predictions[item['id']] = (inputs, seconds)
+            return seconds
+        return predict
 
     # -- settings ------------------------------------------------------------------------------------
     def settings_on(self, connection):
@@ -429,10 +461,11 @@ class CertaintyStore:
     def record_checks(self, *, now=None, limit=50):
         """Keep each new finding of the automatic checks on open items, once; return how many were new.
 
-        The findings are worked out on a read connection; a write happens only for one not kept yet.
+        The records are read on a read connection. The call's predicted length is worked out after it closes, and
+        only when what it depends on changed (``predictor``); a write happens only for a finding not kept yet.
         """
         now = now or utcnow()
-        new = []
+        read = []
         with read_connection(self.engine) as connection:
             rows = connection.execute(sa.select(self.items).where(self.items.c.state == 'open')
                                       .order_by(self.items.c.created_at).limit(limit)).mappings().all()
@@ -440,15 +473,26 @@ class CertaintyStore:
                 item = dict(row)
                 job = self.job_on(connection, item['job_id']) or {}
                 answer, _ = self.partner_answer_on(connection, item['id'])
-                for found in (checks.partner_check(self.sources, connection, item, job, answer),
-                              checks.call_record_check(self.sources, connection, item, job, now=now)):
-                    if found['result'] in ('unavailable', 'not_done', 'asking', 'unknown'):
-                        continue
-                    key = 'found:' + hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
-                                                    ).hexdigest()[:48]
-                    if connection.execute(sa.select(self.events.c.id).where(
-                            self.events.c.item_id == item['id'], self.events.c.dedupe_key == key)).first() is None:
-                        new.append((item['id'], found, key))
+                read.append((item, job, checks.partner_check(self.sources, connection, item, job, answer),
+                             checks.call_record_facts(self.sources, connection, item)))
+        # Predictions kept for items no longer open are dropped.
+        open_ids = {item['id'] for item, *_ in read}
+        self._predictions = {key: value for key, value in self._predictions.items() if key in open_ids}
+        findings = []
+        for item, job, partner, facts in read:
+            call = checks.call_record_reading(facts, job, now=now, predict=self.predictor(item, job, facts, now=now))
+            for found in (partner, call):
+                if found['result'] in NOT_KEPT:
+                    continue
+                key = 'found:' + hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
+                                                ).hexdigest()[:48]
+                findings.append((item['id'], found, key))
+        new = []
+        if findings:
+            with read_connection(self.engine) as connection:
+                new = [(item_id, found, key) for item_id, found, key in findings
+                       if connection.execute(sa.select(self.events.c.id).where(
+                           self.events.c.item_id == item_id, self.events.c.dedupe_key == key)).first() is None]
         recorded = 0
         for item_id, found, key in new:
             try:

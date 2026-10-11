@@ -261,6 +261,86 @@ def test_the_call_record_check_reads_the_carriers_seconds_against_the_prediction
     assert record['result'] == 'probably_not_delivered' and record['text'] == 'Nobody answered the call.'
 
 
+def _answered_call(cw, job_id, *, connected_seconds=20):
+    cw.insert('sip_call_records', id='call-' + job_id, direction='outbound', call_id='c-' + job_id, job_id=job_id,
+              attempt_id='attempt-' + job_id, caller='+12025550100', called=NUMBER,
+              started_at=NOW - timedelta(minutes=19), answered_at=NOW - timedelta(minutes=19),
+              ended_at=NOW - timedelta(minutes=18, seconds=40), disposition='answered',
+              connected_seconds=connected_seconds, t38='yes', pages=None, fax_preference=1)
+
+
+def _kept(cw, item_id):
+    return [json.loads(event['details']) for event in cw.events(item_id) if event['kind'] == 'probe']
+
+
+def test_the_worker_predicts_a_calls_length_once_until_what_it_depends_on_changes(cw, monkeypatch):
+    """Every 15 seconds the worker reads each open item's call record; the call's predicted length is worked out
+    with no database connection held, and again only when the fax, the call record or the quarter hour changes."""
+    dana = cw.operator('dana')
+    cw.sent('fax-1', sender='dana', pages=10)
+    _answered_call(cw, 'fax-1')
+    asked = []
+
+    def predicted(route, number, job, now=None):
+        assert cw.engine.pool.checkedout() == 0, 'the prediction ran while a database connection was held'
+        asked.append((route, number, job.get('pages'), now))
+        return 180.0
+    monkeypatch.setattr(checks, 'predicted_seconds', predicted)
+    worker = CertaintyWorker(cw.certainty, control=lambda: cw.control)
+    worker.step(now=NOW)
+    assert asked == [('sip', NUMBER, 10, NOW)]
+    item = cw.item_for('fax-1')
+    assert [found['result'] for found in _kept(cw, item['id'])] == ['probably_not_delivered']
+    worker.step(now=NOW + timedelta(seconds=15))
+    worker.step(now=NOW + timedelta(seconds=30))
+    assert len(asked) == 1
+    # The detail page uses the same prediction and says the same thing.
+    record = cw.service.detail(dana, item['id'])['checks'][1]
+    assert len(asked) == 1 and record['result'] == 'probably_not_delivered'
+    assert record['text'] == _kept(cw, item['id'])[0]['text']
+    # The carrier's record of the call arrives: the call record changed, so the length is predicted again.
+    cw.insert('carrier_charges', call_record_id='call-fax-1', provider_id='telnyx', record_id='r-1', version=1,
+              amount_micros=5000, raw_amount='0.005', currency='USD', billed_seconds=60, call_seconds=170,
+              match_method='call_id', effective_at=NOW, observed_at=NOW, applied=1, is_final=1)
+    worker.step(now=NOW + timedelta(seconds=45))
+    assert len(asked) == 2
+    assert [found['result'] for found in _kept(cw, item['id'])] == ['probably_not_delivered', 'consistent']
+    worker.step(now=NOW + timedelta(seconds=60))
+    assert len(asked) == 2
+    # The fax's pages change, then the next quarter hour starts (a learned busy hour may begin): asked again each time.
+    cw.update('fax_jobs', 'fax-1', pages=9)
+    worker.step(now=NOW + timedelta(seconds=75))
+    assert len(asked) == 3 and asked[-1][2] == 9
+    worker.step(now=NOW + timedelta(minutes=15))
+    assert len(asked) == 4
+    # A prediction that could not be made is never kept: it is asked again on the next step.
+    monkeypatch.setattr(checks, 'predicted_seconds', lambda *args, **kwargs: asked.append(None))
+    worker.step(now=NOW + timedelta(minutes=30))
+    worker.step(now=NOW + timedelta(minutes=30, seconds=15))
+    assert asked[-2:] == [None, None]
+    # Once the item is settled, what was kept for it is let go.
+    with cw.engine.begin() as connection:
+        connection.execute(cw.certainty.items.update().where(cw.certainty.items.c.id == item['id'])
+                           .values(state='settled'))
+    worker.step(now=NOW + timedelta(minutes=31))
+    assert cw.certainty._predictions == {}
+
+
+def test_the_worker_keeps_the_finding_the_check_itself_gives(cw):
+    """With the real predictor, the finding the worker keeps is the one the call record check gives at once."""
+    cw.operator('dana')
+    cw.sent('fax-1', sender='dana', pages=3)
+    _answered_call(cw, 'fax-1', connected_seconds=25)
+    CertaintyWorker(cw.certainty, control=lambda: cw.control).step(now=NOW)
+    item = cw.item_for('fax-1')
+    with cw.engine.connect() as connection:
+        job = cw.certainty.job_on(connection, 'fax-1')
+        expected = checks.call_record_check(cw.certainty.sources, connection, item, job, now=NOW)
+    assert expected['result'] in ('probably_not_delivered', 'probably_partial', 'consistent')
+    assert [(found['result'], found['text']) for found in _kept(cw, item['id'])] == [
+        (expected['result'], expected['text'])]
+
+
 def test_the_receipt_query_goes_only_when_a_person_sends_it_and_only_once(cw):
     dana = cw.operator('dana')
     cw.sent('fax-1', sender='dana')

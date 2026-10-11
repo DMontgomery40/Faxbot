@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import re
 import uuid
+import weakref
 
 import sqlalchemy as sa
 
@@ -267,16 +268,26 @@ def same_number(left, right) -> bool:
 
 # -- storage -------------------------------------------------------------------------------
 
+_FRAME_TABLES = ('fax_call_frames', 'fax_iaf_endpoints', 'fax_jobs')
+# {engine: its three tables}, reflected once per database: a store is built for every call placed (the learned
+# settings' decision), every frame event and every sync, and reflecting each time held worker threads.
+_REFLECTED = weakref.WeakKeyDictionary()
+
+
 class FrameStore:
     """fax_call_frames and fax_iaf_endpoints (migration 0036)."""
 
     def __init__(self, engine):
         self.engine = engine
-        metadata = sa.MetaData()
-        metadata.reflect(engine, only=['fax_call_frames', 'fax_iaf_endpoints', 'fax_jobs'])
-        self.frames = metadata.tables['fax_call_frames']
-        self.endpoints = metadata.tables['fax_iaf_endpoints']
-        self.jobs = metadata.tables['fax_jobs']
+        tables = _REFLECTED.get(engine)
+        if tables is None:
+            metadata = sa.MetaData()
+            metadata.reflect(engine, only=list(_FRAME_TABLES))
+            tables = {name: metadata.tables[name] for name in _FRAME_TABLES}
+            _REFLECTED[engine] = tables
+        self.frames = tables['fax_call_frames']
+        self.endpoints = tables['fax_iaf_endpoints']
+        self.jobs = tables['fax_jobs']
 
     def record(self, row, *, now=None) -> bool:
         """Keep one call's frames, once; True when new. A sent fax's far end comes from its job."""

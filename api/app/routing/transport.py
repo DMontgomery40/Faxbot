@@ -39,6 +39,48 @@ class RecordDeferred(CapacityWait):
         super().__init__(seconds=5)
 
 
+class RouteChoiceDeferred(CapacityWait):
+    """The database was busy while the attempt's route was being chosen: nothing was sent, and the fax is given back
+    to be chosen again in a moment by the same rules, never sent by its default provider instead (defect 37)."""
+
+    def __init__(self):
+        super().__init__(seconds=5)
+
+
+# SQLSTATE lock_not_available: a PostgreSQL lock_timeout ran out (the configuration and delivery locks set one).
+_PG_LOCK_TIMEOUT = '55P03'
+
+
+def database_busy(error):
+    """The busy-database error ``error`` is, or was raised from, else None: SQLite's "database is locked" or
+    PostgreSQL's lock timeout, however a store reworded it (``ConfigurationStoreError`` and ``DeliveryStoreError``
+    keep the original as their context)."""
+    import sqlite3
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        for candidate in (error, getattr(error, 'orig', None)):
+            if isinstance(candidate, sqlite3.OperationalError):
+                name = getattr(candidate, 'sqlite_errorname', '') or ''
+                text = str(candidate)
+                if (name.startswith(('SQLITE_BUSY', 'SQLITE_LOCKED')) or 'database is locked' in text
+                        or 'database table is locked' in text):
+                    return candidate
+            elif candidate is not None and _PG_LOCK_TIMEOUT in (getattr(candidate, 'pgcode', None),
+                                                                 getattr(candidate, 'sqlstate', None)):
+                return candidate
+        error = error.__cause__ or error.__context__
+    return None
+
+
+def _give_back(claim, busy):
+    """Log why the fax waits, then give it back to the queue (``RouteChoiceDeferred``)."""
+    logging.getLogger(__name__).warning('Fax %s: the database was busy while its route was chosen, so it waits a '
+                                        'moment and its route is chosen again; nothing was sent: %s',
+                                        claim.job_id, busy)
+    raise RouteChoiceDeferred() from None
+
+
 class RouteHeld(CapacityWait):
     """Nothing the fax's rules allow can take it now: the delivery store already gave the claim back and holds the
     fax in Sent. The worker's capacity handling then finds nothing left to give back."""
@@ -610,9 +652,18 @@ class RoutedTransport:
             raise
         except _Unexpected as error:
             # Measuring refuses what it documents (a document that cannot be drawn: accounts are then ranked by page
-            # count). Anything else is a bug or an integration failure: it raises, and nothing is sent.
+            # count). A busy database gives the fax back to be chosen again. Anything else is a bug or an
+            # integration failure: it raises, and nothing is sent.
+            busy = database_busy(error.__cause__)
+            if busy is not None:
+                _give_back(claim, busy)
             raise error.__cause__
-        except Exception:
+        except Exception as error:
+            # A busy database (locked, or a lock timeout) says nothing about the routes: the fax is given back and
+            # its route is chosen again once the database answers, never sent by its default provider for it.
+            busy = database_busy(error)
+            if busy is not None:
+                _give_back(claim, busy)
             # Route evidence is optional; the accepted provider still works (and chooses its own number), unless
             # the fax's rules exclude it: then the fax waits in Sent instead of going outside its rules. Either way
             # the warning carries the error, so a bug here is never mistaken for an ordinary hold.
@@ -631,9 +682,14 @@ class RoutedTransport:
         if choice is not None:
             try:
                 await run_lifecycle_step(lambda: self._record_choice(claim, plan, choice))
-            except Exception:
-                # Without the record a fax whose rules exclude its own account is refused at submission.
-                logging.getLogger(__name__).warning('The route choice could not be recorded for a fax.')
+            except Exception as error:
+                # Without the record a fax whose rules exclude its own account is refused at submission, so a busy
+                # database gives the fax back to be chosen and recorded again instead.
+                busy = database_busy(error)
+                if busy is not None:
+                    _give_back(claim, busy)
+                logging.getLogger(__name__).warning('The route choice could not be recorded for a fax.',
+                                                    exc_info=True)
             try:
                 await run_lifecycle_step(lambda: self._record(claim, plan, choice))
             except Exception:
