@@ -541,9 +541,24 @@ def test_a_send_whose_training_never_succeeded_failed_for_certain_after_the_othe
     to train with receiver {E156}", 0 pages. No page data follows failed training, so another route may send it;
     it waited for a person instead, with the number held for 30 minutes."""
     payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code if with_code else '',
-                     remote_station_b64=b64('HP TEST LINE'))
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=45)
     assert hylafax_engine.result_outcome(payload) == (
         'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
+
+
+@pytest.mark.parametrize('status, code', TRAINING)
+@pytest.mark.parametrize('trained, session', [
+    ({'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR')}, 60),
+    ({'data_format_b64': b64('2-D MR')}, 60),
+    ({}, None),
+], ids=['retrain-after-rtn', 'coding-agreed', 'no-session-log'])
+def test_a_training_failure_after_a_page_may_have_gone_out_stays_uncertain(status, code, trained, session):
+    """The same codes end a retrain after the other machine asked for one (RTN) on a page it may have printed: that
+    call trained first, so the engine reports what it agreed. Without the session log nothing shows the call never
+    trained. Either way the fax waits for a person and is never sent again by itself."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code,
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=session, **trained)
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
 
 
 @pytest.mark.parametrize('status, code', [

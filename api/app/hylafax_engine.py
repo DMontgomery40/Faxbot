@@ -1045,8 +1045,14 @@ def ended_before_fax_data(payload: dict, status_text: str) -> bool:
 
 
 def training_failed(payload: dict, status_text: str) -> bool:
-    """Whether the engine's code says Phase B training never succeeded (``_TRAINING_FAILED``)."""
-    return _status_code(payload, status_text) in _TRAINING_FAILED
+    """Whether the engine's code says Phase B training never succeeded (``_TRAINING_FAILED``) and its session log
+    shows it never did on this call. The same codes also end a retrain after the other machine asked for one (RTN)
+    on a page it may have printed; that call trained first, so the engine reports the speed or coding it agreed
+    (bin/notify keeps them only after "TRAINING succeeded"). Without the session log (no session time) nothing
+    shows the call never trained, so it stays unconfirmed."""
+    return (_status_code(payload, status_text) in _TRAINING_FAILED
+            and isinstance(payload.get('session_seconds'), int)
+            and not _text64(payload, 'signal_rate_b64', 32) and not _text64(payload, 'data_format_b64', 32))
 
 
 def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
