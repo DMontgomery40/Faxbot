@@ -334,8 +334,11 @@ def ordinary_seconds(pages):
 
 
 def sslfax_sentence(transfer_seconds, pages):
-    return (f'The pages were sent faster during the call: {transfer_seconds} seconds instead of about '
-            f'{ordinary_seconds(pages)}.')
+    ordinary = ordinary_seconds(pages)
+    if transfer_seconds < ordinary:
+        return f'The pages were sent faster during the call: {transfer_seconds} seconds instead of about {ordinary}.'
+    # Dense pages (encoded or packed) can take longer than an ordinary page's estimate; never call that faster.
+    return f'The pages went over SSL Fax during the call in {transfer_seconds} seconds.'
 
 
 def sslfax_savings(routes, engine, *, since, days):
