@@ -366,6 +366,28 @@ def _grantable_one_by_one(control, connection, actor, resource):
         connection, actor, (ScopedPermission(permission, resource),), now=NOW).allowed)
 
 
+def _effective_one_by_one(control, connection, actor, resource):
+    """effective_access_on as it was: one _allowed_query per permission."""
+    from api.app.access.catalog import PERMISSIONS
+    source = control._current_source_on(connection, actor, NOW)
+    if not control._valid_ref(resource) or source.reset_required:
+        return frozenset()
+    return frozenset(permission for permission in PERMISSIONS if connection.execute(
+        control._allowed_query(actor, source, permission, resource_id=resource.id)).first() is not None)
+
+
+def _complete_owner_one_by_one(control, connection, actor):
+    """is_complete_owner_on as it was: one coverage query per permission at the installation."""
+    from api.app.access.catalog import PERMISSIONS
+    source = control._current_source_on(connection, actor, NOW)
+    if source.reset_required:
+        return False
+    if not source.bootstrap and not control._owner_assignment_on(connection, actor.principal_id):
+        return False
+    return all(connection.execute(control._coverage_query(actor, source, permission, 'installation')).first()
+               is not None for permission in PERMISSIONS)
+
+
 def _grant_case(world, case):
     """(control, actor) for one kind of grant: direct, by group, at a container, through a key, revoked, none."""
     from api.app.access.types import BootstrapEvidence
@@ -440,7 +462,7 @@ def test_grantable_in_one_pass_equals_asking_permission_by_permission(world, cas
         statements.append(statement)
     with world.store.transaction() as connection:
         sa.event.listen(world.engine, 'before_cursor_execute', count)
-        found = {}
+        found, effective = {}, {}
         try:
             for scope in GRANT_SCOPES:
                 statements.clear()
@@ -450,9 +472,19 @@ def test_grantable_in_one_pass_equals_asking_permission_by_permission(world, cas
                 found[scope] = control.grantable_on(connection, actor, ResourceRef(scope), now=NOW)
                 assert found[scope] == expected, scope
                 assert len(statements) <= 10 and (asked >= 3 * len(PERMISSIONS) or not expected), (scope, asked)
+                # What the actor may do there (effective_access_on), also in one pass.
+                reference = _effective_one_by_one(control, connection, actor, ResourceRef(scope))
+                statements.clear()
+                assert control.effective_access_on(connection, actor, ResourceRef(scope), now=NOW) == reference, scope
+                assert len(statements) <= 10, (scope, len(statements))
+                effective[scope] = reference
+            assert control.is_complete_owner_on(connection, actor, now=NOW) is _complete_owner_one_by_one(
+                control, connection, actor)
         finally:
             sa.event.remove(world.engine, 'before_cursor_execute', count)
     installation = found['installation']
+    if case in ('owner', 'administrator', 'group', 'custom_mailbox', 'key_ceiling'):
+        assert any(effective[scope] for scope in ('resource-out', 'resource-incoming', 'personal-alice'))
     assert found['missing'] == found[''] == frozenset()
     if case == 'custom_mailbox':
         assert (found['mailbox-box'], found['personal-alice']) == ({'inbound:read', 'work:read'}, {'fax:read'})
