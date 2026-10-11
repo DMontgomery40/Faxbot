@@ -542,3 +542,35 @@ def test_a_change_inside_the_frozen_mask_is_a_loss():
     broken = shipped.page.copy()
     broken.putpixel((20, 20), 255 - broken.getpixel((20, 20)))
     assert 'frozen' in fidelity.assess(gray, today, broken, frozen=shipped.frozen).losses
+
+
+def test_a_long_document_is_screened_side_by_side_exactly_as_one_page_at_a_time(corpus, monkeypatch):
+    """Defect 71: a document of at least coding.PARALLEL_PAGES pages is screened by the measuring processes, a few
+    pages ahead at a time; every page, its pixels changed and its fidelity are the same as screened here."""
+    from app.pages import coding
+    names = sorted(corpus)
+    jobs = [(corpus[name][0], corpus[name][1], None) for name in names] * 2
+    assert len(jobs) >= coding.PARALLEL_PAGES
+
+    def outcome(found):
+        if found is None:
+            return None
+        page, changed, fidelity_found = found
+        return page.tobytes(), page.size, changed, fidelity_found
+    here = [outcome(friendly._screen_one(job)) for job in jobs]
+    side_by_side = [(frame.tobytes(), outcome(found)) for frame, found in friendly._screened_pages(iter(jobs))]
+    assert [found for _, found in side_by_side] == here
+    assert [frame for frame, _ in side_by_side] == [job[1].tobytes() for job in jobs]
+    import os
+    assert coding._measuring_pool() is not None or (os.cpu_count() or 1) < 2  # the processes did the work
+    # When the processes stop working, the pages left are screened here, the same way.
+    from concurrent.futures.process import BrokenProcessPool
+
+    class Broken:
+        _max_workers = 2
+
+        def submit(self, *args, **kwargs):
+            raise BrokenProcessPool('synthetic')
+    monkeypatch.setattr(coding, '_measuring_pool', lambda: Broken())
+    monkeypatch.setattr(coding, '_forget_pool', lambda pool: None)
+    assert [outcome(found) for _, found in friendly._screened_pages(iter(jobs))] == here

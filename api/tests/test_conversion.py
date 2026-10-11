@@ -932,3 +932,44 @@ def test_a_fax_image_over_its_size_limit_is_refused_as_too_large_to_fax(monkeypa
         conversion.pdf_to_tiff(str(source), str(output))
     assert str(refused.value) == "This document is too large to fax: its fax pages would take more than 2 MB."
     assert refused.value.operational is False and not output.exists()
+
+
+def test_a_document_is_inspected_once_while_its_bytes_and_the_limits_stay_the_same(tmp_path, monkeypatch):
+    """Defect 71: one dry run inspected the same PDF six times. The page count is kept by the document's bytes and
+    the limits: the same bytes under the same limits are not parsed again; changed bytes or limits are."""
+    source = tmp_path / 'note.txt'
+    source.write_text('Synthetic page\n')
+    pdf = tmp_path / 'note.pdf'
+    conversion.txt_to_pdf(str(source), str(pdf))
+    parsed, real = [], conversion._inspect_pdf_once
+
+    def counted(path, *, raster=False):
+        parsed.append(raster)
+        return real(path, raster=raster)
+    monkeypatch.setattr(conversion, '_inspect_pdf_once', counted)
+    assert conversion.validate_pdf(str(pdf)) == conversion.validate_pdf(str(pdf)) == 1
+    assert parsed == [False]
+    monkeypatch.setattr(conversion, 'MAX_DOCUMENT_PAGES', conversion.MAX_DOCUMENT_PAGES - 1)
+    assert conversion.validate_pdf(str(pdf)) == 1 and parsed == [False, False]
+    source.write_text('Synthetic page, changed\n')
+    conversion.txt_to_pdf(str(source), str(pdf))
+    assert conversion.validate_pdf(str(pdf)) == 1 and len(parsed) == 3
+
+
+def test_page_bits_are_the_group_4_sizes_and_kept_by_the_pages(tmp_path, monkeypatch):
+    source = tmp_path / 'note.txt'
+    source.write_text('Synthetic page\n' * 40)
+    pdf, tiff = tmp_path / 'note.pdf', tmp_path / 'note.tiff'
+    conversion.txt_to_pdf(str(source), str(pdf))
+    conversion.pdf_to_tiff(str(pdf), str(tiff))
+    frames = conversion.read_fax_frames(str(tiff))
+    expected = tuple(8 * len(conversion._g4_data(frame) or b'') for frame in frames)
+    coded, real = [], conversion._g4_data
+
+    def counted(frame):
+        coded.append(1)
+        return real(frame)
+    monkeypatch.setattr(conversion, '_g4_data', counted)
+    conversion._FRAME_BITS.clear()
+    assert conversion.frame_bits(frames) == expected and len(coded) == len(frames)
+    assert conversion.frame_bits(frames) == expected and len(coded) == len(frames)

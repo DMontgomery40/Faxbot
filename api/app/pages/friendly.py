@@ -279,22 +279,92 @@ def _screened(pdf_path, grays, today, gs, folder):
     from ..conversion import FaxFrames
     masks = screens.object_masks(pdf_path, grays, gs, folder)
     pages, changed, kept = FaxFrames(), 0, []  # packed: one page made at a time
-    for gray, frame, mask in zip(grays, today, masks):
-        screened = screens.screen_page(gray, frame, objects=mask)
-        if screened is None:
+    for frame, outcome in _screened_pages(zip(grays, today, masks)):
+        if outcome is None:
             return None
-        found = fidelity.assess(gray, frame, screened.page, frozen=screened.frozen)
-        if screened.changed and found.kept:
-            pages.append(screened.page)
+        page, page_changed, found = outcome
+        if page_changed and found.kept:
+            pages.append(page)
             changed += 1
             kept.append(found)
             continue
-        if screened.changed:
+        if page_changed:
             logging.getLogger(__name__).warning('A screened page would have lost %s; it goes as it is.',
                                                 ', '.join(found.losses))
         pages.append(frame)
         kept.append(fidelity.UNCHANGED)
     return pages, changed, _overall(kept)
+
+
+def _screen_one(job):
+    """(screened page, pixels changed, Fidelity) for one (gray, today's page, text mask), or None when the drawings do
+    not line up; run here or in a measuring process (``pages.coding``), the same either way."""
+    from . import fidelity, screens
+    gray, frame, mask = job
+    screened = screens.screen_page(gray, frame, objects=mask)
+    if screened is None:
+        return None
+    return screened.page, screened.changed, fidelity.assess(gray, frame, screened.page, frozen=screened.frozen)
+
+
+def _screened_pages(jobs):
+    """(today's page, ``_screen_one``) for each page, in order. A document of at least ``coding.PARALLEL_PAGES``
+    pages is screened by the measuring processes side by side, a few pages ahead at a time, so only those pages are
+    held at once (defect 71); a smaller one here. When the processes stop working (logged), the pages not yet done
+    are screened here; the result is the same either way."""
+    from concurrent.futures.process import BrokenProcessPool
+    from . import coding
+    jobs = iter(jobs)
+    window = []
+    for job in jobs:
+        window.append(job)
+        if len(window) >= coding.PARALLEL_PAGES:
+            break
+    pool = coding._measuring_pool() if len(window) >= coding.PARALLEL_PAGES else None
+    if pool is None:
+        for job in window:
+            yield job[1], _screen_one(job)
+        for job in jobs:
+            yield job[1], _screen_one(job)
+        return
+    ahead = max(2, 2 * (getattr(pool, '_max_workers', 1) or 1))
+    pending = []
+    stopped = False
+
+    def take():
+        nonlocal stopped
+        job, future = pending.pop(0)
+        if not stopped:
+            try:
+                return job[1], future.result()
+            except (BrokenProcessPool, OSError):
+                logging.getLogger(__name__).warning('The processes that screen fax pages stopped; the pages left '
+                                                    'are screened one at a time.', exc_info=True)
+                coding._forget_pool(pool)
+                stopped = True
+        return job[1], _screen_one(job)
+
+    def submit(job):
+        nonlocal stopped
+        future = None
+        if not stopped:
+            try:
+                future = pool.submit(_screen_one, job)
+            except (BrokenProcessPool, RuntimeError):
+                # A pool that broke, or was shut down after another caller found it broken.
+                logging.getLogger(__name__).warning('The processes that screen fax pages stopped; the pages left are '
+                                                    'screened one at a time.', exc_info=True)
+                coding._forget_pool(pool)
+                stopped = True
+        pending.append((job, future))
+    for job in window:
+        submit(job)
+    for job in jobs:
+        while len(pending) >= ahead:
+            yield take()
+        submit(job)
+    while pending:
+        yield take()
 
 
 def _whitened(grays, today, despeckle_page):

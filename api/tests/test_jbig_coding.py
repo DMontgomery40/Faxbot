@@ -286,3 +286,78 @@ def test_the_engine_is_built_with_jbig_and_the_api_image_can_measure_it():
     assert 'jbigkit-bin' in api_image and 'command -v pbmtojbg && command -v jbgtopbm' in api_image
     # The GPL source offer is written down beside each install.
     assert 'apt-get source jbigkit' in api_image and 'apt-get source jbigkit' in engine_image
+
+
+# Defect 71: a 30-page dry run took 49-87 s ------------------------------------------------------------------------
+
+def _long_document(count=8):
+    from app.conversion import FaxFrames
+    pages = FaxFrames()
+    for index in range(count):
+        for page in frames(('shaded_0', 'drawn_text')[index % 2]):
+            pages.append(page)
+    return pages
+
+
+@pytest.mark.parametrize('tuning', [None, coding.Tuning(engine='hylafax', mr=True, jbig=False),
+                                    coding.Tuning(engine='hylafax', mr=False, jbig=False, min_line_bytes=12)],
+                         ids=['estimate', 'fewest-bytes MR', 'fixed MR with a minimum line'])
+def test_a_long_document_is_measured_side_by_side_exactly_as_one_page_at_a_time(monkeypatch, tuning):
+    pages = _long_document()
+    assert len(pages) >= coding.PARALLEL_PAGES
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning)
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    assert coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning) == here
+    # When the processes stop working, the pages are measured here, the same way.
+    from concurrent.futures.process import BrokenProcessPool
+
+    class Broken:
+        def map(self, *args, **kwargs):
+            raise BrokenProcessPool('synthetic')
+    monkeypatch.setattr(coding, '_measuring_pool', lambda: Broken())
+    monkeypatch.setattr(coding, '_forget_pool', lambda pool: None)
+    assert coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning) == here
+
+
+def test_every_jbig_setting_runs_side_by_side_and_the_first_smallest_still_wins(tmp_path):
+    """The 12 tuned settings for every page run at once; the choice per page is the one faxd makes: the smallest, the
+    first of equals in JBIG_CANDIDATES order (here options 8 with MX 0 and options 64 with MX 8 tie)."""
+    encoder = tmp_path / 'pbmtojbg'
+    encoder.write_text('#!/bin/sh\ncat > /dev/null\ncase "$*" in\n  *"-p 8 -m 0"*|*"-p 64 -m 8"*) printf xxx ;;\n'
+                       '  *) printf xxxxx ;;\nesac\n')
+    encoder.chmod(encoder.stat().st_mode | stat.S_IEXEC)
+    pages = list(_long_document(3))
+    tools = (str(encoder), str(encoder))
+    assert coding.jbig_settings(pages, tools, tuned=True) == [(3, 8, 0)] * len(pages)
+    assert coding.jbig_setting(pages[0], tools, tuned=True) == (3, 8, 0)
+    assert coding.jbig_settings(pages, tools) == [(5, 0, 0)] * len(pages)
+
+
+def test_measurements_are_kept_by_the_pages_and_mh_and_mmr_are_taken_under_another_tuning(tmp_path, monkeypatch):
+    """The shared cache (MeasureCache.shared): the same pages are not measured again, by another dry run or by the
+    fax's own delivery, and MH and MMR measured under one tuning serve every other; only what depends on the tuning
+    is measured."""
+    pages = _long_document(2)
+    asked, real = [], coding.measure
+
+    def counted(raster_pages, *, codings=None, check=False, tuning=None):
+        asked.append(tuple(codings))
+        return real(raster_pages, codings=codings, check=check, tuning=tuning)
+    monkeypatch.setattr(coding, 'measure', counted)
+    shared = tmp_path / 'coding-measured'
+    first = coding.measure_cached(pages, coding.MeasureCache(path=tmp_path / 'one.coding.json', shared=shared),
+                                  codings=('MH', 'MR', 'MMR'))
+    # Another dry run, or the delivery with its own attempt file: read from the shared cache, nothing measured.
+    again = coding.measure_cached(pages, coding.MeasureCache(path=tmp_path / 'two.coding.json', shared=shared),
+                                  codings=('MH', 'MR', 'MMR'))
+    assert again == first and asked == [('MH', 'MR', 'MMR')]
+    tuned = coding.Tuning(engine='hylafax', mr=True, jbig=False)
+    found = coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR'),
+                                  tuning=tuned)
+    assert asked[-1] == ('MR',)
+    assert found == {'MH': first['MH'], 'MR': real(pages, codings=('MR',), tuning=tuned)['MR'], 'MMR': first['MMR']}
+    assert list(found) == ['MH', 'MR', 'MMR']
+    # The shared cache holds counts only, readable by the installation alone.
+    [kept] = list(shared.glob('*/*.json'))
+    assert kept.stat().st_mode & 0o077 == 0 and kept.parent.stat().st_mode & 0o077 == 0

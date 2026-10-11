@@ -101,6 +101,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 import weakref
 
@@ -228,22 +229,51 @@ def _tiff_bits(page, coding, *, check=False):
 def jbig_setting(page, tools, *, tuned=False, check=False):
     """(bytes, options, MX) of one page in JBIG (T.85) as faxd sends it: plain (options 0, MX 0), or the smallest of
     ``JBIG_CANDIDATES`` with faxd's tie-break. The page goes as a PBM (1 is black, as PBM has it)."""
+    return jbig_settings((page,), tools, tuned=tuned, check=check)[0]
+
+
+def _jbig_size(tools, pbm, page_bytes, options, mx):
+    """Bytes of one PBM page in JBIG with one setting; with ``page_bytes`` (``check``), decoded again and refused
+    unless it is that page."""
     from PIL import Image
     encoder, decoder = tools
-    pbm = io.BytesIO()
-    page.save(pbm, 'PPM')
-    best = None
-    for options, mx in (JBIG_CANDIDATES if tuned else (JBIG_PLAIN,)):
-        encoded = subprocess.run([encoder, *jbig_arguments(options, mx)], input=pbm.getvalue(), capture_output=True,
-                                 check=True, timeout=JBIG_TIMEOUT_SECONDS).stdout
-        if check:
-            decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
-                                     timeout=JBIG_TIMEOUT_SECONDS).stdout
-            with Image.open(io.BytesIO(decoded)) as back:
-                if back.convert('1').tobytes() != page.tobytes():
-                    raise CodingRefused('JBIG did not decode to the same page.')
-        if best is None or len(encoded) < best[0]:
-            best = (len(encoded), options, mx)
+    encoded = subprocess.run([encoder, *jbig_arguments(options, mx)], input=pbm, capture_output=True, check=True,
+                             timeout=JBIG_TIMEOUT_SECONDS).stdout
+    if page_bytes is not None:
+        decoded = subprocess.run([decoder], input=encoded, capture_output=True, check=True,
+                                 timeout=JBIG_TIMEOUT_SECONDS).stdout
+        with Image.open(io.BytesIO(decoded)) as back:
+            if back.convert('1').tobytes() != page_bytes:
+                raise CodingRefused('JBIG did not decode to the same page.')
+    return len(encoded)
+
+
+def jbig_settings(pages, tools, *, tuned=False, check=False):
+    """``jbig_setting`` for each page, in order. The encoder runs for every page and setting side by side, one
+    process per processor, since each is a separate process: a 30-page document tuned is 360 runs (defect 71). The
+    choice per page is the same as one at a time: the smallest, the first of equals in ``JBIG_CANDIDATES`` order."""
+    from concurrent.futures import ThreadPoolExecutor
+    candidates = JBIG_CANDIDATES if tuned else (JBIG_PLAIN,)
+    pbms = []
+    for page in pages:
+        pbm = io.BytesIO()
+        page.save(pbm, 'PPM')
+        pbms.append((pbm.getvalue(), page.tobytes() if check else None))
+    jobs = [(index, options, mx) for index in range(len(pbms)) for options, mx in candidates]
+
+    def size(job):
+        index, options, mx = job
+        return _jbig_size(tools, pbms[index][0], pbms[index][1], options, mx)
+    workers = max(1, min(len(jobs), os.cpu_count() or 1))
+    if workers == 1:
+        sizes = [size(job) for job in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='faxbot-jbig') as pool:
+            sizes = list(pool.map(size, jobs))
+    best = [None] * len(pbms)
+    for (index, options, mx), found in zip(jobs, sizes):
+        if best[index] is None or found < best[index][0]:
+            best[index] = (found, options, mx)
     return best
 
 
@@ -269,7 +299,9 @@ def _row_codes(image, two_dimensional):
     from PIL import Image
     with Image.open(stream) as written:
         offset, length = written.tag_v2[273][0], written.tag_v2[279][0]
-    bits = ''.join(format(byte, '08b') for byte in value[offset:offset + length])
+    strip = value[offset:offset + length]
+    # The strip as one bit string, in one conversion (each byte as 8 bits, most significant first).
+    bits = format(int.from_bytes(strip, 'big'), f'0{8 * len(strip)}b') if strip else ''
     rows = bits.split(_EOL)
     if rows[0] or len(rows) < image.height + 1:
         raise CodingRefused('MR could not be measured on this page.')
@@ -369,6 +401,8 @@ def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
     pages = _pages(raster_pages)
     wanted = _known(CODINGS if codings is None else codings)
     tuning = Tuning(engine='builtin', mr=False, jbig=False) if tuning is None else tuning
+    parallel = {} if check else _measured_side_by_side(
+        pages, tuple(name for name in CODINGS if name in wanted and name != 'JBIG'), tuning)
     result = {}
     for coding in CODINGS:
         if coding not in wanted:
@@ -378,9 +412,13 @@ def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
             if tools is None:
                 continue
             try:
-                result[coding] = tuple(_jbig_bits(page, tools, check=check, tuned=tuning.jbig) for page in pages)
+                result[coding] = tuple(8 * found[0] for found in jbig_settings(pages, tools, tuned=tuning.jbig,
+                                                                                check=check))
             except (OSError, subprocess.SubprocessError):
                 logging.getLogger(__name__).warning('JBIG could not be measured on these pages.', exc_info=True)
+            continue
+        if coding in parallel:
+            result[coding] = parallel[coding]
             continue
         if coding == 'MR' and tuning.engine == 'hylafax':
             if check:
@@ -390,6 +428,73 @@ def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
             continue
         result[coding] = tuple(_tiff_bits(page, coding, check=check) for page in pages)
     return result
+
+
+# MH, MR and MMR are measured by libtiff page by page, CPU work during which Pillow keeps the interpreter lock: a
+# document of at least PARALLEL_PAGES pages is measured by up to MEASURE_WORKERS processes side by side, each page
+# exactly as here (defect 71: a 30-page dry run took 49-87 s on a 4-processor install). Smaller documents, and the
+# tests' decode-again check, stay in this process.
+PARALLEL_PAGES = 6
+MEASURE_WORKERS = 8
+_POOL = None
+_POOL_LOCK = threading.Lock()
+
+
+def _measuring_pool():
+    """The processes that measure pages (started once, on first use, and kept for later documents), or None on a
+    single processor."""
+    global _POOL
+    workers = min(os.cpu_count() or 1, MEASURE_WORKERS)
+    if workers < 2:
+        return None
+    with _POOL_LOCK:
+        if _POOL is None:
+            import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+            # Started fresh, never forked from this threaded server process.
+            _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context('spawn'))
+        return _POOL
+
+
+def _forget_pool(pool):
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is pool:
+            _POOL = None
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _page_measures(job):
+    """(bits for each of ``names``) of one page given as (size, dpi, packed rows, names, tuning); run in a measuring
+    process, the same functions as ``measure``."""
+    from PIL import Image
+    size, dpi, packed, names, tuning = job
+    page = Image.frombytes('1', size, packed)
+    page.info['dpi'] = dpi
+    return tuple(_faxd_mr_bits(page, tuning) if name == 'MR' and tuning.engine == 'hylafax' else _tiff_bits(page, name)
+                 for name in names)
+
+
+def _measured_side_by_side(pages, names, tuning):
+    """{coding: bits of each page} for ``names`` (MH, MR, MMR), measured by the measuring processes; {} when they
+    are not used (a small document, one processor) or stopped working (logged; measured here instead)."""
+    from concurrent.futures.process import BrokenProcessPool
+    if not names or len(pages) < PARALLEL_PAGES:
+        return {}
+    pool = _measuring_pool()
+    if pool is None:
+        return {}
+    jobs = [(page.size, _dpi(page), page.tobytes(), names, tuning) for page in pages]
+    try:
+        found = list(pool.map(_page_measures, jobs))
+    except (BrokenProcessPool, OSError, RuntimeError):
+        # RuntimeError: the pool was shut down after another caller found it broken. A page's own refusal
+        # (CodingRefused) is raised as it is; anything else wrong is raised again when the pages are measured here.
+        logging.getLogger(__name__).warning('The processes that measure fax codings stopped; the pages are measured '
+                                            'one at a time.', exc_info=True)
+        _forget_pool(pool)
+        return {}
+    return {name: tuple(bits[index] for bits in found) for index, name in enumerate(names)}
 
 
 def digest(raster_pages) -> str:
@@ -408,36 +513,111 @@ def cache_path(tiff_path):
     return path.with_name(path.stem + '.coding.json')
 
 
-def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
-    """``measure``, kept in ``cache`` (a JSON file) by the pages' fingerprint and the tuning; a later call on the
-    same pages reads it back. An unreadable or foreign cache is measured again; a cache that cannot be written is
-    only logged (the measurement itself is returned either way)."""
-    key = digest(raster_pages) + ';' + (tuning.key() if tuning is not None else 'estimate')
-    wanted = tuple(_known(CODINGS if codings is None else codings))
-    path = Path(cache)
-    kept = {}
+# Codings that never depend on the tuning (``_tiff_bits``): measured once for some pages under any tuning, they are
+# the same under every other.
+UNTUNED = ('MH', 'MMR')
+# The shared measurement cache keeps at most this many documents in each of its 256 folders (newest kept).
+SHARED_PER_FOLDER = 32
+
+
+@dataclass(frozen=True)
+class MeasureCache:
+    """Where ``measure_cached`` keeps measurements: ``path``, the attempt's own file (``cache_path``), or None; and
+    ``shared``, a folder kept by the pages' fingerprint for every fax and dry run (``POST /routing/predict``), so a
+    document measured once is not measured again by a later estimate or by its own delivery (defect 71); or None."""
+    path: object = None
+    shared: object = None
+
+
+def shared_cache(values):
+    """The shared measurement cache folder in the installation's data folder, or None without one."""
+    root = getattr(values, 'fax_data_dir', None)
+    return Path(root) / 'coding-measured' if root else None
+
+
+def _read_kept(path):
     try:
         if path.is_file() and not path.is_symlink():
             kept = json.loads(path.read_text(encoding='utf-8'))
-            kept = kept if isinstance(kept, dict) else {}
+            return kept if isinstance(kept, dict) else {}
     except (OSError, ValueError):
-        kept = {}
-    found = kept.get(key)
-    if isinstance(found, dict) and all(name in found or name == 'JBIG' for name in wanted):
-        try:
-            return {name: tuple(int(bits) for bits in found[name]) for name in wanted if name in found}
-        except (TypeError, ValueError):
-            pass
-    measured = measure(raster_pages, codings=wanted, tuning=tuning)
-    kept[key] = {name: list(bits) for name, bits in measured.items()}
+        pass
+    return {}
+
+
+def _write_kept(path, kept):
+    temporary = path.with_name(path.name + f'.{uuid.uuid4().hex[:8]}.tmp')
+    temporary.write_text(json.dumps(kept), encoding='utf-8')
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _shared_file(folder, fingerprint):
+    return Path(folder) / fingerprint[:2] / f'{fingerprint}.json'
+
+
+def _prune_shared(folder):
+    """Keep the newest ``SHARED_PER_FOLDER`` documents in one of the shared cache's folders."""
     try:
-        temporary = path.with_name(path.name + f'.{uuid.uuid4().hex[:8]}.tmp')
-        temporary.write_text(json.dumps(kept), encoding='utf-8')
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
+        files = sorted((entry for entry in folder.iterdir() if entry.suffix == '.json' and not entry.is_symlink()),
+                       key=lambda entry: entry.stat().st_mtime, reverse=True)
+        for entry in files[SHARED_PER_FOLDER:]:
+            entry.unlink(missing_ok=True)
     except OSError:
-        logging.getLogger(__name__).warning('The measured fax codings could not be kept with the attempt files.')
-    return measured
+        pass
+
+
+def _kept_bits(found, name):
+    try:
+        return tuple(int(bits) for bits in found[name])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def measure_cached(raster_pages, cache, *, codings=None, tuning=None):
+    """``measure``, kept by the pages' fingerprint and the tuning in ``cache``: a JSON file, or a ``MeasureCache``
+    (the attempt's file and the shared folder). A later call on the same pages reads it back; MH and MMR measured
+    under another tuning are taken as they are (they do not depend on it). An unreadable or foreign cache is
+    measured again; a cache that cannot be written is only logged (the measurement itself is returned either way)."""
+    where = cache if isinstance(cache, MeasureCache) else MeasureCache(path=cache)
+    fingerprint = digest(raster_pages)
+    key = fingerprint + ';' + (tuning.key() if tuning is not None else 'estimate')
+    wanted = tuple(_known(CODINGS if codings is None else codings))
+    files = [(Path(where.path), False)] if where.path is not None else []
+    if where.shared is not None:
+        files.append((_shared_file(where.shared, fingerprint), True))
+    kept = [_read_kept(path) for path, _ in files]
+    entries = {}
+    for found in kept:
+        for name, value in found.items():
+            if isinstance(name, str) and name.startswith(fingerprint + ';') and isinstance(value, dict):
+                entries.setdefault(name, value)
+    found = entries.get(key)
+    if isinstance(found, dict) and all(name in found or name == 'JBIG' for name in wanted):
+        result = {name: _kept_bits(found, name) for name in wanted if name in found}
+        if all(value is not None for value in result.values()):
+            return result
+    reused = {}
+    for name in UNTUNED:
+        for value in ([found] if isinstance(found, dict) else []) + list(entries.values()):
+            if name in wanted and name in value and _kept_bits(value, name) is not None:
+                reused[name] = _kept_bits(value, name)
+                break
+    rest = tuple(name for name in wanted if name not in reused)
+    measured = measure(raster_pages, codings=rest, tuning=tuning) if rest else {}
+    result = {name: reused.get(name, measured.get(name)) for name in CODINGS
+              if name in reused or name in measured}
+    for (path, shared), found in zip(files, kept):
+        found[key] = {name: list(bits) for name, bits in result.items()}
+        try:
+            if shared:
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _write_kept(path, found)
+            if shared:
+                _prune_shared(path.parent)
+        except OSError:
+            logging.getLogger(__name__).warning('The measured fax codings could not be kept for later.')
+    return result
 
 
 # Choosing -----------------------------------------------------------------------------------------------------
