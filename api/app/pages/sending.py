@@ -522,7 +522,8 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
                                       dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                       card=account.card, boundary_seconds=cap.boundary_seconds,
                                       predict=account.predict(), describe_dense=describe_dense, usable=usable,
-                                      measure_cache=_coding_cache(root, job_id) if usable is not None else None,
+                                      measure_cache=_coding_cache(root, job_id, values) if usable is not None
+                                      else None,
                                       renderings=renderings, faster=faster, receiving=receiving, memo=cache.codec)
     options = tuple(_option(account, item) for item in choice.get('candidates') or ())
     layout = None if choice['layout'] == 'normal' else choice['layout']
@@ -758,12 +759,15 @@ def _usable_codings(engine, values, route, mode, number, cap, *, requested=None)
         return None
 
 
-def _coding_cache(root, job_id):
+def _coding_cache(root, job_id, values=None):
     """The codings measured on this fax's pages, kept for every attempt and account of the fax
     (``packed-<fax>-measured.coding.json``): its entries are keyed by the pages' pixels and the tuning, so a later
-    attempt measures nothing it measured before. The retention cleanup removes it with the fax's other files."""
-    from .coding import cache_path
-    return cache_path(Path(root) / f'{PREFIX}{job_id}-measured.tiff')
+    attempt measures nothing it measured before. The retention cleanup removes it with the fax's other files. With
+    ``values``, also the shared cache in the data folder (``coding.shared_cache``), so pages a dry run already
+    measured (``POST /routing/predict``) are not measured again."""
+    from .coding import MeasureCache, cache_path, shared_cache
+    return MeasureCache(path=cache_path(Path(root) / f'{PREFIX}{job_id}-measured.tiff'),
+                        shared=shared_cache(values) if values is not None else None)
 
 
 def _record_coding(engine, job_id, attempt_id, number, route, choice, usable, now):

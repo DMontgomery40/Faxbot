@@ -504,14 +504,18 @@ class PageRead:
 
 
 def paper_white(image):
-    """(the page in grayscale with white paper, True when it had to be inverted). Every payload page has white
-    margins at both sides, so a page whose left and right edges are mostly dark arrived inverted."""
+    """(the page in grayscale with white paper, True when it had to be inverted). Every payload page has a white
+    margin above and below its rows, and grid and picture pages also at both sides, so a page whose four edges are
+    mostly dark arrived inverted. The sides alone are not enough: a full run-coded page with a short run limit has
+    dark rows up to both side edges (the ladder's ink at the left, each row's padding run at the right)."""
     gray = image if image.mode == 'L' else image.convert('L')
     width, height = gray.size
-    edge = max(1, min(width // 50, 16))
-    dark = sum(gray.crop((0, 0, edge, height)).histogram()[:128]) + sum(
-        gray.crop((width - edge, 0, width, height)).histogram()[:128])
-    if dark * 2 > 2 * edge * height:
+    side = max(1, min(width // 50, 16))
+    rows = max(1, min(height // 50, 16))
+    strips = ((0, 0, side, height), (width - side, 0, width, height), (0, 0, width, rows),
+              (0, height - rows, width, height))
+    dark = sum(sum(gray.crop(box).histogram()[:128]) for box in strips)
+    if dark * 2 > 2 * side * height + 2 * rows * width:
         return ImageOps.invert(gray), True
     return gray, False
 

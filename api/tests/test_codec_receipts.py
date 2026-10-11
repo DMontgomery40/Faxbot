@@ -126,6 +126,28 @@ def test_the_received_fax_probe_finds_encoded_pages_however_they_arrived(encoded
         assert codec.looks_like_payload(codec.first_page(receipts.faxbeep_pdf([page]))), layout
 
 
+@pytest.mark.parametrize('change', ['exact', 'rotated_180', 'inverted', 'rotated_inverted'])
+def test_a_full_run_coded_page_with_dark_side_edges_is_not_taken_for_an_inverted_one(change):
+    """R009 (live, 2026-10-11): one runs page at run limit 7 carrying a 30-page report reached the receiver pixel
+    for pixel but did not decode, because its side edges are mostly dark (the ladder's ink at the left, each row's
+    padding run at the right) and the page was taken for an inverted one. The top and bottom margins say which way
+    round it is."""
+    document = _document(size=110_000, seed=9)
+    made = codec.encode_document(document, layout='runs', run_limit=7, fec='medium', salt=b's' * 16,
+                                 nonce=b'n' * 12).pages
+    page = made[0]
+    gray = page.convert('L')
+    side = min(page.size[0] // 50, 16)
+    sides = (sum(gray.crop((0, 0, side, page.size[1])).histogram()[:128])
+             + sum(gray.crop((page.size[0] - side, 0, page.size[0], page.size[1])).histogram()[:128]))
+    assert len(made) == 1 and sides * 2 > 2 * side * page.size[1]  # the side edges alone look inverted
+    received = [receipts.PAGE_TRANSFORMS[change](image) for image in made]
+    assert codec.looks_like_payload(received[0])
+    assert codec_pages.paper_white(received[0])[1] == ('inverted' in change)
+    found, _ = codec.decode_images(received)
+    assert found.data == document.data
+
+
 def test_ordinary_pages_are_not_payload_pages_either_way_up_or_inverted():
     from PIL import ImageDraw
     page = Image.new('1', (1728, 2156), 1)
