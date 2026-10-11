@@ -28,7 +28,9 @@ Rules this module keeps:
   delivered also ends the fax's own delivery (``success`` or ``failed``) in
   the same transaction, so its number is no longer held for an unknown result
   (defect 45); the attempt keeps what the provider said, so no route fallback
-  sends it again. Can't tell leaves the delivery waiting for review.
+  sends it again. Can't tell leaves the delivery waiting for review. A fax
+  settled before that change has its delivery ended the same way by the
+  worker, once (defect 73).
   Confirming receipt with the provider's fax ID stays a separate step.
 - **Nothing reaches the recipient without a person.** The automatic checks
   only read stored records, or ask an enrolled partner once about a call
@@ -464,6 +466,46 @@ class CertaintyStore:
                 continue  # a person settled it first, or another worker closed it
         return closed
 
+    def end_settled(self, *, now=None, limit=100):
+        """End the delivery of each fax a person settled as delivered or not delivered before settling did that
+        itself (defect 45, #93), and that still waits for review; return how many (defect 73).
+
+        Such a fax kept reading "Needs review" and holding its number, and nothing could end it since: settling needs
+        an open item. The person's decision is applied as settling applies it now (``settle_uncertain_on``):
+        delivered ends ``success``, not delivered ``failed``, with an ``operator_settled`` event under the person who
+        decided, at the moment they decided. Only a delivery still waiting for review on the item's own attempt
+        changes, so a repeat, a result that came since or a fax already sent again changes nothing. Nothing is sent
+        again, and can't tell stays waiting for review.
+        """
+        from ..outbound_store import SETTLED_STATES, settle_uncertain_on
+        now = now or utcnow()
+        items, deliveries = self.items, self.deliveries
+        due = (sa.select(items.c.id).select_from(items.join(deliveries, deliveries.c.id == items.c.job_id))
+               .where(items.c.state == 'settled', items.c.outcome.in_(tuple(SETTLED_STATES)),
+                      deliveries.c.state == 'reconciliation_required', deliveries.c.attempt_id == items.c.attempt_id)
+               .order_by(items.c.settled_at, items.c.id).limit(limit))
+        with read_connection(self.engine) as connection:
+            identities = connection.execute(due).scalars().all()
+        ended = 0
+        for identity in identities:
+            try:
+                with write_transaction(self.engine) as connection:
+                    item = self.item_on(connection, identity)
+                    if item is None or item['state'] != 'settled':
+                        continue
+                    actor = 'principal:' + item['settled_by'] if item['settled_by'] else None
+                    ended += settle_uncertain_on(connection, deliveries, self.jobs, self.delivery_events,
+                                                 item['job_id'], attempt_id=item['attempt_id'],
+                                                 outcome=item['outcome'], actor=actor, now=now,
+                                                 decided_at=item['settled_at'])
+            except DeliveryStoreError:
+                continue  # tried again on the next step
+        if ended:
+            # A fax waiting for one of these numbers may go now.
+            from ..outbound_wake import wake
+            wake.notify()
+        return ended
+
     def record_checks(self, *, now=None, limit=50):
         """Keep each new finding of the automatic checks on open items, once; return how many were new.
 
@@ -521,6 +563,8 @@ class CertaintyWorker:
         created = self.store.feed(control, now=now)
         # A fax delivered since, by any path (a partner's repair, a late result, a confirmed receipt), closes.
         self.store.close_delivered(now=now)
+        # A fax a person settled before settling ended its delivery (defect 73) ends now, once.
+        self.store.end_settled(now=now)
         self.store.record_checks(now=now)
         escalated = self.store.escalate(control, now=now)
         return created >= 100 or escalated >= 100
