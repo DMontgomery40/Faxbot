@@ -136,7 +136,8 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
 SETTLED_STATES = {'delivered': 'success', 'not_delivered': 'failed'}
 
 
-def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt_id, outcome, actor, now):
+def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt_id, outcome, actor, now,
+                        decided_at=None):
     """End a fax waiting for review by a person's decision, in the caller's write transaction; True when it did.
 
     Delivered makes the delivery ``success`` and not delivered makes it ``failed``, so it stops holding its number
@@ -145,6 +146,9 @@ def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt
     version: a provider result that came first, or a fax already sent again, is left as it is. The attempt keeps
     what the provider said (its phase stays ``uncertain``), so no route fallback ever picks the fax up: nothing is
     sent again unless the person asks for it. The decision is kept as an ``operator_settled`` event.
+
+    ``decided_at``: when the person decided, for a decision made before settling ended the delivery (defect 73,
+    ``CertaintyStore.end_settled``); the event is kept at that moment, with when the delivery ended.
     """
     state = SETTLED_STATES.get(outcome)
     if state is None:
@@ -160,8 +164,11 @@ def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt
     if changed.rowcount != 1:
         return False
     connection.execute(jobs.update().where(jobs.c.id == job_id).values(status=state, updated_at=now))
-    _event(connection, events, job_id, 'operator_settled', now, attempt_id=attempt_id,
-           details={'outcome': outcome, 'state': state, 'actor': actor})
+    details = {'outcome': outcome, 'state': state, 'actor': actor}
+    if decided_at is not None:
+        details['ended_at'] = now.isoformat(timespec='seconds')
+    _event(connection, events, job_id, 'operator_settled', decided_at or now, attempt_id=attempt_id,
+           details=details)
     return True
 
 
