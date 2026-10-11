@@ -169,6 +169,30 @@ def test_a_t38_failure_after_the_far_machine_answered_makes_only_that_numbers_ne
                                                           choice=ami.reply_choice(trunk))['Variable']
 
 
+def test_hps_send_that_never_trained_settles_its_call_and_teaches_audio(installation):
+    """Defect #49, end to end from HP's 11 October 03:19Z result as the SSL Fax engine reported it: a call that
+    never trained failed for certain, so the engine's result settles the call record (hylafax_http._record does
+    this only for success or failed), the T.38 failure is kept for the number, and its next call is audio fax."""
+    import base64
+    from app import sip_calls
+    db = installation
+    hp = '+18884732963'
+    attempt = record(db, number=hp, status=None, when=ago(hours=1))
+    words = 'Unspecified failure to train with receiver ; too many attempts to dial'
+    payload = {'tag': 'x', 'why': 'failed', 'dials': 0, 'total_dials': 1, 'pages': 0, 'status_code': '',
+               'status_b64': base64.b64encode(words.encode()).decode(),
+               'remote_station_b64': base64.b64encode(b'HPFAX').decode(), 'signal_rate_b64': '',
+               'data_format_b64': '', 'sslfax': False, 'session_seconds': 87}
+    status, sentence, _ = hylafax_engine.result_outcome(payload)
+    assert status == 'failed'
+    sip_calls.SipCallRecords(db).record_engine_result('job' + attempt[:12], attempt, success=False, pages=0,
+                                                       station='HPFAX', reason=words)
+    learned(db)
+    assert [row['kind'] for row in memory_rows(db)] == ['t38_failed']
+    call = hylafax_engine.call_settings(values(), hp, engine=True)
+    assert call.t38 is False and call.learned.audio
+
+
 def test_failures_that_moved_the_whole_trunk_or_engine_to_audio_teach_nothing_about_the_number(installation):
     db = installation
     # No T.38 data came back (the trunk-wide switch, sip_fax_mode), the engine heard no fax machine (the engine's

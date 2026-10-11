@@ -147,6 +147,7 @@ const eventLabels: Record<string, string> = {
   repair_completed: 'Completed directly by the partner after the call broke',
   repair_failed: 'The partner did not receive the missing pages',
   engine_requested: 'Fax engine chosen for this fax',
+  operator_settled: 'Result confirmed by a person',
 };
 
 const categoryLabels: Record<string, string> = {

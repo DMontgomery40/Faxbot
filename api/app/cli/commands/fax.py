@@ -41,7 +41,8 @@ EVENT_LABELS = {
     'repair_started': 'Sending only the missing pages directly to the partner',
     'repair_completed': 'Completed directly by the partner after the call broke',
     'repair_failed': 'The partner did not receive the missing pages',
-    'engine_requested': 'Fax engine chosen for this fax'}
+    'engine_requested': 'Fax engine chosen for this fax',
+    'operator_settled': 'Result confirmed by a person'}
 RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot faxes received list --ids.'
 
 
