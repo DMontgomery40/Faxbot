@@ -297,8 +297,7 @@ def _digital_confirmed(here):
 
 
 def _blocked_listed(here):
-    from ..inbound.screening import ScreeningStore
-    return bool(ScreeningStore(here.engine).active())
+    return bool(here.blocked)
 
 
 def _two_trunks(here):
@@ -329,8 +328,7 @@ def _caller_id_prices(here):
 
 
 def _ups(here):
-    from ..power import settings
-    return bool(settings(here.engine))
+    return bool(here.ups)
 
 
 def _header_notice_set(here):
@@ -848,10 +846,10 @@ def _view(key, capability, item, here, label, now, findings):
 def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS, findings=True):
     """Every catalogue entry for this installation, grouped by outcome; never any money. With ``findings`` False,
     what advice and charge checks found is left out (their line is None)."""
-    evaluated = mechanisms.evaluate(values, routes, engine, now=now, days=days)
+    # The catalogue's evaluation, and what this installation has (its sending accounts, partners and so on) as that
+    # evaluation read it; the prerequisites and counters below read the same facts, never their own copy.
+    evaluated, here = mechanisms.evaluate_here(values, routes, engine, now=now, days=days)
     items = {item['key']: item for stage in evaluated['stages'] for item in stage['mechanisms']}
-    # What this installation has, for the prerequisites; the facts above already came from the same reads.
-    here = mechanisms.Installation(values, routes, engine, saved={}, days=days)
     now = now or utcnow()
     label = _labels(values)
     grouped = {key: [] for key, _, _ in OUTCOMES}

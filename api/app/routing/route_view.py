@@ -20,6 +20,7 @@ import sqlalchemy as sa
 
 from ..rules import model, text
 from . import envelope as envelopes, holds as hold_store
+from .database import reflect
 
 
 REAPPLY_LIMIT = 1000
@@ -111,8 +112,8 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
     zone = getattr(values, 'time_zone', '') or None if values is not None else None
     names = _scope_names(engine)
     label = lambda key: text.account_label(key, accounts)  # noqa: E731
-    attempts_t = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=engine)
-    costs_t = sa.Table('delivery_attempt_costs', sa.MetaData(), autoload_with=engine)
+    tables = reflect(engine, ('outbound_attempts', 'delivery_attempt_costs'))
+    attempts_t, costs_t = tables['outbound_attempts'], tables['delivery_attempt_costs']
     with engine.connect() as connection:
         t = envelopes.tables(connection)
         rows = [dict(row) for row in connection.execute(
