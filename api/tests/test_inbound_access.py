@@ -167,8 +167,31 @@ def test_a_list_of_received_faxes_is_checked_in_one_transaction_with_the_same_vi
     # Checked a few faxes per transaction (LIST_CHUNK): the same faxes, in the same order, across the boundaries.
     from api.app.access import inbound
     monkeypatch.setattr(inbound, 'LIST_CHUNK', 2)
+    monkeypatch.setattr(inbound, 'LIST_SECONDS', 60.0)
     assert iw.queries.visible_items(alice, ids) == one_by_one
     assert len(opened) == 1 + 3  # six different ids, two to a transaction
+    # A slow check (acceptance: 250-500 ms each under load) ends the transaction before LIST_SECONDS, not LIST_CHUNK.
+    import time
+    monkeypatch.setattr(inbound, 'LIST_CHUNK', 20)
+    monkeypatch.setattr(inbound, 'LIST_SECONDS', 0.2)
+    real = iw.queries.resources.require_inbound_on
+
+    def slow(*args, **kwargs):
+        time.sleep(0.06)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(iw.queries.resources, 'require_inbound_on', slow)
+    from contextlib import contextmanager
+    held = []
+
+    @contextmanager
+    def timed():
+        with original() as connection:
+            began = time.monotonic()
+            yield connection
+        held.append(time.monotonic() - began)
+    monkeypatch.setattr(iw.queries.store, 'transaction', timed)
+    assert iw.queries.visible_items(alice, ids) == one_by_one
+    assert len(held) >= 2 and max(held) < 0.25, held
     # A temporary password refuses each fax, so nothing is shown; a revoked credential fails the whole list.
     iw.update('access_users', 'alice', password_change_required=1)
     assert iw.queries.visible_items(alice, ids) == []

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import hmac
 import json
+import time
 import uuid
 
 import sqlalchemy as sa
@@ -273,8 +274,10 @@ def _received_on(record, placed):
     return found
 
 
-# Received faxes checked in one access transaction by ``visible_items``, as ``queries.LIST_CHUNK`` for sent faxes.
+# Received faxes checked in one access transaction by ``visible_items``: at most LIST_CHUNK and no more than fit in
+# LIST_SECONDS, as ``queries.LIST_CHUNK`` and ``queries.LIST_SECONDS`` for sent faxes.
 LIST_CHUNK = 20
+LIST_SECONDS = 0.2
 
 
 class AuthorizedInboundQueries:
@@ -340,29 +343,40 @@ class AuthorizedInboundQueries:
 
         Each id gets exactly ``item``'s check; an id it refuses, or a fax that no longer exists, is left out, never
         explained, and does not hide the others. Anything other than a refusal fails the whole call, as it fails
-        ``item``. Lists ask with this: ``LIST_CHUNK`` faxes share one transaction, so a page of 100 takes the lock
-        5 times, not 100, and never long enough to make other access checks wait out their lock timeout.
+        ``item``. Lists ask with this: a few faxes share one transaction, at most ``LIST_CHUNK`` and no more than fit
+        in ``LIST_SECONDS``, so the lock is never held long enough to make other access checks wait out their lock
+        timeout.
         """
         wanted = list(dict.fromkeys(inbound_ids))
-        found = []
-        for start in range(0, len(wanted), LIST_CHUNK):
-            found += self._visible_items(actor, wanted[start:start + LIST_CHUNK])
+        found, start = [], 0
+        while start < len(wanted):
+            checked, visible = self._visible_items(actor, wanted[start:start + LIST_CHUNK])
+            found += visible
+            start += checked
         return found
 
     def _visible_items(self, actor, wanted):
+        """(how many of ``wanted`` were checked, the visible ones), in one transaction that takes no further fax once
+        the slowest check so far would carry it past ``LIST_SECONDS``; the first fax is always checked."""
         faxes = self.tables['inbound_faxes']
         with self.store.transaction() as connection:
             now = self._clock()
-            allowed = []
+            began, slowest, checked, allowed = time.monotonic(), 0.0, 0, []
             for inbound_id in wanted:
+                if checked and time.monotonic() - began + slowest > LIST_SECONDS:
+                    break
+                checked += 1
+                one = time.monotonic()
                 try:
                     self.resources.require_inbound_on(connection, actor, inbound_id, 'inbound:read', now=now)
                 except FaxAccessError:
                     continue
+                finally:
+                    slowest = max(slowest, time.monotonic() - one)
                 allowed.append(inbound_id)
             found = set(connection.execute(sa.select(faxes.c.id).where(faxes.c.id.in_(allowed))).scalars()) \
                 if allowed else set()
-            return [inbound_id for inbound_id in allowed if inbound_id in found]
+            return checked, [inbound_id for inbound_id in allowed if inbound_id in found]
 
     def _with_acquisition(self, connection, rows):
         """Add each fax's acquisition state, read in one query; never duplicates a fax."""

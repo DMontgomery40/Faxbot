@@ -7,6 +7,7 @@ never authority for a later operation. Provider lifecycle work remains separate.
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
+import time
 import uuid
 
 import sqlalchemy as sa
@@ -22,9 +23,12 @@ from .types import AccessUnavailableError, InvalidTransactionError
 OWN_ROUTES = frozenset({'sip', 'freeswitch'})
 
 
-# Faxes checked in one access transaction by the list methods (``visible_jobs``): about 3 ms each on a Mac, so a
-# chunk holds the write lock about 60 ms.
+# A list's access checks (``visible_jobs``) end their transaction and start another after LIST_SECONDS or
+# LIST_CHUNK faxes, whichever comes first, so the write lock is never held long enough to make other access checks
+# wait out their 1 s (AccessStore.LOCK_TIMEOUT_MS). A fax's check is about 3 ms of Python on a Mac and took
+# 250-500 ms on a loaded installation (acceptance, 2026-10-11), so a count alone is no bound.
 LIST_CHUNK = 20
+LIST_SECONDS = 0.2
 
 
 def delivery_fields(row):
@@ -135,30 +139,41 @@ class AuthorizedFaxQueries:
 
         Each id gets exactly ``job``'s check; an id it refuses is left out, never explained, and does not hide
         the others. Anything other than a refusal (a revoked credential, unavailable storage) fails the whole call,
-        as it fails ``job``. Lists ask with this: ``LIST_CHUNK`` faxes share one transaction, so a page of 100
-        takes the lock 5 times, not 100, and never long enough to make other access checks wait out their
-        ``AccessStore.LOCK_TIMEOUT_MS`` (100 in one transaction held it about 300 ms on a Mac).
+        as it fails ``job``. Lists ask with this: a few faxes share one transaction, at most ``LIST_CHUNK`` and no
+        more than fit in ``LIST_SECONDS``, so a page of 100 takes the lock a handful of times, not 100, and never
+        long enough to make other access checks wait out their ``AccessStore.LOCK_TIMEOUT_MS``.
         """
         wanted = list(dict.fromkeys(job_ids))
-        found = {}
-        for start in range(0, len(wanted), LIST_CHUNK):
-            found.update(self._visible_jobs(actor, wanted[start:start + LIST_CHUNK]))
+        found, start = {}, 0
+        while start < len(wanted):
+            checked, visible = self._visible_jobs(actor, wanted[start:start + LIST_CHUNK])
+            found.update(visible)
+            start += checked
         return found
 
     def _visible_jobs(self, actor, wanted):
+        """(how many of ``wanted`` were checked, {job_id: record} for those visible), in one transaction that
+        takes no further fax once the slowest check so far would carry it past ``LIST_SECONDS``; the first fax is
+        always checked, so the list always moves on."""
         with self._transaction() as (connection, now):
-            visible = []
+            began, slowest, checked, visible = time.monotonic(), 0.0, 0, []
             for job_id in wanted:
+                if checked and time.monotonic() - began + slowest > LIST_SECONDS:
+                    break
+                checked += 1
+                one = time.monotonic()
                 try:
                     self.resources.require_outbound_on(connection, actor, job_id, 'fax:read', now=now)
                 except FaxAccessError:
                     continue
+                finally:
+                    slowest = max(slowest, time.monotonic() - one)
                 visible.append(job_id)
             rows = {}
             if visible:
                 rows = {row['id']: row for row in connection.execute(
                     self._selection().where(self.jobs.c.id.in_(visible))).mappings()}
-            return {job_id: self._record(rows.get(job_id)) for job_id in visible}
+            return checked, {job_id: self._record(rows.get(job_id)) for job_id in visible}
 
     def document(self, actor, job_id):
         with self._transaction() as (connection, now):

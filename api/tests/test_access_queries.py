@@ -1,4 +1,5 @@
 """Internal SQL visibility composition, never HTTP or GUI acceptance."""
+from contextlib import contextmanager
 import importlib
 
 import pytest
@@ -206,9 +207,45 @@ def test_a_full_page_is_checked_twenty_faxes_per_transaction_with_the_same_visib
     assert len(ids) == 100
     expected = _one_by_one(queries, aw.actor, ids)
     assert list(expected) == [f'fax{index:02d}' for index in range(1, 30) if index not in (19, 20)] + ['new']
+    monkeypatch.setattr(Q, 'LIST_SECONDS', 60.0)  # the count bound alone here; the time bound is tested below
     opened = _locks(queries, monkeypatch)
     assert queries.visible_jobs(aw.actor, ids) == expected
     assert len(opened) == 5
+
+
+def test_a_slow_check_ends_its_transaction_before_the_time_limit_with_the_same_visibility(aw, queries, monkeypatch):
+    """Acceptance (2026-10-11): one fax's check took 250-500 ms on a loaded installation, so 20 held the lock 4-10 s
+    and every other access check gave up after its 1 s. A transaction now takes no further fax once the slowest
+    check so far would carry it past Q.LIST_SECONDS; the faxes shown are the same, in the same order."""
+    import time
+    for index in range(10):
+        aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': f'fax{index:02d}'})
+    aw.update('access_resources', _resource_id(aw, 'fax03'), parent_id='personal-bob')
+    ids = [f'fax{index:02d}' for index in range(10)] + ['second', 'missing']
+    real = queries.resources.require_outbound_on
+
+    def slow(*args, **kwargs):
+        time.sleep(0.06)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(queries.resources, 'require_outbound_on', slow)
+    expected = _one_by_one(queries, aw.actor, ids)
+    assert list(expected) == [f'fax{index:02d}' for index in range(10) if index != 3]
+    held, transaction = [], queries._transaction
+
+    @contextmanager
+    def timed():
+        with transaction() as value:
+            began = time.monotonic()
+            yield value
+        held.append(time.monotonic() - began)
+    monkeypatch.setattr(queries, '_transaction', timed)
+    assert queries.visible_jobs(aw.actor, ids) == expected
+    assert len(held) >= 4 and max(held) < 0.25, held  # about LIST_SECONDS (0.2), against a 1 s lock timeout
+    # A single check slower than the limit still moves on, one fax to a transaction.
+    monkeypatch.setattr(Q, 'LIST_SECONDS', 0.01)
+    held.clear()
+    assert queries.visible_jobs(aw.actor, ids[:3]) == {key: expected[key] for key in ids[:3] if key in expected}
+    assert len(held) == 3
 
 
 def test_one_refused_fax_does_not_hide_the_others(aw, queries):
