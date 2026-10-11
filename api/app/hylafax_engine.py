@@ -595,14 +595,41 @@ def engine_t38_failed(at=None) -> bool:
         audit_event('sslfax_engine_audio_chosen', backend='sip', reason='no_fax_signal')
     except Exception:
         pass
+    _sync_soon(settings)
+    return True
+
+
+def engine_t38_restored() -> bool:
+    """An engine call on audio fax heard no fax machine either while the engine was on audio fax: the engine
+    goes back to T.38 from the next call on. True when it had been on audio fax.
+
+    A carrier that moves fax calls to T.38 itself (Telnyx) hangs up an audio call whose T.38 request nothing
+    answers, so audio fax can fail on every call. Should T.38 fail again, the engine goes to audio again:
+    it alternates instead of staying on a mode that fails, and each failed fax takes its next route.
+    """
+    from .config import settings
+    try:
+        if not engine_t38_off(settings) or not clear_engine_t38(settings):
+            return False
+    except OSError:
+        logging.getLogger(__name__).warning('Faxbot could not put its fax engine back on T.38.')
+        return False
+    from .audit import audit_event
+    audit_event('sslfax_engine_t38_restored', backend='sip', reason='no_fax_signal_on_audio')
+    _sync_soon(settings)
+    return True
+
+
+def _sync_soon(values) -> None:
+    """Start sync_engine_t38 on the running event loop; without one (a command-line tool), Apply and connect
+    syncs it."""
     try:
         from .ami import ami_client
-        task = asyncio.get_running_loop().create_task(sync_engine_t38(settings, ami_client))
+        task = asyncio.get_running_loop().create_task(sync_engine_t38(values, ami_client))
         _pending_tasks.add(task)
         task.add_done_callback(_pending_tasks.discard)
     except RuntimeError:
-        pass  # No event loop (a command-line tool): Apply and connect syncs it.
-    return True
+        pass
 
 
 _pending_tasks: set = set()
