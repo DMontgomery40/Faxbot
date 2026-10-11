@@ -421,9 +421,11 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                    + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:
             out.line(line)
-        # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
-        if (job.get('fax_engine') or {}).get('sentence'):
-            out.line(job['fax_engine']['sentence'])
+        # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it; once, when it is the
+        # engine choice the Fax engine line already says.
+        engine_sentence = (job.get('fax_engine') or {}).get('sentence')
+        if engine_sentence and engine_sentence != (job.get('engine_choice') or {}).get('sentence'):
+            out.line(engine_sentence)
         # The layout the newest attempt kept (long pages, or the experimental encoded pages), then blank space left
         # out, standard resolution kept or shading lightened.
         for sentence in (job.get('page_layout') or {}).get('sentences') or []:

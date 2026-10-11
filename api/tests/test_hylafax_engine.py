@@ -381,6 +381,27 @@ def test_post_fax_and_faxbot_send_keep_the_engine_choice_with_the_fax(engine_cli
     assert 'Fax engine' not in cli('sent', 'show', plain['id']).stdout
     wrong = cli('send', '+15551230002', note, '--queue', '--engine', 'fast')
     assert wrong.exit_code != 0 and 'Choose --engine auto, builtin or hylafax.' in wrong.stderr + wrong.stdout
+    # D20: after the call, the built-in engine's reason is the choice itself: said once, not twice. A choice the
+    # engine could not keep is said with what happened.
+    import app.main as main_module
+    from app.hylafax_records import records_for
+    database = main_module.app.state.configuration_runtime.manager.store.engine
+    records_for(database).record_call(direction='outbound', call_key='a' * 32, engine='builtin', job_id=sent['id'],
+                                      reason=hylafax_engine.CHOSE_BUILTIN, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert shown.count(hylafax_engine.CHOSE_BUILTIN) == 1
+    wanted = cli.json('send', '+15551230002', note, '--queue', '--engine', 'hylafax')
+    records_for(database).record_call(direction='outbound', call_key='b' * 32, engine='builtin', job_id=wanted['id'],
+                                      reason=hylafax_engine.CHOSE_ENGINE_NOT_READY, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', wanted['id']).stdout.split())
+    assert hylafax_engine.CHOSE_ENGINE in shown and hylafax_engine.CHOSE_ENGINE_NOT_READY in shown
+    # The same idempotency key for a different fax request: one plain sentence, never the server's own words.
+    first = cli('send', '+15551230002', note, '--queue', '--engine', 'builtin', '--idempotency-key', 'cli-engine')
+    assert first.exit_code == 0, first.stdout
+    other = cli('send', '+15551230002', note, '--queue', '--engine', 'hylafax', '--idempotency-key', 'cli-engine')
+    said = ' '.join((other.stdout + other.stderr).split())
+    assert other.exit_code != 0 and 'This idempotency key was already used for a different fax.' in said
+    assert 'Idempotency-Key already belongs' not in said
 
 
 @pytest.mark.asyncio
