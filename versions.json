@@ -107,9 +107,7 @@
   {
     "version": "c916697816beb146e069f5642a8cb9193e43a1e9",
     "title": "c916697816beb146e069f5642a8cb9193e43a1e9",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "c459606",
@@ -350,6 +348,13 @@
     "version": "33b7ae55",
     "title": "33b7ae55",
     "aliases": []
+  },
+  {
+    "version": "16bc7e52d8eaffb594377f8edf464ae083c9c1cf",
+    "title": "16bc7e52d8eaffb594377f8edf464ae083c9c1cf",
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "9fb8a9f0",
