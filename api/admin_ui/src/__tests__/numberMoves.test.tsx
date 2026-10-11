@@ -22,10 +22,17 @@ describe('number advice and checked moves', () => {
   it('shows evidence and records a dependency answer', async () => {
     const {client, call} = setup(); render(<NumberMoves client={client} canWrite />);
     expect(await screen.findByText('Only 30 days of records.')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Does this line also carry broadband?'), {target: {value: 'no'}});
-    fireEvent.click(screen.getByRole('button', {name: 'Save answer'}));
+    // Wait for the answer form itself, and for the choice to show, before saving: on a loaded machine the form can
+    // render after the evidence text, and a click on a stale form would save the old answer.
+    const question = await screen.findByLabelText('Does this line also carry broadband?') as HTMLSelectElement;
+    fireEvent.change(question, {target: {value: 'no'}});
+    await waitFor(() => expect(question.value).toBe('no'));
+    const save = await screen.findByRole('button', {name: 'Save answer'}) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    fireEvent.click(save);
     await waitFor(() => expect(call).toHaveBeenCalledWith({method: 'POST',
-      path: '/routing/numbers/%2B15550001001/dependencies', body: {question: 'broadband', answer: 'no', note: ''}}));
+      path: '/routing/numbers/%2B15550001001/dependencies', body: {question: 'broadband', answer: 'no', note: ''}}),
+      {timeout: 5000});
   });
   it('opens a move plan and records the chosen target account', async () => {
     const {client, call} = setup(); render(<NumberMoves client={client} canWrite />);

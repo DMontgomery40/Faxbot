@@ -591,8 +591,9 @@ class DirectService:
             ('Helvetica-Bold', 16, 'Faxbot direct delivery code'),
             ('Helvetica', 12, f'{organization} would like to send documents directly to this fax number.'),
             ('Helvetica', 12, f'Partner on file: {peer["organization"]}, {peer["phone_number"]}.'),
-            ('Helvetica', 12, 'If you expect this, enter this code in Faxbot under Delivery routes,'),
-            ('Helvetica', 12, f'Direct partners, "Confirm a code", for {organization}:'),
+            # Plain text only: the page is drawn in Helvetica, which has no arrow for a menu path.
+            ('Helvetica', 12, 'If you expect this, enter this code in Faxbot: open Recipients, then Partners,'),
+            ('Helvetica', 12, f'and select "Confirm a code" for {organization}:'),
             ('Helvetica-Bold', 28, f'{code[:4]} {code[4:]}'),
             ('Helvetica', 12, 'If you do not expect this, you can ignore this page. The code expires in 7 days.'),
         ]

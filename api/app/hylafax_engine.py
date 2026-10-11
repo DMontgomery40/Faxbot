@@ -1071,14 +1071,16 @@ def ended_before_fax_data(payload: dict, status_text: str) -> bool:
     return bool(_BEFORE_FAX_DATA_TEXT.search(status_text or ''))
 
 
-def training_failed(payload: dict, status_text: str) -> bool:
-    """Whether the engine's code says Phase B training never succeeded (``_TRAINING_FAILED``) and its session log
-    shows it never did on this call. The same codes also end a retrain after the other machine asked for one (RTN)
-    on a page it may have printed; that call trained first, so the engine reports the speed or coding it agreed
-    (bin/notify keeps them only after "TRAINING succeeded"). Without the session log (no session time) nothing
-    shows the call never trained, so it stays unconfirmed."""
-    return (_status_code(payload, status_text) in _TRAINING_FAILED
-            and isinstance(payload.get('session_seconds'), int)
+def never_trained(payload: dict) -> bool:
+    """Whether the call sent no page data, for certain: its session log was read (the engine reports the session
+    time only from it), and the session agreed no speed and no coding and opened no SSL Fax connection. No page
+    goes before a training succeeds (CFR) or an SSL Fax connection opens, and bin/notify reports the speed and
+    coding only after "TRAINING succeeded" in the log, or over SSL Fax. It holds whatever the engine's code
+    (E103, E104, E127, E136, E137, E156: sendTraining's endings). A retrain after the other machine asked for one
+    (RTN) trained first, so the engine reports what it agreed; without the session log (no session time) nothing
+    shows the call never trained. Both stay unconfirmed."""
+    seconds = payload.get('session_seconds')
+    return (isinstance(seconds, int) and not isinstance(seconds, bool) and payload.get('sslfax') is not True
             and not _text64(payload, 'signal_rate_b64', 32) and not _text64(payload, 'data_format_b64', 32))
 
 
@@ -1109,9 +1111,8 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
         if why == 'failed':
             if pages:
                 return 'failed', failure_sentence(status_text, pages), 'partly_sent'
-            # Training that never succeeded ends before fax data even after the other machine named itself.
-            if ((not exchanged(payload) or training_failed(payload, status_text))
-                    and ended_before_fax_data(payload, status_text)):
+            # A call that never trained sent no page, even after the other machine named itself.
+            if never_trained(payload) or (not exchanged(payload) and ended_before_fax_data(payload, status_text)):
                 return 'failed', failure_sentence(status_text, 0), None
             return UNCERTAIN, NOT_CONFIRMED, 'pages_unconfirmed'
     return UNCERTAIN, None, None
