@@ -1171,7 +1171,7 @@ def _on_engine_missed(event):
 
 def engine_audio_check(row):
     """An engine call on T.38 on which the engine heard no fax machine moves the engine (not the built-in
-    engine, not the installation's T.38 setting) to audio fax from its next call on; an engine call on audio
+    engine, not the installation's T.38 setting) to audio fax from its next call on; an engine send on audio
     that heard no fax machine either puts it back on T.38 (engine_t38_restored). Runs when any part of the
     call arrives; recorded once. Call from the event loop."""
     if row is None:
@@ -1180,7 +1180,8 @@ def engine_audio_check(row):
     if row.get('t38') == 'yes':
         if row.get('verdict') == NO_FAX_SIGNAL:
             hylafax_engine.engine_t38_failed(at=row.get('ended_at'))
-    elif row.get('t38') == 'no' and row.get('verdict') in NO_FAX_HEARD:
+    elif row.get('t38') == 'no' and row.get('direction') == 'outbound' and row.get('verdict') in NO_FAX_HEARD:
+        # Sends only: a voice call or a nuisance call to the fax line also leaves no fax.
         hylafax_engine.engine_t38_restored()
 
 

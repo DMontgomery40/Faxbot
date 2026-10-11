@@ -587,25 +587,30 @@ def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows(
     assert all(len(sentence) <= 80 and sentence.endswith('.') for sentence in sentences), sentences
 
 
-@pytest.mark.parametrize('verdict, t38, change', [
-    ('no_fax_signal', 'yes', 'audio'),
-    # On audio, every way of hearing no fax machine puts the engine back on T.38 (2026-10-11: Telnyx ended
+@pytest.mark.parametrize('verdict, t38, direction, change', [
+    ('no_fax_signal', 'yes', 'outbound', 'audio'), ('no_fax_signal', 'yes', 'inbound', 'audio'),
+    # On audio, every way a send heard no fax machine puts the engine back on T.38 (2026-10-11: Telnyx ended
     # each audio call 3 s after its own T.38 request, which nothing answered).
-    ('no_fax_signal', 'no', 't38'), ('cleared_at_once', 'no', 't38'), ('person_answered', 'no', 't38'),
-    ('no_media_back', 'no', 't38'), ('no_fax_answer', 'no', 't38'),
+    ('no_fax_signal', 'no', 'outbound', 't38'), ('cleared_at_once', 'no', 'outbound', 't38'),
+    ('person_answered', 'no', 'outbound', 't38'), ('no_media_back', 'no', 'outbound', 't38'),
+    ('no_fax_answer', 'no', 'outbound', 't38'),
+    # A received call that left no fax may be a person or a nuisance call: nothing changes.
+    ('no_fax_signal', 'no', 'inbound', None), ('no_media_back', 'no', 'inbound', None),
     # A fax machine answered, the call is not over, or nothing failed: nothing changes.
-    ('remote_fax_failed', 'no', None), ('wrong_station', 'no', None), ('sent', 'no', None),
-    ('no_fax_signal', 'unknown', None), ('remote_fax_failed', 'yes', None), ('cleared_at_once', 'yes', None),
-    ('sent', 'yes', None), (None, None, None),
+    ('remote_fax_failed', 'no', 'outbound', None), ('wrong_station', 'no', 'outbound', None),
+    ('sent', 'no', 'outbound', None), ('no_fax_signal', 'unknown', 'outbound', None),
+    ('remote_fax_failed', 'yes', 'outbound', None), ('cleared_at_once', 'yes', 'outbound', None),
+    ('sent', 'yes', 'outbound', None), (None, None, None, None),
 ])
 def test_an_engine_call_that_heard_no_fax_machine_moves_only_the_engine_between_t38_and_audio(
-        monkeypatch, verdict, t38, change):
+        monkeypatch, verdict, t38, direction, change):
     from app import sip_calls, sip_fax_mode
     installation, audio, back = [], [], []
     monkeypatch.setattr(sip_fax_mode, '_on_fax_event', installation.append)
     monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: audio.append(at))
     monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
-    row = None if verdict is None else {'verdict': verdict, 't38': t38, 'ended_at': '2026-10-05T11:19:12Z'}
+    row = None if verdict is None else {'verdict': verdict, 't38': t38, 'direction': direction,
+                                        'ended_at': '2026-10-05T11:19:12Z'}
     sip_calls.engine_audio_check(row)
     assert not installation
     assert (audio, back) == {'audio': (['2026-10-05T11:19:12Z'], []), 't38': ([], [True]), None: ([], [])}[change]
@@ -625,7 +630,8 @@ async def test_an_audio_call_that_heard_no_fax_machine_puts_the_engine_back_on_t
     monkeypatch.setattr(config, 'settings', values)
     monkeypatch.setattr(ami, 'ami_client', ami_now)
     monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: events.append((event, fields)))
-    audio_failed = {'verdict': sip_calls.NO_FAX_SIGNAL, 't38': 'no', 'ended_at': '2026-10-11T04:29:18Z'}
+    audio_failed = {'verdict': sip_calls.NO_FAX_SIGNAL, 't38': 'no', 'direction': 'outbound',
+                    'ended_at': '2026-10-11T04:29:18Z'}
     # On T.38 already: nothing to undo, nothing recorded, nothing sent to Asterisk.
     assert hylafax_engine.engine_t38_restored() is False
     sip_calls.engine_audio_check(audio_failed)
@@ -660,7 +666,8 @@ async def test_the_engine_alternates_between_t38_and_audio_and_never_stays_on_a_
     monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: None)
     modes = []
     for t38 in ('yes', 'no', 'yes', 'no'):
-        sip_calls.engine_audio_check({'verdict': sip_calls.NO_FAX_SIGNAL, 't38': t38, 'ended_at': None})
+        sip_calls.engine_audio_check({'verdict': sip_calls.NO_FAX_SIGNAL, 't38': t38, 'direction': 'outbound',
+                                      'ended_at': None})
         await asyncio.gather(*hylafax_engine._pending_tasks)
         modes.append(hylafax_engine.call_settings(values, PEER, engine=True).t38)
     assert modes == [False, True, False, True]
