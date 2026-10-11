@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import re
+import threading
 from uuid import uuid4
 
 import pytest
@@ -152,9 +153,10 @@ def _by_key(body):
     return {item['key']: item for stage in body['stages'] for item in stage['mechanisms']}
 
 
-def scenario(installation):
+def scenario(installation, then=None):
     """A real installation with a Telnyx trunk, a recipient who shares calls, a blocked sender with one call turned
-    away, a toll-free approval and faxes sent by their cheapest route: (map, savings) as the API answers them."""
+    away, a toll-free approval and faxes sent by their cheapest route: (map, savings) as the API answers them.
+    ``then(client)`` runs after those reads, while the installation still serves."""
     from app.inbound.screening import Rejection, ScreeningStore
     from app.routing.tollfree import TollFreeApprovals
     settings = dict(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID, SIP_TRUNK_CALLER_ID=DID,
@@ -209,7 +211,10 @@ def scenario(installation):
 
         response = client.get('/routing/savings/mechanisms', headers=ADMIN)
         assert response.status_code == 200, response.text
-        return response.json(), client.get('/routing/savings', headers=ADMIN).json()
+        saved = client.get('/routing/savings', headers=ADMIN).json()
+        if then is not None:
+            then(client)
+        return response.json(), saved
 
 
 def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
@@ -452,6 +457,48 @@ def test_faxbot_savings_mechanisms_prints_the_map_by_stage(cli):
     assert '$' not in result.stdout
     body = cli.json('costs', 'mechanisms')  # the older name still works
     assert [stage['title'] for stage in body['stages']] == [title for _, title in mechanisms.STAGES]
+
+
+# The one table these reads still reflect on every call: power.settings builds its Table with autoload_with each time
+# (app/power.py, another owner's module). Everything else is reflected once per database (routing/database.py).
+REFLECTED_EVERY_READ = {'power_sources'}
+
+
+def reflected_while(monkeypatch, module, name):
+    """The tables reflected while ``module.name`` runs, counted in the thread that runs it, since the installation's
+    background tasks build their own stores meanwhile. Every reflection, whether through MetaData.reflect or a Table
+    with autoload_with, goes through Inspector.reflect_table."""
+    from sqlalchemy.engine import reflection
+    running, found = threading.local(), []
+    real, real_reflect = getattr(module, name), reflection.Inspector.reflect_table
+
+    def wrapped(*args, **kwargs):
+        running.on = True
+        try:
+            return real(*args, **kwargs)
+        finally:
+            running.on = False
+
+    def counted(self, table, *args, **kwargs):
+        if getattr(running, 'on', False):
+            found.append(table.name)
+        return real_reflect(self, table, *args, **kwargs)
+    monkeypatch.setattr(module, name, wrapped)
+    monkeypatch.setattr(reflection.Inspector, 'reflect_table', counted)
+    return found
+
+
+def test_a_second_read_of_the_map_reflects_no_tables(installation, monkeypatch):
+    """The Overview reads the map on every visit. The first read after start reflects the tables it needs; a second
+    read on the same database reflects none again (acceptance: 9-34 s a read while every store reflected its tables
+    each time)."""
+    def read_again(client):
+        reflected = reflected_while(monkeypatch, mechanisms, 'evaluate')
+        again = client.get('/routing/savings/mechanisms', headers=ADMIN)
+        assert again.status_code == 200, again.text
+        assert set(reflected) <= REFLECTED_EVERY_READ, sorted(set(reflected) - REFLECTED_EVERY_READ)
+        assert len(reflected) <= len(REFLECTED_EVERY_READ)
+    scenario(installation, then=read_again)
 
 
 def test_the_map_needs_settings_read(installation):
