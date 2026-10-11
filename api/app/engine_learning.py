@@ -337,7 +337,11 @@ def as_frames(view) -> dict:
             'mode': {'t38': 'T38', 'audio': 'audio'}.get(view['mode']), 'status': view['status'],
             'rate_first': view['rate_first'], 'rate_lowest': view['rate_lowest'], 'ftt': view['ftt'],
             't38_after_ms': view['t38_after_ms'], 't38_by': view['t38_by'], 't38_now': view['t38_now'],
-            'created_at': view['when'], 'engine': view['engine'] or 'builtin'}
+            'created_at': view['when'], 'engine': view['engine'] or 'builtin',
+            # For a call that never trained (engine_frames.untrained): how many trainings, its pages, and the
+            # speed its own decision let it start at (when engine learning lowered it).
+            'trainings': view.get('trainings'), 'pages': view.get('pages'), 'sslfax': view.get('sslfax'),
+            'rate_start': (view.get('choice') or {}).get('max_rate')}
 
 
 # -- per-number memory (T8) ----------------------------------------------------------------------

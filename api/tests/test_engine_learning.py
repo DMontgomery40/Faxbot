@@ -388,6 +388,73 @@ def test_the_ssl_fax_engines_own_reports_lower_its_starting_speed(installation):
     assert limited.max_rate == 4800 and not limited.learned.max_rate
 
 
+def _untrained_call(hour, trainings, *, engine='hylafax', rate_first=None, rate_start=14400, ftt=None, pages=0,
+                    status='FAILED', sslfax=False):
+    return {'direction': 'out', 'engine': engine, 'mode': 'T38', 'status': status, 'rate_first': rate_first,
+            'rate_lowest': None, 'trainings': trainings, 'ftt': trainings - 1 if ftt is None else ftt,
+            'pages': pages, 'sslfax': sslfax, 'rate_start': rate_start,
+            'created_at': datetime(2026, 10, 1) + timedelta(hours=hour)}
+
+
+def test_a_call_that_never_trained_starts_the_next_one_speed_lower_down_to_the_floor():
+    """A fax that reached the other machine and was refused at every speed it tried (or whose receiver hung up
+    during the trainings) starts later calls one speed below where it started; again at that speed, one more;
+    at 4,800 bit/s Faxbot stops lowering it and says so."""
+    history = [_untrained_call(0, 5)]
+    rate, reason, note = engine_frames.learn_rate(history)
+    assert (rate, note) == (9600, '') and reason == ('A fax to this number failed to train at every speed it tried '
+                                                     'from 14,400 bit/s, so Faxbot starts at 9,600 bit/s.')
+    # A later call that started at 14,400 anyway (learning was not yet in force) teaches nothing new.
+    history.append(_untrained_call(1, 8))
+    assert engine_frames.learn_rate(history)[0] == 9600
+    history.append(_untrained_call(2, 4, rate_start=9600))
+    assert engine_frames.learn_rate(history)[0] == 7200
+    history.append(_untrained_call(3, 3, rate_start=7200))
+    assert engine_frames.learn_rate(history)[0] == 4800
+    history.append(_untrained_call(4, 2, rate_start=4800))
+    rate, reason, note = engine_frames.learn_rate(history)
+    assert rate is None and reason == '' and 'even at 4,800 bit/s' in note
+
+
+@pytest.mark.parametrize('call, counts', [
+    (_untrained_call(0, 5), True),
+    # The built-in engine counts refusals: every training refused, or the last one cut off by a hang-up.
+    (_untrained_call(0, 3, engine='builtin', rate_first=14400, ftt=3), True),
+    (_untrained_call(0, 3, engine='builtin', rate_first=14400, ftt=2), False),
+    # A page went, the fax went through, or it went over SSL Fax (no modem trained): not a call that never trained.
+    (_untrained_call(0, 5, pages=1), False),
+    (_untrained_call(0, 5, status='SUCCESS'), False),
+    (_untrained_call(0, 5, sslfax=True), False),
+    (_untrained_call(0, 0), False),
+])
+def test_only_a_failed_call_with_trainings_and_no_trained_speed_counts_as_never_trained(call, counts):
+    assert engine_frames.untrained(call) is counts
+
+
+def test_hps_test_line_calls_that_never_trained_make_the_next_call_audio_and_slower(installation):
+    """Defect #49, from the calls themselves: HP's test line over the trunk through the SSL Fax engine in T.38,
+    10 October 20:49Z (5 trainings) and 11 October 03:19Z (8 trainings), both "Unspecified failure to train
+    with receiver {E156}" with no page and no speed agreed. The far machine answered, so T.38 failing makes the
+    number's next calls audio; never training makes them start one speed lower than the calls did."""
+    db = installation
+    hp = '+18884732963'
+    for hours, trainings in ((8, 5), (2, 8)):
+        key = record(db, number=hp, when=ago(hours=hours), reason='Unspecified failure to train with receiver {E156}')
+        engine_call(db, key, number=hp, when=ago(hours=hours), rate_first=None, rate_lowest=None, rate_last=None,
+                    trainings=trainings, compression=None, resolution=None, ecm=None)
+    settings = values()
+    learned(db, settings)
+    found = engine_frames.learned_for(engine_frames.FrameStore(db), settings, hp)
+    assert found.max_rate == 9600 and found.rate_reason.startswith('A fax to this number failed to train at every '
+                                                                    'speed it tried from 14,400 bit/s')
+    call = hylafax_engine.call_settings(settings, hp, engine=True)
+    assert call.t38 is False and call.learned.audio and call.max_rate == 9600
+    # On a trunk that keeps T.38 for the number (a person forgot the T.38 memory), the call still starts lower.
+    engine_learning.forget(db, hp, actor_id='synthetic', actor_name='Synthetic admin')
+    call = hylafax_engine.call_settings(settings, hp, engine=True)
+    assert call.t38 is True and call.max_rate == 9600 and call.learned.max_rate == 9600
+
+
 def _view(when, *, engine='hylafax', compression='JBIG', status='FAILED', verdict='remote_fax_failed', ecm='on',
           far_ecm=None, mode='t38'):
     return {'engine': engine, 'answered': True, 'compression': compression, 'status': status,

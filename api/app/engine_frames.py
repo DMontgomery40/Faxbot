@@ -409,18 +409,52 @@ def _when(call):
     return call.get('created_at') or datetime.min
 
 
+def untrained(call) -> bool:
+    """A sent fax that reached the other fax machine and never trained at any speed it tried: it failed with no
+    page, after at least one training. The SSL Fax engine reports a speed only once a training succeeded
+    (hylafax/bin/negotiation), so a call with trainings and no speed never trained; the built-in engine counts
+    the FTT answers, so there every training it tried was refused. A call over SSL Fax trains no modem."""
+    trainings = call.get('trainings') or 0
+    if call.get('status') != 'FAILED' or trainings < 1 or call.get('sslfax') or (call.get('pages') or 0) > 0:
+        return False
+    if call.get('engine', 'builtin') == 'hylafax':
+        return not call.get('rate_lowest')
+    return (call.get('ftt') or 0) >= trainings
+
+
 def learn_rate(calls):
     """(starting speed, reason, note) from sent calls, newest first: a speed that failed to train twice and
     worked lower starts later calls lower; failing to train at that speed too steps down one more speed;
     failing at the floor stops lowering it (the note says so). A later call that started higher and trained
-    cleanly ends it."""
-    trained = [call for call in calls if call.get('rate_first') and call.get('rate_lowest')]
+    cleanly ends it.
+
+    A call that never trained at all (``untrained``) starts later calls one speed below where it started
+    (``rate_first``, else ``rate_start``: the speed the call was allowed to start at). Both engines step down
+    one speed for each refused training (spandsp's fallback sequence; HylaFAX+ Class1Send.c++ sendTraining), and
+    a receiver that gives up after a few refused trainings, as some do (HylaFAX+ says so there), hangs up
+    before the sender reaches the speeds it could take; starting lower reaches them in fewer trainings."""
+    trained = [call for call in calls
+               if (call.get('rate_first') and call.get('rate_lowest')) or untrained(call)]
     state, reason, note, failing = None, '', '', []
     # Oldest first; calls without a time keep their order (given newest first).
     for call in sorted(reversed(trained), key=_when):
         fails = call.get('ftt') or 0
         if note:
             continue  # stopped at the floor: nothing lower to try until this evidence ages out
+        if untrained(call):
+            started = call.get('rate_first') or call.get('rate_start')
+            if not started or (state is not None and started > state):
+                continue  # where it started is not known, or above a speed already learned: nothing new
+            lower = _below(started)
+            if lower is None:
+                state, reason, failing = None, '', []
+                note = ('Faxes to this number failed to train even at 4,800 bit/s, so Faxbot no longer lowers '
+                        'its starting speed for it.')
+            else:
+                state, failing = lower, []
+                reason = (f'A fax to this number failed to train at every speed it tried from {started:,} bit/s, '
+                          f'so Faxbot starts at {state:,} bit/s.')
+            continue
         if state is None:
             if fails > 0 and call['rate_lowest'] < call['rate_first'] and call.get('status') == 'SUCCESS':
                 failing.append(call)
@@ -470,6 +504,12 @@ def learn(calls, values) -> Learned:
             t38_now = True
             t38_reason = (f'The last {len(waited)} faxes to this number that waited switched to fax over IP only when '
                           'Faxbot asked, about ten seconds after the answer, so Faxbot now asks at once.')
+    # Where a call that never trained started, when its engine does not report it: the speed it was allowed.
+    from .sip_trunk import fax_options
+    options = fax_options(values)
+    for call in sent:
+        if not call.get('rate_first') and not call.get('rate_start') and untrained(call):
+            call['rate_start'] = options.rate_for(t38=call.get('mode') == 'T38')
     max_rate, rate_reason, rate_note = learn_rate(sent)
     clean = [call for call in sent if call['mode'] == 'audio' and call['rate_first'] == 14400
              and (call['ftt'] or 0) == 0 and call['status'] == 'SUCCESS']
