@@ -146,6 +146,7 @@ const eventLabels: Record<string, string> = {
   repair_started: 'Sending only the missing pages directly to the partner',
   repair_completed: 'Completed directly by the partner after the call broke',
   repair_failed: 'The partner did not receive the missing pages',
+  operator_settled: 'Result confirmed by a person',
 };
 
 const categoryLabels: Record<string, string> = {

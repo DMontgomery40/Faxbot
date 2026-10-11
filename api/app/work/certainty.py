@@ -24,9 +24,12 @@ Rules this module keeps:
   with that sentence ("Closed: the fax was delivered."). Otherwise a person
   decides: delivered, not delivered (optionally sending
   the same document again as a new fax, linked both ways), or can't tell, with
-  who decided, why, and what the checks showed then. The fax's own delivery
-  record is never changed here; confirming receipt with the provider's fax ID
-  stays a separate step.
+  who decided, why, and what the checks showed then. Delivered or not
+  delivered also ends the fax's own delivery (``success`` or ``failed``) in
+  the same transaction, so its number is no longer held for an unknown result
+  (defect 45); the attempt keeps what the provider said, so no route fallback
+  sends it again. Can't tell leaves the delivery waiting for review.
+  Confirming receipt with the provider's fax ID stays a separate step.
 - **Nothing reaches the recipient without a person.** The automatic checks
   only read stored records, or ask an enrolled partner once about a call
   (``PartnerQuestion``); the receipt query page and a new fax go only from a
@@ -50,7 +53,8 @@ from .store import _target
 
 
 TABLES = ('certainty_items', 'certainty_events', 'certainty_settings', 'outbound_deliveries', 'outbound_attempts',
-          'fax_jobs', 'access_resources', 'access_principals', 'access_users', 'mailboxes', 'work_mailbox_settings')
+          'fax_jobs', 'access_resources', 'access_principals', 'access_users', 'mailboxes', 'work_mailbox_settings',
+          'outbound_events')
 OUTCOMES = ('delivered', 'not_delivered', 'unknown')
 DEFAULT_SETTLE_HOURS = 24
 MAX_SETTLE_HOURS = 720
@@ -147,6 +151,8 @@ class CertaintyStore:
         self.resources, self.principals, self.users = (tables['access_resources'], tables['access_principals'],
                                                        tables['access_users'])
         self.mailboxes, self.mailbox_settings = tables['mailboxes'], tables['work_mailbox_settings']
+        # The fax's own delivery history: a person's settlement is kept there too (outbound_store.settle_uncertain_on).
+        self.delivery_events = tables['outbound_events']
         self.sources = checks.CheckSources(engine)
         # {item id: (what the prediction depended on, predicted seconds)}; see ``predictor``.
         self._predictions = {}
