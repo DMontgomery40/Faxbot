@@ -8,8 +8,14 @@ import {
   Stack,
   Fade,
   Checkbox,
+  FormControl,
   FormControlLabel,
+  FormHelperText,
   Grow,
+  InputLabel,
+  ListItemText,
+  MenuItem,
+  Select,
   TextField,
   useTheme,
   useMediaQuery,
@@ -21,8 +27,10 @@ import {
   CheckCircle as SuccessIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material';
-import AdminAPIClient, { FaxRefusedError, isForbidden, normalizeFaxDestination, type FaxPatient } from '../api/client';
-import type { AdminConfig, FaxSendResult } from '../api/types';
+import AdminAPIClient, {
+  FaxRefusedError, FaxRetryMismatchError, isForbidden, normalizeFaxDestination, type FaxPatient,
+} from '../api/client';
+import type { AdminConfig, FaxEngineRequest, FaxSendResult } from '../api/types';
 import {
   ResponsiveTextField,
   ResponsiveFileUpload,
@@ -37,6 +45,7 @@ import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
 import { CoverInHeaderChoice } from './HeaderNotice';
+import { rulesApiFor } from './ProviderRulesApi';
 
 interface SendFaxProps {
   client: AdminAPIClient;
@@ -98,6 +107,23 @@ function acceptanceMessage(response: FaxSendResult, to?: string): string {
       return 'Fax submitted.';
   }
 }
+
+// The fax engine for one fax over your carrier trunk (POST /fax engine), in the API's order. The names are the ones
+// Sent details says the choice in ("You chose the built-in engine for this fax."); each hint says what it does and,
+// for the built-in engine, when to pick it.
+export const ENGINE_CHOICES: ReadonlyArray<{ value: FaxEngineRequest; name: string; hint: string }> = [
+  { value: 'auto', name: 'Automatic',
+    hint: 'Faxbot chooses: the SSL Fax engine when it is running, otherwise the built-in engine.' },
+  { value: 'builtin', name: 'Built-in engine',
+    hint: 'Places an ordinary fax call. Pick it when faxes to this number keep failing on the SSL Fax engine.' },
+  { value: 'hylafax', name: 'SSL Fax engine',
+    hint: 'Pages go over SSL Fax when the other fax machine offers it. If this engine is not running, the built-in '
+      + 'engine sends the fax.' },
+];
+const engineChoice = (value: FaxEngineRequest) => ENGINE_CHOICES.find((choice) => choice.value === value)
+  ?? ENGINE_CHOICES[0];
+// The main trunk's route key; more trunks are provider accounts of the trunk's kind ('sip').
+const MAIN_TRUNK = 'sip';
 
 const NO_PATIENT: FaxPatient = { recordNumber: '', recordSystem: '', familyName: '', givenName: '', birthDate: '' };
 
@@ -215,9 +241,10 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [routes, setRoutes] = useState<RecommendedRoute[]>([]);
   // Someone who may not read routes (a fax operator) cannot see whether the number has a health record system.
   const [routesHidden, setRoutesHidden] = useState(false);
-  // Whether the number is one of your own (its first route is 'local'), per number: "send by call" keeps its row
-  // while the first lookup runs, and asking again for the page count never hides it.
-  const [localFor, setLocalFor] = useState<{ number: string; local: boolean } | null>(null);
+  // Whether the number is one of your own (its first route is 'local'), and the routes it can take, per number:
+  // "send by call" and the fax engine keep their rows while the first lookup runs, and asking again for the page
+  // count never hides them.
+  const [localFor, setLocalFor] = useState<{ number: string; local: boolean; routes: string[] } | null>(null);
   useEffect(() => {
     setRoutes([]);
     if (!/\d{3}/.test(toNumber)) return undefined;
@@ -229,12 +256,13 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
           if (!live) return;
           setRoutes(detail.recommended_routes);
           setRoutesHidden(false);
-          setLocalFor({ number: asked, local: detail.recommended_routes[0]?.route === 'local' });
+          setLocalFor({ number: asked, local: detail.recommended_routes[0]?.route === 'local',
+            routes: [...detail.recommended_routes, ...(detail.available_routes ?? [])].map((item) => item.route) });
         })
         .catch((failure) => {
           if (!live) return;
           if (isForbidden(failure)) setRoutesHidden(true);
-          setLocalFor({ number: asked, local: false });
+          setLocalFor({ number: asked, local: false, routes: [] });
         });
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
@@ -243,6 +271,30 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const numberKey = /\d{3}/.test(toNumber) ? normalizeFaxDestination(toNumber) : null;
   const localPending = numberKey !== null && localFor?.number !== numberKey;
   const ownNumber = numberKey !== null && localFor?.number === numberKey && localFor.local;
+
+  // Your carrier trunks by route key: the main trunk, and any more trunk accounts (someone who may not see accounts
+  // still gets the main trunk). Read once; null until then.
+  const [trunkKeys, setTrunkKeys] = useState<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    let live = true;
+    rulesApiFor(client).accounts()
+      .then((state) => {
+        if (live) {
+          setTrunkKeys(new Set([MAIN_TRUNK, ...state.accounts.filter((account) => account.provider === MAIN_TRUNK)
+            .map((account) => account.key)]));
+        }
+      })
+      .catch(() => { if (live) setTrunkKeys(new Set([MAIN_TRUNK])); });
+    return () => { live = false; };
+  }, [client]);
+  // The fax engine for this one fax, offered when a trunk is among the number's routes, so one of Faxbot's own
+  // engines may place its call; one of your own numbers places no call unless Send by call is ticked. Automatic
+  // unless the sender picks one; posted only while it is offered.
+  const [engine, setEngine] = useState<FaxEngineRequest>('auto');
+  const enginePending = numberKey !== null && (localPending || trunkKeys === null);
+  const engineOffered = !enginePending && numberKey !== null && localFor?.number === numberKey
+    && localFor.routes.some((key) => trunkKeys!.has(key)) && (!ownNumber || byCall);
+  const chosenEngine: FaxEngineRequest = engineOffered ? engine : 'auto';
   // A recipient's health record system (a FHIR route) among this number's routes asks for the patient; someone
   // who may not see the routes can add the patient on request.
   const recordsRoute = routes.find((item) => item.route.startsWith('fhir:')) ?? null;
@@ -281,12 +333,13 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     if (!file || fileError || !documentNumber) return undefined;
     let live = true;
     const timer = window.setTimeout(() => {
-      client.predictDocument(documentNumber, file)
+      // Measured as the chosen engine would send the pages (Automatic: as Faxbot would choose).
+      client.predictDocument(documentNumber, file, chosenEngine)
         .then((answer) => { if (live) setDocumentAnswer(answer); })
         .catch(() => undefined);
     }, 600);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [client, documentNumber, file, fileError]);
+  }, [client, documentNumber, file, fileError, chosenEngine]);
   // With the document measured, the server names the account and pages the delivery worker would choose (each
   // account priced on its own best pages); the page-count recommendation above is then only a first guess and is
   // never shown with the measured account's price.
@@ -353,10 +406,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     setResult(null);
 
     try {
+      // The engine this send asks for: the pick while it is offered, or the one the earlier send asked for.
+      let postedEngine = engineOffered && engine !== 'auto' ? engine : undefined;
       if (!intentRef.current || intentRef.current.destination !== destination || intentRef.current.file !== file) {
-        // The same document to the same number after a reload continues that send.
+        // The same document to the same number after a reload continues that send, with the engine it asked for.
         const fingerprint = sendFingerprint(destination, file!);
         const earlier = loadPendingSend(fingerprint);
+        if (earlier) {
+          postedEngine = earlier.engine;
+          setEngine(earlier.engine ?? 'auto');
+        }
         intentRef.current = earlier
           ? { key: earlier.key, destination, file: file!, queueOnly: earlier.queueOnly,
             maxFileSizeBytes: earlier.maxFileSizeBytes, fingerprint, createdAt: earlier.createdAt }
@@ -367,11 +426,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       const intent = intentRef.current;
       // Kept before the upload starts, so a lost answer can be retried with the same key.
       savePendingSend({ key: intent.key, fingerprint: intent.fingerprint, queueOnly: intent.queueOnly,
-        maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt });
+        maxFileSizeBytes: intent.maxFileSizeBytes, createdAt: intent.createdAt, engine: postedEngine });
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
           byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
-          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient });
+          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -389,6 +448,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       setFile(null);
       setPatient(NO_PATIENT);
       setPatientAsked(false);
+      setEngine('auto');
       setUploadPickerVersion(version => version + 1);
       
     } catch (err) {
@@ -403,7 +463,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       setResult({
         type: 'error',
         message: `${err instanceof TypeError ? "Couldn't reach the server, so the fax may or may not have been submitted."
-          : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
+          : err instanceof Error ? err.message : "Couldn't confirm the fax was submitted."}${intentRef.current
+            && !(err instanceof FaxRetryMismatchError) ? ' To retry without creating a duplicate, send the same document to the same number again, even after reloading this page.' : ''}`,
         sentLink: true,
       });
     } finally {
@@ -546,6 +607,25 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   </Box>
                 )}
 
+                {/* The fax engine: its row (a small select and its one-line hint) is held while the number's routes
+                    are on their way. */}
+                {enginePending ? <Box aria-hidden data-testid="send-engine-pending" sx={{ minHeight: 63 }} />
+                  : engineOffered && (
+                  <FormControl size="small" fullWidth disabled={!configReady || loading} data-testid="send-engine">
+                    <InputLabel id="send-engine-label">Fax engine</InputLabel>
+                    <Select labelId="send-engine-label" label="Fax engine" value={engine}
+                      renderValue={(value) => engineChoice(value).name}
+                      onChange={(event) => setEngine(event.target.value as FaxEngineRequest)}>
+                      {ENGINE_CHOICES.map((choice) => (
+                        <MenuItem key={choice.value} value={choice.value} sx={{ whiteSpace: 'normal' }}>
+                          <ListItemText primary={choice.name} secondary={choice.hint} />
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <FormHelperText>{engineChoice(engine).hint}</FormHelperText>
+                  </FormControl>
+                )}
+
                 <Box sx={{ 
                   display: 'flex', 
                   gap: 2, 
@@ -582,6 +662,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         setFile(null);
                         setPatient(NO_PATIENT);
                         setPatientAsked(false);
+                        setEngine('auto');
                         setUploadPickerVersion(version => version + 1);
                         setResult(null);
                         setToNumberError(false);

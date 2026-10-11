@@ -227,6 +227,16 @@ interface DetailSelection { jobId: string }
 export const URGENT_TEXT = 'Urgent: it goes before other faxes waiting for the same line.';
 export const BY_CALL_TEXT = 'You asked for a real phone call through your carrier, even if the number is one of your own.';
 
+// "Fax engine": the engine the sender chose for this fax, in the server's sentence; null when Faxbot chose. Once the
+// built-in engine has placed the call, its own line ("How the pages went") already says what became of the choice
+// (hylafax_engine.choose), so the choice is said once; a fax sent together with others keeps both lines.
+export function engineChoiceSentence(job: FaxJob): string | null {
+  const choice = job.engine_choice?.sentence || null;
+  const call = job.fax_engine;
+  if (choice && call?.engine === 'builtin' && call.sentence && job.together?.state !== 'together') return null;
+  return choice;
+}
+
 function routeName(route: string): string {
   if (route === 'local') return 'This Faxbot';
   return route === 'direct' ? 'Direct delivery' : providerLabel(route);
@@ -819,6 +829,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   secondary={detailJob.pages || 'Unknown'}
                 />
               </ListItem>
+              {engineChoiceSentence(detailJob) && (
+                <ListItem data-testid="job-engine-choice">
+                  <ListItemText primary="Fax engine" secondary={engineChoiceSentence(detailJob)} />
+                </ListItem>
+              )}
               {detailJob.fax_engine?.sentence && (
                 <ListItem data-testid="job-fax-engine">
                   <ListItemText primary="How the pages went" secondary={detailJob.fax_engine.sentence} />
