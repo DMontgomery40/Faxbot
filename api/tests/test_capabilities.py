@@ -31,7 +31,8 @@ from app.routing import capabilities, capability_here, mechanisms
 from api.tests.test_cli import cli, server  # noqa: F401 (fixtures)
 from api.tests.test_config_env_secrets import (  # noqa: F401 (fixtures)
     ADMIN, database_url, installation)
-from api.tests.test_savings_mechanisms import AGREED, DID, JUNK, TOLL_FREE_FOR, _fax, _navigation_pages, _record
+from api.tests.test_savings_mechanisms import (
+    AGREED, DID, JUNK, TOLL_FREE_FOR, _fax, _navigation_pages, _record, reflected_while)
 
 API_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = API_ROOT / 'admin_ui' / 'src' / '__tests__' / 'capabilities.json'
@@ -250,10 +251,11 @@ def test_every_address_opens_in_the_console():
 
 # -- a real installation -------------------------------------------------------------------------------------------
 
-def scenario(installation, **extra):
+def scenario(installation, then=None, **extra):
     """A real installation with a Telnyx trunk, a recipient who shares calls, a blocked sender with one call turned
     away, a toll-free approval (one suggestion now), faxes sent by their cheapest route, calls over fax over IP and a
-    call that pressed keys after answer: (capabilities, map) as the API answers them."""
+    call that pressed keys after answer: (capabilities, map) as the API answers them. ``then(client)`` runs after
+    those reads, while the installation still serves."""
     from app.inbound.screening import Rejection, ScreeningStore
     from app.routing.tollfree import TollFreeApprovals
     settings = dict(FAX_BACKEND='sip', SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_DIDS=DID, SIP_TRUNK_CALLER_ID=DID,
@@ -271,7 +273,10 @@ def scenario(installation, **extra):
                                          evidence='Synthetic letter')
         jobs = [_fax(client) for _ in range(2)]
         for job in jobs:
-            _record(engine, job_id=job, route='sip', reason='cheapest_delivered')
+            # A minute ago: the other carriers' advice prices the window up to the current whole second
+            # (carrier_compare.compare), so a fax recorded in the same second as a fast read would be left out.
+            _record(engine, job_id=job, route='sip', reason='cheapest_delivered',
+                    when=datetime.utcnow() - timedelta(minutes=1))
         from app.routing.after_answer import record_submission
         assert record_submission(engine, {'Digits': '2', 'AttemptID': uuid4().hex, 'JobID': jobs[0], 'Called': AGREED})
         calls = sa.Table('sip_call_records', sa.MetaData(), autoload_with=engine)
@@ -288,6 +293,8 @@ def scenario(installation, **extra):
         assert answer.status_code == 200, answer.text
         mapped = client.get('/routing/savings/mechanisms', headers=ADMIN)
         assert mapped.status_code == 200, mapped.text
+        if then is not None:
+            then(client)
         return answer.json(), mapped.json()
 
 
@@ -818,6 +825,29 @@ def test_a_key_with_no_capability_line_is_still_listed_and_the_read_still_answer
         'explain', '', [], None)
     assert relay['setting']['label'] == 'Recipients → Partners'
     assert 'Capability relay has no entry in routing/capabilities.py' in caplog.text
+
+
+def test_a_second_read_reflects_no_tables_and_reads_the_installation_once(installation, monkeypatch):
+    """The Capabilities page and the Overview read this on every visit; on acceptance each read took 9-34 s while
+    every store and reader in it reflected its tables again. The first read after start reflects what it needs; a
+    second read on the same database, the whole one or the Overview's, reflects none again, and builds one
+    Installation whose facts the catalogue's checks and the prerequisites share."""
+    def read_again(client):
+        reflected = reflected_while(monkeypatch, capabilities, 'evaluate')
+        built, real = [], mechanisms.Installation.__init__
+
+        def counted(self, *args, **kwargs):
+            built.append(self)
+            real(self, *args, **kwargs)
+        monkeypatch.setattr(mechanisms.Installation, '__init__', counted)
+        for params in ({}, {'findings': 'false'}):
+            reflected.clear()
+            built.clear()
+            again = client.get('/routing/capabilities', headers=ADMIN, params=params)
+            assert again.status_code == 200, again.text
+            assert reflected == [], params
+            assert len(built) == 1, params
+    scenario(installation, then=read_again)
 
 
 def test_capabilities_need_settings_read(installation):

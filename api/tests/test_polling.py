@@ -406,7 +406,8 @@ def test_the_password_goes_with_the_collection_and_the_real_poll_job_carries_it(
     assert seen == [('', '2468')]
     # The real engine job: the password is the second POLL argument, and appears nowhere else.
     values, server = fake_engine
-    hylafax_engine.create_poll_job(values, tag=hylafax_engine.new_tag(), request_id=REQUEST, selective='77',
+    # A fixed call tag: a random one (new_tag, 16 digits) contains "2468" about once in 800 runs.
+    hylafax_engine.create_poll_job(values, tag='1' * 16, request_id=REQUEST, selective='77',
                                    password='24 68', host='127.0.0.1', port=server.server_address[1])
     assert 'JPARM POLL "77" "2468"' in server.commands
     assert sum('2468' in command for command in server.commands) == 1

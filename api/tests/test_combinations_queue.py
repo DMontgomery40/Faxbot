@@ -72,6 +72,11 @@ def attempts(env, job):
                                                         .order_by(table.c.sequence)).mappings()]
 
 
+def went_on(env, job):
+    """The attempts that went on to submission: an attempt given back before any call is abandoned, unsent."""
+    return [attempt for attempt in attempts(env, job) if attempt['phase'] != 'abandoned']
+
+
 def authorized(env, job):
     return [event for event in env.delivery.history(job) if event['kind'] == 'submission_authorized']
 
@@ -121,7 +126,10 @@ async def test_two_workers_and_long_preparations_send_every_fax_once_on_its_own_
     assert [joint.delivery.get(job)['state'] for job in jobs] == ['success'] * 3  # none starved
     assert set(sweeps) == {0}  # no lease ran out while its worker was preparing
     assert_once_each_and_bound(joint, jobs)
-    assert all(len(attempts(joint, job)) == 1 for job in jobs)
+    # A preparation the database was too busy for gives the fax back (#77, #83): that attempt is abandoned with
+    # nothing sent, and the fax is claimed again. Each fax still has exactly one attempt that went on.
+    assert all(len(went_on(joint, job)) == 1 for job in jobs), {
+        job: [(attempt['sequence'], attempt['phase']) for attempt in attempts(joint, job)] for job in jobs}
     record(Case(GROUP, 'two workers, three faxes, long preparations', ('long preparation', 'two workers',
                                                                      'lease renewal'), ('each sent once',),
                 INVARIANT))
@@ -190,7 +198,7 @@ async def test_an_uncertain_send_after_a_long_preparation_is_never_sent_again_by
     assert FallbackScheduler(joint.delivery, joint.routes).step() is False
     assert joint.delivery.recover_expired() == 0
     assert not any(await asyncio.gather(*(worker.step() for worker in workers)))
-    assert len(lost) == 1 and len(attempts(joint, job)) == 1
+    assert len(lost) == 1 and len(went_on(joint, job)) == 1
     record(Case(GROUP, 'long preparation, lost acknowledgement, two workers', ('long preparation', 'uncertain'),
                 ('uncertain', 'not resent'), INVARIANT))
 

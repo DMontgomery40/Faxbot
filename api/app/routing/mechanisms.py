@@ -24,7 +24,7 @@ from typing import Callable
 
 import sqlalchemy as sa
 
-from .database import read_connection, reflect, utcnow
+from .database import once, read_connection, reflect, utcnow
 from .store import WINDOW_DAYS
 
 
@@ -178,6 +178,23 @@ class Installation:
     def direct_on(self):
         return bool(getattr(self.values, 'direct_delivery_enabled', False))
 
+    def store(self, build):
+        """``build(engine)``: another module's store, built once per database (``database.once``) rather than on
+        every read, because building it reflects its tables. Only stores whose sole state is their tables."""
+        return once(self.engine, ('mechanisms', build), lambda: build(self.engine))
+
+    @cached_property
+    def blocked(self):
+        """The numbers on the blocked list now (inbound/screening.py)."""
+        from ..inbound.screening import ScreeningStore
+        return self.store(ScreeningStore).active()
+
+    @cached_property
+    def ups(self):
+        """The UPS Faxbot reads, or None (power.py)."""
+        from ..power import settings
+        return settings(self.engine)
+
     def used(self, mechanism):
         """(count, sentence) for what the mechanism did here, from its Savings part."""
         key, one, many = mechanism.counts
@@ -214,7 +231,7 @@ def case_packets(here):
 
 def dense_pages(here):
     from ..pages.capability import records_for
-    records = records_for(here.engine)
+    records = here.store(records_for)
     on, waiting, off = [], [], []
     for account in here.sending:
         allowed, chosen = records.route_long_pages(account.key)
@@ -399,8 +416,7 @@ def partner_repair(here):
 
 
 def blocked_senders(here):
-    from ..inbound.screening import ScreeningStore
-    active = len(ScreeningStore(here.engine).active())
+    active = len(here.blocked)
     on, sentence = _agreed(active, 'No sender is blocked yet.', who='numbers', what='on your blocked list')
     why = None if here.trunk_receives else (
         'Needs faxes received over your own SIP trunk; '
@@ -526,8 +542,7 @@ def route_problems(here):
 
 
 def power_aware(here):
-    from ..power import settings
-    why = None if settings(here.engine) else 'Needs a UPS that Faxbot reads through NUT; none is set.'
+    why = None if here.ups else 'Needs a UPS that Faxbot reads through NUT; none is set.'
     return State(why is None, why is None, None, why)
 
 
@@ -937,13 +952,19 @@ def _view(mechanism, here):
 
 def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
     """Every catalogue entry for this installation, grouped by stage; never any money."""
+    return evaluate_here(values, routes, engine, now=now, days=days)[0]
+
+
+def evaluate_here(values, routes, engine, *, now=None, days=WINDOW_DAYS):
+    """``evaluate``'s answer and the ``Installation`` it read, so Capabilities checks its prerequisites against the
+    same facts (sending accounts, partners) instead of reading them all again."""
     from ..direct.reuse import savings_view
     from .savings import savings
     now = now or utcnow()
     saved = savings(routes, engine, now=now, days=days, home=getattr(values, 'fax_default_country', None))
     saved['direct_bytes'] = savings_view(engine, since=now - timedelta(days=days), days=days)
     here = Installation(values, routes, engine, saved=saved, days=days)
-    return {
+    answer = {
         'days': days, 'title': TITLE, 'sentence': SENTENCE,
         'legend': [{'label': label, 'sentence': sentence} for label, sentence in LEGEND],
         # ``path``: a stage on the fax's own path (drawn with arrows), or advice beside it.
@@ -951,3 +972,4 @@ def evaluate(values, routes, engine, *, now=None, days=WINDOW_DAYS):
                     'mechanisms': [_view(mechanism, here) for mechanism in CATALOGUE if mechanism.stage == key]}
                    for key, title in STAGES],
     }
+    return answer, here
