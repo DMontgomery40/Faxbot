@@ -108,7 +108,7 @@ import type {
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
-import type { EfaxStatus, ForwardedTrust, HumbleFaxStatus } from './types';
+import type { EfaxStatus, FaxEngineRequest, ForwardedTrust, HumbleFaxStatus } from './types';
 import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
 import type {
@@ -954,7 +954,7 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient; coverInHeader?: boolean } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean; engine?: FaxEngineRequest } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -973,6 +973,8 @@ class AdminAPIClient {
     if (options.sendBy) formData.append('send_by', options.sendBy);
     // The first page is a cover sheet whose notice goes in the header notice instead (header_notice.py).
     if (options.coverInHeader) formData.append('cover_in_header', 'true');
+    // The fax engine for a call over the SIP trunk; left out, Faxbot chooses.
+    if (options.engine && options.engine !== 'auto') formData.append('engine', options.engine);
     // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
     for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 

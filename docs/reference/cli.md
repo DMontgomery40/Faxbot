@@ -68,6 +68,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
 * `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
+* `--engine ENGINE`: For a call over your SIP trunk, the fax engine that places it: auto (Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax engine when it is running, else the built-in engine).  [default: auto]
 * `--help`: Show this message and exit.
 
 ## `faxbot status`

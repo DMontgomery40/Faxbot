@@ -71,6 +71,14 @@ NOT_SET_UP = "Faxbot's fax engine starts when you select Apply and connect."
 LINES_NOT_READY = "Faxbot's fax engine is still starting, so this fax was sent as an ordinary fax."
 ASTERISK_NOT_CURRENT = ("Faxbot's fax engine is waiting for the phone connection to restart, "
                         'so this fax was sent as an ordinary fax.')
+# A fax whose sender chose the engine (``POST /fax`` ``engine``; ``choose(requested=...)``).
+CHOSE_BUILTIN = 'You chose the built-in engine for this fax.'
+CHOSE_ENGINE = 'You chose the SSL Fax engine for this fax; it places the call when it is running.'
+CHOSE_ENGINE_NOT_READY = ('You chose the SSL Fax engine for this fax, but it is not running, so the built-in engine '
+                          'sent it.')
+CHOSE_ENGINE_STARTING = ('You chose the SSL Fax engine for this fax, but it is still starting, so the built-in '
+                         'engine sent it.')
+REQUESTED_ENGINES = ('auto', 'builtin', 'hylafax')
 # Engine states for the trunk page and System diagnostics.
 STOPPED = "Faxbot's fax engine is not running, so faxes are sent the ordinary way."
 STARTING = "Faxbot's fax engine is still starting."
@@ -664,10 +672,26 @@ def recipient_limits(engine, number):
     return hylafax_records.safely(hylafax_records.records_for(engine).recipient_settings, number)
 
 
-async def choose(values, *, members=False, ami=None) -> EngineChoice:
-    """Which engine places this call, and why when it is the built-in one. No call is placed here."""
+async def choose(values, *, members=False, ami=None, requested=None) -> EngineChoice:
+    """Which engine places this call, and why when it is the built-in one. No call is placed here.
+
+    ``requested``: the engine the sender chose for this fax. ``builtin`` always gets the built-in engine;
+    ``hylafax`` gets this engine when it is ready and otherwise the built-in engine, as with no choice, with a
+    sentence that says the choice could not be kept; ``auto`` or None chooses as before. Faxes sent together in one
+    call always go on the built-in engine.
+    """
     if members:
         return EngineChoice('builtin', SENDING_TOGETHER)
+    if requested == 'builtin':
+        return EngineChoice('builtin', CHOSE_BUILTIN)
+    choice = await _choose(values, ami=ami)
+    if requested == 'hylafax' and choice.engine == 'builtin':
+        starting = choice.reason in (LINES_NOT_READY, ASTERISK_NOT_CURRENT)
+        return EngineChoice('builtin', CHOSE_ENGINE_STARTING if starting else CHOSE_ENGINE_NOT_READY)
+    return choice
+
+
+async def _choose(values, *, ami=None) -> EngineChoice:
     if not engine_conf_path(values).is_file():
         status = read_status(values)
         return EngineChoice('builtin', NOT_SET_UP if status.state != 'absent' else NOT_RUNNING)
