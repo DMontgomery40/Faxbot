@@ -191,6 +191,31 @@ def test_queued_rejections_are_recorded_once_then_taken_off_the_queue(engine):
     assert [row['number'] for row in store.rejections()] == ['13035550142']
 
 
+def test_the_background_screen_builds_its_store_once_for_every_sync_and_drain(engine, monkeypatch):
+    """The 5-second step syncs and drains with one store: building it reflects its tables, which held worker
+    threads on a busy installation when it was built on every sync and drain."""
+    from types import SimpleNamespace
+    from app.inbound import screening_http
+    built, real = [], screening.ScreeningStore
+
+    def counted(database):
+        built.append(database)
+        return real(database)
+    monkeypatch.setattr(screening, 'ScreeningStore', counted)
+    monkeypatch.setattr(screening_http, 'installation_engine', lambda app: (engine, None))
+    asterisk = FakeAsterisk()
+    asterisk._connected, asterisk.connected_at = asyncio.Event(), 1.0
+    asterisk._connected.set()
+    asterisk.on_screened = lambda callback: None
+    sync = screening_http.ScreeningSync(SimpleNamespace(), asterisk)
+    real(engine).add(CALLER, 'Junk', now=datetime.utcnow())
+    for _ in range(3):
+        sync.wake(sync=True, drain=True)
+        assert asyncio.run(sync.step()) is False
+    assert built == [engine] and sync.synced
+    assert {key.rsplit('/', 1)[-1] for key in asterisk.database} == {'13035550142', '3035550142'}
+
+
 # -- the console's and the command line's API ---------------------------------------------------
 
 @pytest.fixture

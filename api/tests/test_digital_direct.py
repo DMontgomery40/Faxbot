@@ -132,6 +132,22 @@ def opened(world, raw):
     return headers, signer.content
 
 
+def test_the_minute_step_builds_its_store_once(world, monkeypatch):
+    """The worker steps every minute, with or without Direct accounts; its store (five reflected tables) is built on
+    the first step only."""
+    from api.app.digital import worker as digital_worker
+    built, real = [], digital_worker.DigitalStore
+
+    def counted(engine):
+        built.append(engine)
+        return real(engine)
+    monkeypatch.setattr(digital_worker, 'DigitalStore', counted)
+    running = worker(world)
+    for _ in range(3):
+        assert running.step() is False
+    assert built == [world.engine]
+
+
 def test_a_fax_goes_as_a_direct_message_then_processed_then_dispatched_settle_it(world):
     job = queue(world)
     conventional = asyncio.run(send(world))
