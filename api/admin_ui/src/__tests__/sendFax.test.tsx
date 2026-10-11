@@ -682,7 +682,9 @@ describe('The fax engine for one fax', () => {
     await waitFor(() => expect(screen.getByTestId('send-engine').textContent).toContain('Automatic'), { timeout: 2000 });
   });
 
-  it('leaves it out for a number your carrier trunk does not call, even after a pick for another number', async () => {
+  // The server lists every route the installation has as available_routes, so in practice the control follows whether
+  // a trunk is set up; this fixture varies them per number to prove a pick is posted only while the control is shown.
+  it('posts a pick only while it is offered, never for a number without a trunk among its routes', async () => {
     server.use(routesFor({ '+12025550123': ['sip'], '+12025550199': ['phaxio'] }));
     const posted = engineServer();
     openSend();
