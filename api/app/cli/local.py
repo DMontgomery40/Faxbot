@@ -333,10 +333,16 @@ def _dump_sqlite(installation, target):
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(descriptor)
     try:
+        # Read-only, through SQLite's backup API: one consistent copy that includes what is still in the live
+        # database's write-ahead log, taken while Faxbot keeps writing.
         reader = sqlite3.connect('file:' + quote(str(source)) + '?mode=ro', uri=True)
         writer = sqlite3.connect(destination)
         try:
             reader.backup(writer)
+            # The copy is one self-contained file: opening it later (to restore or inspect it) leaves no
+            # -wal or -shm file beside it, and any Faxbot version opens it. The API turns write-ahead logging
+            # back on at its first connection after a restore.
+            writer.execute('PRAGMA journal_mode=DELETE')
             revision = None
             try:
                 revision = writer.execute('SELECT version_num FROM alembic_version').fetchone()
@@ -426,8 +432,10 @@ def verify(source):
                if path.is_file() or path.is_symlink()} - {'manifest.json'}
     listed = set(manifest['files'])
     if present != listed:
-        raise CliError('The backup folder does not match its manifest: files were added or removed. It was not '
-                       'restored.')
+        # Named, so a database log left beside the copy (database/faxbot.sqlite3-wal) is plain to see.
+        changed = ', '.join(sorted(present ^ listed)[:5])
+        raise CliError(f'The backup folder does not match its manifest: files were added or removed ({changed}). '
+                       'It was not restored.')
     for name, expected in manifest['files'].items():
         path = source / name
         if path.is_symlink() or not path.is_file() or _digest(path) != expected.get('sha256'):
@@ -527,6 +535,9 @@ def _restore_postgresql(installation, source, manifest, force):
 
 
 def _restore_sqlite(installation, source):
+    # A -wal file left beside the database belongs to the database being replaced: SQLite would replay it into the
+    # restored file. Remove the companions first, then put the copy in place, so a stop between the two steps
+    # never leaves a stale log next to the restored database.
     target = installation.sqlite_path
     for suffix in _SQLITE_COMPANIONS[1:]:
         companion = Path(str(target) + suffix)

@@ -34,6 +34,9 @@ vendor/
 faxdata/
 logs/
 *.db
+# A database's write-ahead log and shared-memory index (SQLite WAL mode)
+*.db-wal
+*.db-shm
 
 .git/
 .gitignore

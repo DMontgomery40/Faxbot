@@ -48,6 +48,7 @@ CATEGORY_TEXT = {
     'person_answered': 'A person answered at this number; check the fax number with the recipient.',
     'wrong_station': 'This number answered as another fax machine, so nothing was sent; confirm the fax number with '
                      'the recipient.',
+    'result_lost': "Faxbot lost this call's result; check whether it arrived before sending again.",
 }
 OWNER_SOURCE_TEXT = {
     'sender': 'the person who sent it',
