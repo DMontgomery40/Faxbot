@@ -2,9 +2,7 @@
   {
     "version": "faa441dc0ce4a39cc30e0075ec5e0e659b0ce28a",
     "title": "faa441dc0ce4a39cc30e0075ec5e0e659b0ce28a",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "f29339c",
@@ -415,6 +413,13 @@
     "version": "01db7183f869a33cd7f1df0ecd325e0952a1cbb7",
     "title": "01db7183f869a33cd7f1df0ecd325e0952a1cbb7",
     "aliases": []
+  },
+  {
+    "version": "1cee9243866c7735bef384c0c247371c1fd29ff9",
+    "title": "1cee9243866c7735bef384c0c247371c1fd29ff9",
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "0abecd77",
