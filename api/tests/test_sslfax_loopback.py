@@ -599,7 +599,10 @@ def send_and_collect(tmp_path, context, document=None, wait=600):
     job = wait_for(finished, wait, 'the fax result')
     elapsed = round(time.time() - started, 1)
     sent = tmp_path / 'sent.tiff'
-    sent.write_bytes(docker.read_bytes(context['asterisk'], f'/faxdata/{job_id}.tiff'))
+    # The pages this attempt sent: the attempt's changed pages when Faxbot changed them (packed or lightened,
+    # pages/sending.paths, kept until the retention cleanup), else the fax's own image.
+    changed = docker.sh(context['asterisk'], f'ls -t /faxdata/packed-{job_id}-*.tiff 2>/dev/null').stdout.split()
+    sent.write_bytes(docker.read_bytes(context['asterisk'], changed[0] if changed else f'/faxdata/{job_id}.tiff'))
     from PIL import Image, ImageSequence
     sent_pages = [frame.convert('1').copy() for frame in ImageSequence.Iterator(Image.open(sent))]
     time.sleep(3)
@@ -2156,11 +2159,34 @@ def header_line(page, rows=60):
     return ' '.join(result.stdout.split()).lower()
 
 
+def at_received_resolution(sent, received):
+    """The sent page as the receiver got it: Faxbot hands the engine fine pages, and at standard resolution the
+    engine sends every other row (half the height). Of the two row sets, the one that differs from the received
+    page in fewer rows; the page itself when the heights already match."""
+    if abs(sent.size[1] - 2 * received.size[1]) > 2:
+        return sent
+    from PIL import Image
+    width, stride = sent.size[0], (sent.size[0] + 7) // 8
+    data = sent.tobytes()
+    target = received.crop((0, 0, width, received.size[1])).tobytes() if received.size[0] >= width else None
+    best = None
+    for offset in (0, 1):
+        rows = [data[y * stride:(y + 1) * stride] for y in range(offset, sent.size[1], 2)]
+        page = Image.frombytes('1', (width, len(rows)), b''.join(rows))
+        score = (sum(1 for y in range(min(len(rows), received.size[1]))
+                     if rows[y] != target[y * stride:(y + 1) * stride]) if target is not None else 0)
+        if best is None or score < best[0]:
+            best = (score, page)
+    return best[1]
+
+
 def band_check(sent, received, band):
     """Where the received page differs from the page Faxbot sent: how many rows differ and the last of them, any
     differing row that had ink on the sent page (content the header line covered), whether the received page has
     ink above ``band`` (the header line), any ink the sent page had above it, and whether the rows only one page
-    has (HylaFAX may leave out a white page bottom) are white."""
+    has (HylaFAX may leave out a white page bottom) are white. At standard resolution the sent page is first
+    brought to the received height (``at_received_resolution``)."""
+    sent = at_received_resolution(sent, received)
     width = min(sent.size[0], received.size[0])
     rows = min(sent.size[1], received.size[1])
     stride = (width + 7) // 8
@@ -2289,11 +2315,16 @@ def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_pa
     text = header_line(ordinary['received_pages'][0]) if ordinary['received_pages'] else None
     digits = ''.join(character for character in (text or '') if character.isdigit())
     days = {moment.strftime('%d %b %Y').lower() for moment in (datetime.now(timezone.utc), datetime.now())}
+    # Packing leaves TOP_ROWS fine rows white for the header line: half as many rows at standard.
+    top = TOP_ROWS // 2 if standard else TOP_ROWS
     proof['ordinary'] = {'status': ordinary['job'].get('status'), 'header_line_read': text,
                          'pages': len(ordinary['received_pages']),
                          'sent_sizes': [list(page.size) for page in ordinary['sent_pages']],
-                         'bands': [band_check(a, b, TOP_ROWS) for a, b in zip(ordinary['sent_pages'],
-                                                                               ordinary['received_pages'])]}
+                         'received_sizes': [list(page.size) for page in ordinary['received_pages']],
+                         'engine': database(context, engine="SELECT resolution FROM fax_engine_calls "
+                                                            f"WHERE job_id = '{ordinary['job']['id']}'")['engine'],
+                         'bands': [band_check(a, b, top) for a, b in zip(ordinary['sent_pages'],
+                                                                          ordinary['received_pages'])]}
 
     # (b) Packed pages.
     assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'allow'})['status'] == 200
@@ -2302,8 +2333,8 @@ def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_pa
                                       f"WHERE job_id = '{packed['job']['id']}'")['change']
     proof['packed'] = {'status': packed['job'].get('status'), 'change': change,
                        'sent_pages': len(packed['sent_pages']), 'received_pages': len(packed['received_pages']),
-                       'bands': [band_check(a, b, TOP_ROWS) for a, b in zip(packed['sent_pages'],
-                                                                             packed['received_pages'])]}
+                       'bands': [band_check(a, b, top) for a, b in zip(packed['sent_pages'],
+                                                                        packed['received_pages'])]}
 
     # (a) Encoded pages in every layout, with packing off so the pages go as they are.
     assert api(docker, 'PUT', number + '/pages', key=key, body={'packing': 'never'})['status'] == 200
@@ -2330,8 +2361,12 @@ def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_pa
 
     found = proof['ordinary']
     assert str(found['status']).upper() == 'SUCCESS' and found['pages'] == PAGES, proof
-    # Faxbot sent the pages at the resolution they were made at.
-    assert all((height < 1500) == standard for _, height in found['sent_sizes']), proof
+    # The engine sent the pages at the resolution they were made at, and they arrived at it.
+    assert [call['resolution'] for call in found['engine']] == [resolution], proof
+    assert all((height < 1500) == standard for _, height in found['received_sizes']), proof
+    for band in found['bands']:
+        assert band['header_ink'] and not band['covered_ink_rows'], proof
+        assert band['last_differing_row'] is not None and band['last_differing_row'] < top, proof
     if text is not None:
         assert any(day in text for day in days) and 'leeds hq' in text, proof
         assert FAXBOT_NUMBER.lstrip('+') in digits and f'page 1 of {PAGES}' in text, proof
@@ -2341,7 +2376,7 @@ def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_pa
     assert found['received_pages'] == found['sent_pages'], proof
     for band in found['bands']:
         assert band['header_ink'] and not band['sent_ink_above_band'] and not band['covered_ink_rows'], proof
-        assert band['last_differing_row'] is not None and band['last_differing_row'] < TOP_ROWS, proof
+        assert band['last_differing_row'] is not None and band['last_differing_row'] < top, proof
         assert band['extra_rows_white'], proof
     for layout in ENCODED_LAYOUTS:
         found = proof[layout]
