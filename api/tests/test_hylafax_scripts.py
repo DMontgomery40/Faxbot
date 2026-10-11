@@ -534,7 +534,7 @@ def test_a_received_image_or_ticket_that_is_a_link_is_not_handed_over(engine, tm
 
 
 QFILE = ('jobtag:' + 'a' * 32 + '.' + 'b' * 32 + '\njobid:12\ncommid:000000007\nstate:8\nnpages:0\ntotpages:2\n'
-         'ndials:1\ntotdials:1\ntottries:1\nstatus:No carrier detected {E002}\nstatuscode:E002\ncsi:\n'
+         'ndials:1\ntotdials:1\ntottries:1\nstatus:No carrier detected \nerrorcode:E002\ncsi:\n'
          'signalrate:\ndataformat:\n')
 
 
