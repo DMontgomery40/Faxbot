@@ -187,8 +187,12 @@ class Prediction:
     expected_billed_seconds: float | None = None
     p90_seconds: float | None = None     # the time 9 in 10 such calls finish within; None when unknown
     increment_seconds: int | None = None  # one billing step, on a route that bills by time
-    spread: str | None = None            # how the spread was found, as a clause; None when the time is unknown
+    spread: str | None = None            # how the spread was found, as a clause (``Spread.clause``); None when the
+                                         # time is unknown or a fax service's spread is assumed
     expected_billed_pages: float | None = None  # under a page-or-time rule, the pages expected to be billed
+    # The spread is from the number's own recorded calls; False while it is assumed (``DEFAULT_SPREAD``), so
+    # "9 in 10 calls finish within" is said only from measured calls.
+    spread_learned: bool = False
 
 
 @dataclass(frozen=True)
@@ -362,17 +366,16 @@ def line_seconds(shape, link, *, coding=None):
         seconds = setup + sum(measured) / rate + PAGE_SECONDS * shape.pages
         extra = ecm_seconds(measured, coding, shape.ecm)
         seconds += extra
-        clause = f'{duration_text(seconds)} on the line, from the measured size of each page in {coding} {how}'
+        # The Send page reads this clause: no coding names (Sent's details say which coding a call used).
+        clause = f'{duration_text(seconds)} on the line, from the measured size of each page {how}'
         if extra:
-            clause += (f', with about {round(extra)} seconds more where a page needs more than one error-correction '
-                       'block')
+            clause += f', with about {round(extra)} seconds more for error checking on the larger pages'
         return seconds, clause
     if shape.page_bits is not None:
         rate, how = _speed(link)
         data = sum(shape.page_bits) * WIRE_FACTOR[coding] / rate
         seconds = setup + data + PAGE_SECONDS * shape.pages
-        estimate = '' if coding == 'MMR' else f', with {coding} estimated from a fixed ratio to MMR'
-        return seconds, f'{duration_text(seconds)} on the line, from the size of each page {how}{estimate}'
+        return seconds, f'{duration_text(seconds)} on the line, from the size of each page {how}'
     if shape.layout == 'codec':
         return None, "the time on the line is unknown, because a coded page's size depends on its data"
     factor = LAYOUT_FACTOR[shape.layout]
@@ -419,11 +422,13 @@ class Spread:
         return ordered[-1][0]
 
     def clause(self):
+        """Where the spread comes from, in plain words: the number's own calls, or (on a route that learns) how
+        long the time stays an estimate; None for a fax service, whose spread is always assumed."""
         if self.learned:
-            return f'the spread of {_count(self.calls, "earlier fax")} to this number'
+            return f'from {_count(self.calls, "earlier fax")} to this number'
         if not self.learns:
-            return 'an assumed spread of 15% either way'
-        return f'an assumed spread of 15% either way until this number has {MIN_CALLS} faxes of its own'
+            return None
+        return f'an estimate until Faxbot has timed {MIN_CALLS} faxes to this number'
 
 
 # The hour of the call (M26) -------------------------------------------------------------------------------
@@ -574,14 +579,18 @@ def _minutes(terms, plan, named, seconds, how, spread=None):
 
 
 def _spread_price(terms, spread, pages, central, expected):
-    """', or more about 25% of the time, so about $0.00625 is expected' when the spread crosses a billing step."""
+    """', or more about 25% of the time, so about $0.00625 is expected' when the spread crosses a billing step
+    (', or more if the call runs long, ...' while the spread is assumed)."""
     if spread is None or expected is None or expected == central:
         return ''
     costs = [(terms_cost(terms, seconds=seconds, pages=pages)[1], weight) for seconds, weight in spread.points]
     higher = sum(weight for micros, weight in costs if micros is not None and micros > central)
     lower = sum(weight for micros, weight in costs if micros is not None and micros < central)
-    parts = ([f'or more about {round(higher * 100)}% of the time'] if higher else []) + (
-        [f'or less about {round(lower * 100)}% of the time'] if lower else [])
+    # How often is said only from the number's own calls; an assumed spread says when, never how often.
+    more = f'more about {round(higher * 100)}% of the time' if spread.learned else 'more if the call runs long'
+    less = f'less about {round(lower * 100)}% of the time' if spread.learned else 'less if it is quick'
+    # "or more about 25% of the time and less about 25% of the time": one "or" for both.
+    parts = ([f'or {more}'] if higher else []) + ([f"{'' if higher else 'or '}{less}"] if lower else [])
     return (', ' + ' and '.join(parts) if parts else '') + (
         f', so about {money_text(expected, terms.card.currency)} is expected')
 
@@ -597,7 +606,8 @@ def _with_spread(prediction, terms, spread, billed=None, pages=None):
     elif terms is not None and terms.page_time_seconds:
         step = terms.page_time_seconds
     return replace(prediction, expected_billed_seconds=billed, p90_seconds=spread.percentile(),
-                   increment_seconds=step, spread=spread.clause(), expected_billed_pages=pages)
+                   increment_seconds=step, spread=spread.clause(), expected_billed_pages=pages,
+                   spread_learned=spread.learned)
 
 
 # A Direct message or FHIR document (``digital/``): no call, priced per message by its account's plan.

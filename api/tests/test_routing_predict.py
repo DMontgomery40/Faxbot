@@ -130,7 +130,8 @@ def test_a_page_past_an_error_correction_block_edge_costs_one_more_exchange():
     under, _ = seconds(65_000)
     over, how = seconds(66_000)
     assert over - under - data == pytest.approx(ECM_BLOCK_SECONDS)
-    assert how.endswith(', with about 3 seconds more where a page needs more than one error-correction block')
+    assert how.endswith(', with about 3 seconds more for error checking on the larger pages')
+    assert 'MMR' not in how
     mh_under, _ = seconds(65_000, 'MH')
     mh_over, mh_how = seconds(66_000, 'MH')
     assert mh_over - mh_under == pytest.approx(data) and 'error-correction' not in mh_how
@@ -247,11 +248,17 @@ def test_per_minute_billing_crosses_a_whole_minute_and_reports_the_room_left():
     over = predict_from(facts(terms), Shape(1, _seconds_for(61), 'fine', 'normal'))
     assert under.cost == Money(6250, 'USD') and over.cost == Money(8750, 'USD')
     assert under.expected_billed_seconds == pytest.approx(75) and over.expected_billed_seconds == pytest.approx(105)
-    assert under.basis.startswith('Billed as 1 minute at $0.005 a minute, or more about 25% of the time, so about '
+    # An assumed spread says when the bill changes, never how often.
+    assert under.basis.startswith('Billed as 1 minute at $0.005 a minute, or more if the call runs long, so about '
                                   '$0.00625 is expected; about 59 seconds on the line')
-    assert over.basis.startswith('Billed as 2 minutes at $0.005 a minute, or less about 25% of the time, so about '
+    assert over.basis.startswith('Billed as 2 minutes at $0.005 a minute, or less if it is quick, so about '
                                  '$0.00875 is expected;')
-    assert under.p90_seconds == pytest.approx(11 + 48 * 1.15, abs=0.01) and 'assumed spread' in under.spread
+    assert under.p90_seconds == pytest.approx(11 + 48 * 1.15, abs=0.01)
+    # An assumed spread is never said as "9 in 10": only that the time is an estimate, and until when.
+    from app.routing.predict_http import finish_sentence, time_note
+    assert under.spread == 'an estimate until Faxbot has timed 3 faxes to this number' and not under.spread_learned
+    assert finish_sentence(under) is None
+    assert time_note(under) == 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.'
 
 
 def test_a_call_of_59_or_61_seconds_with_equal_odds_bills_90_seconds_not_60():
@@ -270,7 +277,15 @@ def test_a_call_of_59_or_61_seconds_with_equal_odds_bills_90_seconds_not_60():
     found = predict_from(facts(terms, link=link), Shape(1, None, 'fine', 'normal'))
     bill = predictor.bill_of(found)
     assert bill.increment_seconds == 60 and bill.cost == found.cost
-    assert 'the spread of 4 earlier faxes to this number' == found.spread
+    assert found.spread == 'from 4 earlier faxes to this number' and found.spread_learned
+    # From the number's own calls, how often the bill changes may be said.
+    crossing = predict_from(facts(terms, link=link), Shape(1, _seconds_for(60), 'fine', 'normal'))
+    assert '% of the time' in crossing.basis and 'runs long' not in crossing.basis, crossing.basis
+    # From the number's own calls, "9 in 10" may be said, with where it comes from; no estimate note.
+    from app.routing.predict_http import finish_sentence, time_note
+    assert finish_sentence(found) == ('From 4 earlier faxes to this number, 9 in 10 calls like this one finish '
+                                      f'within {predictor.duration_text(found.p90_seconds)}.')
+    assert time_note(found) is None
 
 
 def test_expected_bill_answers_steps_cost_and_completion_time():
@@ -531,7 +546,7 @@ def test_a_fax_service_to_your_own_number_is_priced_at_the_speed_calls_into_it_r
         9600, 'receiver', 1, 'MR')
     priced = predict_from(found, p003_shape())
     assert abs(priced.seconds - 1352) / 1352 < 0.03, priced.seconds
-    assert 'from the measured size of each page in MR at the speed 1 earlier fax into this number reached' in \
+    assert 'from the measured size of each page at the speed 1 earlier fax into this number reached' in \
         priced.basis
     # Without the sending account's own number, every fax into the number counts: here the faster senders.
     anyone = predict_facts.facts_for('humblefax', OWN, values=own_values(), engine=database)
@@ -618,13 +633,14 @@ def test_the_dry_run_prices_every_allowed_route(client):  # noqa: F811 - fixture
     bad = client.get('/routing/predict', headers=ADMIN, params={'to': NUMBER, 'layout': 'tall'})
     assert bad.status_code == 400 and bad.json()['detail'] == 'Choose a normal or dense layout.'
     assert client.get('/routing/predict', params={'to': NUMBER}).status_code in (401, 403)
-    # Every route says when 9 in 10 such calls finish; the trunk's spread is assumed until the number has calls.
+    # No route has calls of its own to this number yet, so none says "9 in 10": the figure would only be assumed.
     assert routes['sip']['p90_seconds'] > routes['sip']['seconds']
-    assert routes['sip']['finish_sentence'].startswith('9 in 10 such calls should finish within about ')
-    assert 'an assumed spread of 15% either way until this number has 3 faxes of its own' in \
-        routes['sip']['finish_sentence']
-    # A fax service never learns a number's calls here: its spread stays assumed, and says only that.
-    assert routes['phaxio']['finish_sentence'].endswith(', from an assumed spread of 15% either way.')
+    assert all(route['finish_sentence'] is None for route in body['routes'])
+    # The trunk learns each number's calls, and says how long its time stays an estimate.
+    assert routes['sip']['time_note'] == ('The time on the line is an estimate until Faxbot has timed 3 faxes to '
+                                          'this number.')
+    # A fax service never learns a number's calls here: its basis already says how the time was worked out.
+    assert routes['phaxio']['time_note'] is None
 
 
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
@@ -651,7 +667,9 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     # smallest measured coding is priced and asked for.
     assert trunk['coding']['coding'] == best and trunk['coding']['measured'] is True
     assert trunk['coding']['sentence'].startswith(f'Faxbot would send these pages with {best}: ')
-    assert f'from the measured size of each page in {best}' in trunk['basis']
+    # The basis reaches the Send page: how the time was worked out, without coding names.
+    assert 'from the measured size of each page at a typical fax speed' in trunk['basis']
+    assert not any(name in trunk['basis'] for name in ('MH', 'MR', 'MMR', 'JBIG'))
     assert routes['phaxio']['coding'] is None  # a fax service codes the pages itself
     empty = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
                         files={'file': ('empty.pdf', b'', 'application/pdf')})

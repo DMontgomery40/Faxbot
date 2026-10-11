@@ -209,3 +209,61 @@ def test_a_list_fails_whole_for_a_revoked_credential_and_is_empty_while_a_passwo
     aw.update('access_principals', 'alice', enabled=0, security_version=2)
     with pytest.raises(StaleCredentialError):
         queries.visible_jobs(aw.actor, ['second', 'new'])
+
+
+OWN_CALL = ('The call ended before the receiving fax machine confirmed the pages; check with the recipient before '
+            'sending this fax again.')
+SERVICE = 'Faxbot could not confirm delivery; check your provider account before sending this fax again.'
+
+
+@pytest.mark.parametrize('route_provider, backend, expected', [
+    ('sip', 'humblefax', OWN_CALL),        # accepted for HumbleFax, sent over the trunk: no provider account
+    ('freeswitch', None, OWN_CALL),
+    (None, 'sip', OWN_CALL),               # no attempt route on record: the account it was accepted with
+    ('humblefax', 'sip', SERVICE),         # the route that carried it decides, not the acceptance
+    ('phaxio', 'phaxio', SERVICE),
+])
+def test_an_uncertain_result_names_the_provider_account_only_for_a_fax_service(route_provider, backend, expected):
+    row = {'delivery_state': 'reconciliation_required', 'dispatch_mode': 'normal', 'delivery_version': 3,
+           'route_provider': route_provider, 'backend': backend}
+    assert Q.delivery_fields(row)['reconciliation_reason'] == expected
+    legacy = Q.delivery_fields(dict(row, dispatch_mode='legacy'))['reconciliation_reason']
+    assert ('provider account' in legacy) == (expected == SERVICE)
+
+
+def test_an_uncertain_fax_reads_the_route_its_attempt_used(aw, queries):
+    from api.app.config_profiles import ProviderConfiguration
+    _uncertain(aw, queries)
+    # Accepted for and sent through the fax service: its account is the place to check.
+    assert queries.job(aw.actor, 'new')['reconciliation_reason'] == SERVICE
+    assert queries.page(aw.actor, status='reconciliation_required')['jobs'][0]['reconciliation_reason'] == SERVICE
+    # The same fax with its attempt bound to the trunk (assign_route): the call was Faxbot's own.
+    trunk = aw.configuration.account_profile(ProviderConfiguration('sip'))
+    attempts = aw.configuration.delivery_tables['outbound_attempts']
+    with aw.engine.begin() as connection:
+        connection.execute(attempts.update().where(attempts.c.job_id == 'new').values(profile_id=trunk))
+    assert queries.job(aw.actor, 'new')['reconciliation_reason'] == OWN_CALL
+    assert queries.page(aw.actor, status='reconciliation_required')['jobs'][0]['reconciliation_reason'] == OWN_CALL
+
+
+def test_each_fax_in_a_page_reads_its_own_route(aw, queries):
+    """Two uncertain faxes on one page, one sent through the fax service and one over the trunk: each row's sentence
+    comes from that fax's own attempt and binding, never another fax's."""
+    from api.app.config_profiles import ProviderConfiguration
+    aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': 'third', 'to_number': '+12025550188'})
+    uncertain = set()
+    for _ in range(3):  # new and third (and second, another person's, if its number is free)
+        claim = queries.delivery.claim('internal-test', now=NOW)
+        if claim is None:
+            break
+        queries.delivery.begin_submission(claim, now=NOW)
+        queries.delivery.record_uncertain(claim, now=NOW)
+        uncertain.add(claim.job_id)
+    assert {'new', 'third'} <= uncertain
+    trunk = aw.configuration.account_profile(ProviderConfiguration('sip'))
+    attempts = aw.configuration.delivery_tables['outbound_attempts']
+    with aw.engine.begin() as connection:
+        connection.execute(attempts.update().where(attempts.c.job_id == 'third').values(profile_id=trunk))
+    page = queries.page(aw.actor, status='reconciliation_required')
+    assert page['total'] == 2
+    assert {row['id']: row['reconciliation_reason'] for row in page['jobs']} == {'new': SERVICE, 'third': OWN_CALL}

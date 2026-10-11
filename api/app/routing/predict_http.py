@@ -10,8 +10,9 @@ pages, every account's best pages are measured and priced on that account's own
 tariff, and the accounts are ranked exactly as the delivery worker ranks them
 (``routing.joint``): ``selected`` is the account and pages the worker would
 send, ``runner_up`` the cheapest other account. Nothing is sent, queued,
-recorded or kept. Every figure is an estimate and says how it was worked out,
-with the time 9 in 10 such calls finish within.
+recorded or kept. Every figure is an estimate and says how it was worked out;
+the time 9 in 10 such calls finish within is said only from the number's own
+recorded calls.
 """
 from pathlib import Path
 import tempfile
@@ -78,12 +79,22 @@ def class_text(where):
 
 
 def finish_sentence(prediction):
-    """'9 in 10 such calls should finish within about 1 minute 6 seconds, from an assumed spread ...'; None when
-    the time is unknown or there is no call."""
-    if not prediction.p90_seconds or not prediction.spread:
+    """'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 1 minute 6 seconds.'
+    Said only from the number's own recorded calls; None while the spread is assumed, the time is unknown or
+    there is no call, so an assumption never reads as a promise."""
+    if not prediction.p90_seconds or not prediction.spread or not prediction.spread_learned:
         return None
-    return (f'9 in 10 such calls should finish within {duration_text(prediction.p90_seconds)}, from '
-            f'{prediction.spread}.')
+    return (f'{prediction.spread[:1].upper()}{prediction.spread[1:]}, 9 in 10 calls like this one finish within '
+            f'{duration_text(prediction.p90_seconds)}.')
+
+
+def time_note(prediction):
+    """'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.' on a route that learns
+    each number's calls and has too few of them yet; None otherwise (the basis already says how the time was
+    worked out)."""
+    if prediction.seconds is None or not prediction.spread or prediction.spread_learned:
+        return None
+    return f'The time on the line is {prediction.spread}.'
 
 
 def _view(facts, prediction, pages):
@@ -96,7 +107,7 @@ def _view(facts, prediction, pages):
             'expected_billed_seconds': (None if prediction.expected_billed_seconds is None
                                         else round(prediction.expected_billed_seconds, 1)),
             'p90_seconds': None if prediction.p90_seconds is None else round(prediction.p90_seconds, 1),
-            'finish_sentence': finish_sentence(prediction),
+            'finish_sentence': finish_sentence(prediction), 'time_note': time_note(prediction),
             'cost': (None if prediction.cost is None else
                      {'amount': format_amount(prediction.cost.micros), 'currency': prediction.cost.currency}),
             'cost_text': (None if prediction.cost is None

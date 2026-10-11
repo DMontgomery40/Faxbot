@@ -120,6 +120,10 @@ export const NOT_READY_TEXT = {
   both: 'Faxbot is not ready to send or receive faxes',
 } as const;
 
+// What to do about sent faxes with an uncertain result, whichever routes carried them (the Dashboard says it too).
+export const UNCERTAIN_DETAIL = 'Check with each recipient, or in your provider account for faxes a fax service sent, '
+  + 'before you send any of them again.';
+
 export function heldDetail(holds: Hold[]): string {
   const count = (kind: Hold['kind']) => holds.filter((hold) => hold.kind === kind).length;
   const parts = [
@@ -154,7 +158,8 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
     if (status.jobs.reconciliation_required) {
       add({ key: 'uncertain', group: 'serious', label: 'Sent faxes with an uncertain result',
         count: status.jobs.reconciliation_required, serious: true,
-        detail: 'Check your provider account before you send any of them again.',
+        // True for every route at once: a fax service's account, or the recipient for your own trunk or engines.
+        detail: UNCERTAIN_DETAIL,
         destination: 'faxes/sent?status=reconciliation_required' });
     }
     if (status.jobs.recent_failures) {
