@@ -273,6 +273,39 @@ async def test_a_busy_database_during_route_choice_gives_the_fax_back_and_never_
     assert await worker.step() is False and inner.used == ['signalwire']
 
 
+@pytest.mark.asyncio
+async def test_a_lock_still_held_when_the_fax_is_given_back_leaves_it_to_its_lease_then_it_goes_once_by_its_route(
+        database, tmp_path):  # noqa: F811
+    """The lock outlasts route choice, so giving the claim back cannot take it either: that step fails (the
+    delivery worker's loop logs it and goes on, outbound_wake.idle_loop), nothing is sent, and the claim's lease
+    gives the fax back; it then goes once, by the route the automatic choice picks."""
+    from contextlib import ExitStack
+    from api.app.config_store import ConfigurationStoreError
+    env = installation(database, tmp_path, LISTED)
+    job = accept(env)
+    inner = Inner(env.delivery)
+    transport = RoutedTransport(inner, direct=None)
+    worker = OutboundWorker(env.delivery, transport)
+    real, held, calls = transport._plan, ExitStack(), []
+
+    def locked_from_here(*args, **kwargs):
+        if not calls:
+            calls.append(1)
+            held.enter_context(_database_held(env))
+        return real(*args, **kwargs)
+    transport._plan = locked_from_here
+    try:
+        with pytest.raises(ConfigurationStoreError):
+            await worker.step()
+    finally:
+        held.close()
+    assert inner.used == [] and env.delivery.get(job)['state'] == 'preparing' and holds(env, job) == []
+    env.delivery.recover_expired(now=datetime.utcnow() + timedelta(seconds=31))
+    assert env.delivery.get(job)['state'] == 'ready'
+    assert await worker.step() is True and inner.used == ['signalwire']
+    assert await worker.step() is False and inner.used == ['signalwire']
+
+
 def test_only_a_busy_database_counts_as_busy():
     import sqlite3
     from api.app.config_store import ConfigurationStoreError
