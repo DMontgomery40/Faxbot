@@ -582,18 +582,36 @@ def _measured_choice(request, engine, job_id):
     return sent_view(engine, job_id, snapshot.active.values if snapshot is not None else None)
 
 
+def _list_spending(app):
+    """``_spending`` for the Sent and Received lists' costs, built once per installation database, in the caller's
+    worker thread: each build reflects 13 tables, and every open console asks for both lists' costs once a minute
+    and whenever a list changes. The stores hold no per-request state (their lazy tables are caches), as the
+    background tasks' own long-lived stores show."""
+    engine, _ = installation_engine(app)
+    if engine is None:
+        raise HTTPException(503, detail='Installation configuration is not ready.')
+    found = getattr(app.state, 'list_spending', None)
+    if found is None or found.routes.engine is not engine:
+        try:
+            found = Spending(RouteStore(engine), CarrierChargeStore(engine))
+        except DeliveryStoreError:
+            raise HTTPException(503, detail='Delivery route storage is unavailable.') from None
+        app.state.list_spending = found
+    return found
+
+
 @router.get('/inbound-costs')
 async def inbound_costs(request: Request, ids: str = Query(default='', max_length=4200),
                         identity=Depends(require_identity)):
     """Costs for up to 100 received faxes at once; faxes this person cannot read are left out."""
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
-    spending = _spending(request)
 
     def read():
         # Access is checked once for the whole list (one lock, not one per fax); faxes this person cannot read are
         # left out, never explained. The costs are read after the access transaction has ended.
         visible = private_operation(lambda: runtime.inbound_queries.visible_items(identity.actor, wanted))()
+        spending = _list_spending(request.app)
         return {inbound_id: _cost_view(spending.inbound(inbound_id)) for inbound_id in visible}
     return {'costs': await _call(read)}
 
@@ -606,12 +624,12 @@ async def fax_costs(request: Request, ids: str = Query(default='', max_length=42
     from .provenance import dialed_view
     wanted = list(dict.fromkeys(item.strip() for item in ids.split(',') if item.strip()))[:100]
     runtime = request.app.state.access_runtime
-    spending = _spending(request)
 
     def read():
         # Access is checked once for the whole list (one lock, not one per fax); faxes this person cannot read are
         # left out, never explained. The costs are read after the access transaction has ended.
         visible = private_operation(lambda: runtime.queries.visible_jobs(identity.actor, wanted))()
+        spending = _list_spending(request.app)
         return {job_id: _cost_view({**spending.job(job_id), 'dialed': dialed_view(spending.routes.engine, job_id),
                                     'recipient_warning': fax_warning(spending.routes.engine, job_id)})
                 for job_id in visible}

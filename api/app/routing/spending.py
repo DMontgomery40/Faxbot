@@ -62,6 +62,15 @@ class Spending:
     def __init__(self, routes, carriers, *, carrier_presets=CARRIER_PRESETS, reporting=REPORTING_PROVIDERS):
         self.routes, self.carriers = routes, carriers
         self.carrier_presets, self.reporting = tuple(carrier_presets), tuple(reporting)
+        self._received_store = None
+
+    def _received_charges(self):
+        """The received-charge store (``billing.ReceivedChargeStore``), built once: it reflects its tables, and the
+        Received list asks for up to 100 faxes at once. Raises DeliveryStoreError before migration 0051."""
+        if self._received_store is None:
+            from .billing import ReceivedChargeStore
+            self._received_store = ReceivedChargeStore(self.routes.engine)
+        return self._received_store
 
     # Shared lookups -------------------------------------------------------------
     def _outbound_calls(self, connection, condition):
@@ -274,7 +283,6 @@ class Spending:
         counted in ``unpriced``, never added as 0. A fax on a flat plan is ``included``: the plan's fee is already
         on the account's sending line. Faxes received over the SIP trunk are the trunk's calls, never here.
         """
-        from .billing import ReceivedChargeStore
         from .database import DeliveryStoreError
         imports, faxes = self.carriers.imports, self.carriers.faxes
         received = sa.func.coalesce(imports.c.source_received_at, imports.c.imported_at)
@@ -288,7 +296,7 @@ class Spending:
                        imports.c.revision == '', received >= since)
                 .order_by(imports.c.inbound_fax_id)).all()
         try:
-            effective = ReceivedChargeStore(self.routes.engine).in_effect(sorted({row.inbound_fax_id for row in rows}))
+            effective = self._received_charges().in_effect(sorted({row.inbound_fax_id for row in rows}))
         except DeliveryStoreError:
             effective = {}  # before migration 0051: nothing reported
         cards, totals, open_costs, seen = {}, {}, {}, set()
@@ -514,12 +522,12 @@ class Spending:
 
     def _received_charge(self, inbound_id, backend):
         """What Sinch or Phaxio reported for a fax it received (``billing.ReceivedChargeReconciler``, 0051)."""
-        from .billing import RECEIVED_PROVIDERS, ReceivedChargeStore
+        from .billing import RECEIVED_PROVIDERS
         from .database import DeliveryStoreError
         if backend not in RECEIVED_PROVIDERS:
             return {'state': 'none', 'summary': None, 'reported_cost': {}}
         try:
-            store = ReceivedChargeStore(self.routes.engine)
+            store = self._received_charges()
             reports, state = store.in_effect([inbound_id]).get(inbound_id, []), store.state(inbound_id)
         except DeliveryStoreError:
             return {'state': 'none', 'summary': None, 'reported_cost': {}}
