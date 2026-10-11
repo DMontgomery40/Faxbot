@@ -107,14 +107,17 @@ function statusLabel(state: string): string {
     ?? state.replace(/_/g, ' ').replace(/^./, character => character.toUpperCase());
 }
 
-function deliveryNotice(job: FaxJob): string | null {
+export function deliveryNotice(job: FaxJob): string | null {
   if (deliveryState(job) === 'held' || job.dispatch_mode === 'held') {
     return 'This test fax is held and will not be sent.';
   }
   if (deliveryState(job) === 'reconciliation_required') {
+    // The server's sentence fits the route that carried the fax: the provider account for a fax service, the
+    // recipient for your own trunk or fax engines. The fallback is true for either.
+    if (job.reconciliation_reason) return job.reconciliation_reason;
     return job.dispatch_mode === 'legacy'
-      ? 'Imported fax with no delivery record; check your provider account for the outcome.'
-      : "Delivery couldn't be confirmed; check your provider account and confirm receipt instead of resending.";
+      ? 'Imported fax with no delivery record; check with the recipient, or in your provider account if a fax service sent it.'
+      : "Delivery couldn't be confirmed; check with the recipient, or in your provider account if a fax service sent it, before sending it again.";
   }
   return null;
 }

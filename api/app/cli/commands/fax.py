@@ -63,9 +63,15 @@ def delivery_notice(job):
     if state == 'held' or job.get('dispatch_mode') == 'held':
         return 'This test fax is held and will not be sent.'
     if state == 'reconciliation_required':
-        return ('Imported fax with no delivery record; check your provider account for the outcome.'
+        # The server's sentence fits the route that carried the fax (the provider account for a fax service, the
+        # recipient for your own trunk or fax engines); the fallback is true for either, as in the console.
+        if job.get('reconciliation_reason'):
+            return job['reconciliation_reason']
+        return ('Imported fax with no delivery record; check with the recipient, or in your provider account if a '
+                'fax service sent it.'
                 if job.get('dispatch_mode') == 'legacy' else
-                "Delivery couldn't be confirmed; check your provider account and confirm receipt instead of resending.")
+                "Delivery couldn't be confirmed; check with the recipient, or in your provider account if a fax "
+                'service sent it, before sending it again.')
     return None
 
 

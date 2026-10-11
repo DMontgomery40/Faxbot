@@ -731,3 +731,108 @@ def test_concurrent_collectors_submit_only_one_call(installation, monkeypatch, t
     assert len(polling.requests(installation, NUMBER)) == 1
     if not timed:
         assert sum(isinstance(result, polling.PollRefused) for result in results) == 1
+
+
+# Background warnings: the cause is logged with the warning, never the SQL parameters ---------------------------
+
+SECRET_NUMBER = '+15555550142'
+
+
+def _sql_failure():
+    """A real SQLAlchemy error whose parameters hold a fax number."""
+    engine = sa.create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.execute(sa.text('CREATE TABLE numbers (number TEXT UNIQUE)'))
+        connection.execute(sa.text('INSERT INTO numbers VALUES (:number)'), {'number': SECRET_NUMBER})
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text('INSERT INTO numbers VALUES (:number)'), {'number': SECRET_NUMBER})
+    except sa.exc.IntegrityError as error:
+        return error
+    raise AssertionError('the duplicate number was stored')
+
+
+def _records(caplog, message):
+    found = [record for record in caplog.records if record.getMessage() == message]
+    assert found, [record.getMessage() for record in caplog.records]
+    return found
+
+
+@pytest.mark.parametrize('warning', ['Fax route fallback is temporarily unavailable.',
+                                     'Provider charges are temporarily unavailable.'])
+def test_a_failing_route_step_logs_its_warning_with_the_cause(warning, caplog):
+    import logging
+    from app.routing import http as routing_http
+    from app.routing.background import repeat
+    # The warnings Faxbot's route work hands to repeat (routing/http.py's background list).
+    with open(routing_http.__file__, encoding='utf-8') as source:
+        assert f"warning='{warning}'" in source.read()
+    failure = _sql_failure()
+    record = _log_one_failure(caplog, repeat, warning, failure)
+    assert record.exc_info and record.exc_info[1] is failure
+    text = logging.Formatter().format(record)
+    assert 'IntegrityError' in text and 'INSERT INTO numbers VALUES (?)' in text
+    assert SECRET_NUMBER not in text
+
+
+def _log_one_failure(caplog, repeat, warning, failure):
+    """Run ``repeat`` with a step that fails once, then the warning's record once the next step has started."""
+    import logging
+    calls = []
+
+    async def run():
+        second = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def step():
+            calls.append(1)
+            if len(calls) > 1:
+                loop.call_soon_threadsafe(second.set)
+                return False
+            raise failure
+        task = asyncio.create_task(repeat(step, interval=0.01, warning=warning, initial_delay=0))
+        try:
+            await asyncio.wait_for(second.wait(), timeout=5)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    caplog.set_level(logging.WARNING)
+    asyncio.run(run())
+    return _records(caplog, warning)[0]
+
+
+class _DriverError(Exception):
+    """A PostgreSQL driver error worded as psycopg words a unique violation: the primary message, then DETAIL."""
+
+
+def test_a_database_detail_line_that_echoes_a_value_is_never_logged(caplog):
+    import logging
+    from app.routing.background import repeat
+    original = _DriverError('duplicate key value violates unique constraint "uq_numbers"\n'
+                            f'DETAIL:  Key (number)=({SECRET_NUMBER}) already exists.')
+    failure = sa.exc.IntegrityError('INSERT INTO numbers VALUES (%(number)s)', {'number': SECRET_NUMBER}, original)
+    record = _log_one_failure(caplog, repeat, 'Provider charges are temporarily unavailable.', failure)
+    text = logging.Formatter().format(record)
+    # The classes, the statement and the primary message, with the traceback; never the DETAIL line's value.
+    assert 'IntegrityError' in text and 'duplicate key value violates unique constraint "uq_numbers"' in text
+    assert 'INSERT INTO numbers VALUES' in text and 'test_polling.py' in text
+    assert SECRET_NUMBER not in text and 'DETAIL' not in text
+
+
+def test_timed_collection_logs_why_it_could_not_read_its_settings(caplog, monkeypatch):
+    import logging
+    from app.routing import polling_http
+    failure = _sql_failure()
+
+    async def collect_due(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(polling, 'collect_due', collect_due)
+    runtime = SimpleNamespace(serving=True, manager=SimpleNamespace(store=SimpleNamespace(engine=object())),
+                              snapshot=SimpleNamespace(active=SimpleNamespace(values=SimpleNamespace())))
+    app = SimpleNamespace(state=SimpleNamespace(configuration_runtime=runtime))
+    caplog.set_level(logging.WARNING)
+    asyncio.run(polling_http._collect_due(app))
+    record, = _records(caplog, 'Timed fax collection could not read its settings.')
+    assert record.exc_info and record.exc_info[1] is failure
+    text = logging.Formatter().format(record)
+    assert 'IntegrityError' in text and SECRET_NUMBER not in text

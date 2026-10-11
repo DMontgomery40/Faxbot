@@ -158,6 +158,8 @@ const safeReconciliationDetails = new Map<string, string>([
     'The provider account that sent this fax is no longer set up; check the fax in that account.',
     'This fax already has a provider fax ID; use Refresh to update its status.',
     'This provider cannot look up fax status; check the fax in your provider account.',
+    'This fax went over your own trunk, so there is no provider fax ID to attach; check with the recipient before '
+      + 'sending it again.',
   ].map((detail): [string, string] => [detail, detail]),
 ]);
 
@@ -202,6 +204,8 @@ export function plainRefusal(error: unknown): string | null {
 
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
+// The fax may or may not have been accepted: Send keeps the number and document and links Sent.
+export class FaxUnconfirmedError extends Error {}
 
 // The server's fixed refusal for plugin routes while provider plugins are turned off.
 const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
@@ -318,7 +322,14 @@ export interface ClientOptions {
 }
 
 type RequestOptions = { method?: string; body?: string | FormData; headers?: Record<string, string> };
-type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean };
+// retryBusy: a 503 is asked once more after its Retry-After (1 second when it names none, at most 5).
+type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean; retryBusy?: boolean };
+
+function retryAfterMs(res: Response): number {
+  const header = res.headers.get('Retry-After')?.trim() ?? '';
+  const seconds = /^\d+$/.test(header) ? Number(header) : 1;
+  return Math.min(seconds, 5) * 1000;
+}
 type PolicyResult = { policy_version: number };
 
 export type EngineView = 'registrations' | 'contacts' | 'calls' | 'faxes';
@@ -361,6 +372,11 @@ class AdminAPIClient {
       headers: { ...this.authHeaders(method), ...init.headers },
     });
     let res = await attempt();
+    if (res.status === 503 && extras.retryBusy) {
+      // A busy moment (a database lock, a restart) is not a signed-out session: ask once more.
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs(res)));
+      res = await attempt();
+    }
     if (res.status === 403 && this.credential.kind === 'session' && !SAFE_METHODS.has(method)) {
       const detail = await readDetail(res);
       if (detail?.startsWith(CSRF_FAILURE) && await this.refreshCsrf()) res = await attempt();
@@ -461,7 +477,7 @@ class AdminAPIClient {
   }
 
   async me(extras: { quiet401?: boolean } = {}): Promise<AuthMe> {
-    const me = await this.json<AuthMe>('/auth/me', {}, extras);
+    const me = await this.json<AuthMe>('/auth/me', {}, { ...extras, retryBusy: true });
     if (this.credential.kind === 'session') {
       this.credential = { kind: 'session', csrf: typeof me.csrf_token === 'string' ? me.csrf_token : null };
     }
@@ -484,7 +500,7 @@ class AdminAPIClient {
   }
 
   async context(): Promise<ConsoleContext> {
-    return this.json('/auth/context');
+    return this.json('/auth/context', {}, { retryBusy: true });
   }
 
   async logout(): Promise<void> {
@@ -984,12 +1000,12 @@ class AdminAPIClient {
       if (res.status === 503 && typeof detail === 'string') {
         // Refused before acceptance because the fax engine is not connected; nothing was sent.
         if (FAX_ENGINE_SENTENCES.has(detail)) throw new FaxRefusedError(detail);
-        const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
-        if (uncertain) {
-          throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);
+        if (/^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.test(detail)) {
+          throw new FaxUnconfirmedError("Faxbot isn't sure it accepted the fax; it may already be in Faxes → Sent.");
         }
       }
-      throw new Error(`Fax acceptance was not confirmed (HTTP ${res.status}). Check Jobs before starting another request.`);
+      // No status code: the sentence says what happened and where to look (Send links Sent).
+      throw new FaxUnconfirmedError("Faxbot didn't confirm it accepted the fax; it may already be in Faxes → Sent.");
     }
 
     return res.json();
