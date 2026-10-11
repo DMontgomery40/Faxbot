@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
-import JobsList from '../components/JobsList';
+import JobsList, { engineChoiceSentence } from '../components/JobsList';
+import type { FaxJob } from '../api/types';
 import NegotiationSummary, { ReceivedCallNegotiation, callsPerFax, secondsPerPage } from '../components/CallNegotiation';
 import { server } from '../test/server';
 
@@ -59,6 +60,66 @@ describe('How a fax call went', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
     const line = await within(dialog).findByTestId('job-call-negotiation');
     expect(line.textContent).toBe(`How the call went${sentence}`);
+  });
+});
+
+describe('The fax engine the sender chose, in Sent details', () => {
+  // The server's sentences (hylafax_engine.py), word for word.
+  const CHOSE_BUILTIN = 'You chose the built-in engine for this fax.';
+  const CHOSE_ENGINE = 'You chose the SSL Fax engine for this fax; it places the call when it is running.';
+  const CHOSE_ENGINE_NOT_READY = 'You chose the SSL Fax engine for this fax, but it is not running, so the built-in '
+    + 'engine sent it.';
+  const SENDING_TOGETHER = 'Faxes sent together in one call are sent as ordinary faxes.';
+  const sent = (extra: Partial<FaxJob>): FaxJob => ({ id: JOB, to_number: '+15550100001', status: 'queued',
+    backend: 'sip', pages: 2, created_at: '2026-10-11T12:00:00', updated_at: '2026-10-11T12:00:00',
+    delivery_state: 'ready', dispatch_mode: 'normal', delivery_version: 1, ...extra });
+  const builtinCall = (sentence: string) => ({ engine: 'builtin' as const, sslfax: null, sentence });
+
+  async function details(job: FaxJob) {
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [job] })),
+      http.get(`/admin/fax-jobs/${JOB}`, () => HttpResponse.json(job)),
+      http.get(`/admin/fax-jobs/${JOB}/delivery`, () => HttpResponse.json({
+        version: 1, state: job.delivery_state, dispatch_mode: 'normal', provider_id: 'sip', profile_id: 'profile',
+        revision_id: 'revision', attempt: null, can_bind_provider_identity: false, bind_refusal_reason: null,
+        events: [], events_truncated: false })),
+    );
+    render(<JobsList client={client()} />);
+    fireEvent.click(await screen.findByText('+15550100001'));
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    await within(dialog).findByText('Pages');
+    return dialog;
+  }
+
+  it('says the choice before the call, in the server\'s sentence and never a raw value', async () => {
+    const dialog = await details(sent({ engine_choice: { engine: 'builtin', sentence: CHOSE_BUILTIN } }));
+    expect((await within(dialog).findByTestId('job-engine-choice')).textContent).toBe(`Fax engine${CHOSE_BUILTIN}`);
+    expect(dialog.textContent).not.toMatch(/\bbuiltin\b|hylafax|\bauto\b/);
+  });
+
+  it('says it once after the built-in engine placed the call, and says why it carried a fax meant for the SSL Fax engine', async () => {
+    const dialog = await details(sent({ status: 'success', delivery_state: 'success',
+      engine_choice: { engine: 'builtin', sentence: CHOSE_BUILTIN }, fax_engine: builtinCall(CHOSE_BUILTIN) }));
+    await within(dialog).findByTestId('job-fax-engine');
+    expect(dialog.textContent!.split(CHOSE_BUILTIN)).toHaveLength(2);
+    expect(within(dialog).queryByTestId('job-engine-choice')).toBeNull();
+
+    const sslFax = { engine: 'hylafax' as const, sentence: CHOSE_ENGINE };
+    expect(engineChoiceSentence(sent({ engine_choice: sslFax, fax_engine: builtinCall(CHOSE_ENGINE_NOT_READY) })))
+      .toBeNull();
+  });
+
+  it('keeps the choice beside the call\'s own line when that line is about something else', () => {
+    const sslFax = { engine: 'hylafax' as const, sentence: CHOSE_ENGINE };
+    // The SSL Fax engine placed the call; its line, when there is one, is about SSL Fax.
+    expect(engineChoiceSentence(sent({ engine_choice: sslFax,
+      fax_engine: { engine: 'hylafax', sslfax: false, sentence: null } }))).toBe(CHOSE_ENGINE);
+    // Sent together with other faxes: the built-in engine's line says that, not what became of the choice.
+    expect(engineChoiceSentence(sent({ engine_choice: sslFax, fax_engine: builtinCall(SENDING_TOGETHER),
+      together: { state: 'together', reference: 'Batch 1' } }))).toBe(CHOSE_ENGINE);
+    // No choice: Faxbot chose, and there is no line.
+    expect(engineChoiceSentence(sent({ engine_choice: null }))).toBeNull();
+    expect(engineChoiceSentence(sent({}))).toBeNull();
   });
 });
 
