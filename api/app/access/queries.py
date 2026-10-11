@@ -22,6 +22,11 @@ from .types import AccessUnavailableError, InvalidTransactionError
 OWN_ROUTES = frozenset({'sip', 'freeswitch'})
 
 
+# Faxes checked in one access transaction by the list methods (``visible_jobs``): about 3 ms each on a Mac, so a
+# chunk holds the write lock about 60 ms.
+LIST_CHUNK = 20
+
+
 def delivery_fields(row):
     """The delivery fields of a sent fax, with one sentence for an uncertain result that fits the route that carried
     it: the provider account for a fax service, the recipient for Faxbot's own trunk or engines. ``route_provider``
@@ -126,13 +131,21 @@ class AuthorizedFaxQueries:
             return self._record(row)
 
     def visible_jobs(self, actor, job_ids):
-        """``{job_id: record}`` for the faxes among ``job_ids`` this actor may read, checked in one transaction.
+        """``{job_id: record}`` for the faxes among ``job_ids`` this actor may read, in order.
 
         Each id gets exactly ``job``'s check; an id it refuses is left out, never explained, and does not hide
         the others. Anything other than a refusal (a revoked credential, unavailable storage) fails the whole call,
-        as it fails ``job``. Lists ask with this, so a page of up to 100 faxes takes the lock once, not per fax.
+        as it fails ``job``. Lists ask with this: ``LIST_CHUNK`` faxes share one transaction, so a page of 100
+        takes the lock 5 times, not 100, and never long enough to make other access checks wait out their
+        ``AccessStore.LOCK_TIMEOUT_MS`` (100 in one transaction held it about 300 ms on a Mac).
         """
         wanted = list(dict.fromkeys(job_ids))
+        found = {}
+        for start in range(0, len(wanted), LIST_CHUNK):
+            found.update(self._visible_jobs(actor, wanted[start:start + LIST_CHUNK]))
+        return found
+
+    def _visible_jobs(self, actor, wanted):
         with self._transaction() as (connection, now):
             visible = []
             for job_id in wanted:

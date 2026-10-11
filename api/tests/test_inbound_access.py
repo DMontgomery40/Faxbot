@@ -164,6 +164,11 @@ def test_a_list_of_received_faxes_is_checked_in_one_transaction_with_the_same_vi
     monkeypatch.setattr(iw.queries.store, 'transaction', counted)
     assert iw.queries.visible_items(alice, ids) == one_by_one
     assert len(opened) == 1
+    # Checked a few faxes per transaction (LIST_CHUNK): the same faxes, in the same order, across the boundaries.
+    from api.app.access import inbound
+    monkeypatch.setattr(inbound, 'LIST_CHUNK', 2)
+    assert iw.queries.visible_items(alice, ids) == one_by_one
+    assert len(opened) == 1 + 3  # six different ids, two to a transaction
     # A temporary password refuses each fax, so nothing is shown; a revoked credential fails the whole list.
     iw.update('access_users', 'alice', password_change_required=1)
     assert iw.queries.visible_items(alice, ids) == []

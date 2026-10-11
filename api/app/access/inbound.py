@@ -273,6 +273,10 @@ def _received_on(record, placed):
     return found
 
 
+# Received faxes checked in one access transaction by ``visible_items``, as ``queries.LIST_CHUNK`` for sent faxes.
+LIST_CHUNK = 20
+
+
 class AuthorizedInboundQueries:
     """Inbound projections in the shape of the existing /inbound API (InboundFaxOut)."""
 
@@ -332,13 +336,20 @@ class AuthorizedInboundQueries:
             return self._with_acquisition(connection, [row])[0]
 
     def visible_items(self, actor, inbound_ids):
-        """The ids among ``inbound_ids`` of received faxes this actor may read, in order, checked in one transaction.
+        """The ids among ``inbound_ids`` of received faxes this actor may read, in order.
 
         Each id gets exactly ``item``'s check; an id it refuses, or a fax that no longer exists, is left out, never
         explained, and does not hide the others. Anything other than a refusal fails the whole call, as it fails
-        ``item``. Lists ask with this, so a page of up to 100 faxes takes the lock once, not per fax.
+        ``item``. Lists ask with this: ``LIST_CHUNK`` faxes share one transaction, so a page of 100 takes the lock
+        5 times, not 100, and never long enough to make other access checks wait out their lock timeout.
         """
         wanted = list(dict.fromkeys(inbound_ids))
+        found = []
+        for start in range(0, len(wanted), LIST_CHUNK):
+            found += self._visible_items(actor, wanted[start:start + LIST_CHUNK])
+        return found
+
+    def _visible_items(self, actor, wanted):
         faxes = self.tables['inbound_faxes']
         with self.store.transaction() as connection:
             now = self._clock()

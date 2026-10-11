@@ -191,7 +191,24 @@ def test_a_list_of_faxes_is_checked_in_one_transaction_with_the_same_visibility(
     opened = _locks(queries, monkeypatch)
     assert queries.visible_jobs(aw.actor, ids) == expected
     assert len(opened) == 1
-    assert queries.visible_jobs(aw.actor, []) == {} and len(opened) == 2
+    assert queries.visible_jobs(aw.actor, []) == {} and len(opened) == 1
+
+
+def test_a_full_page_is_checked_twenty_faxes_per_transaction_with_the_same_visibility(aw, queries, monkeypatch):
+    """100 ids take the lock 5 times, never once for long (Q.LIST_CHUNK); faxes she may not read sit on both sides
+    of a chunk boundary and are still left out, and the order is kept."""
+    assert Q.LIST_CHUNK == 20
+    for index in range(30):
+        aw.outbound.accept(aw.actor, aw.snapshot.active, {**aw.job, 'id': f'fax{index:02d}'})
+    for hidden in ('fax19', 'fax20', 'fax00'):
+        aw.update('access_resources', _resource_id(aw, hidden), parent_id='personal-bob')
+    ids = [f'fax{index:02d}' for index in range(30)] + ['second', 'new'] + [f'gone{index:02d}' for index in range(68)]
+    assert len(ids) == 100
+    expected = _one_by_one(queries, aw.actor, ids)
+    assert list(expected) == [f'fax{index:02d}' for index in range(1, 30) if index not in (19, 20)] + ['new']
+    opened = _locks(queries, monkeypatch)
+    assert queries.visible_jobs(aw.actor, ids) == expected
+    assert len(opened) == 5
 
 
 def test_one_refused_fax_does_not_hide_the_others(aw, queries):
