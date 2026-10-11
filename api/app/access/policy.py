@@ -339,6 +339,37 @@ class AccessControl:
             resource.c.kind.in_(self._scope_kinds(permission)),
             self._authority_predicate(context, source, permission, resource, parent))
 
+    def _coverage_many_query(self, context, source, permissions, resource_id, kinds):
+        """``_coverage_query`` for several permissions sharing the scope ``kinds``, in one query: one row for each
+        permission it would find. The same predicate, with the permission a column of a list of literals instead of
+        one literal; ``_authority_predicate`` branches only on the source, never on the permission."""
+        resource, parent, tree, valid = self._resource_query()
+        literals = [sa.select(sa.literal(permission, sa.String()).label('permission_id'))
+                    for permission in sorted(permissions)]
+        wanted = (sa.union_all(*literals) if len(literals) > 1 else literals[0]).subquery('wanted')
+        return sa.select(wanted.c.permission_id).select_from(tree.join(wanted, sa.true())).where(
+            valid, resource.c.id == resource_id, resource.c.kind.in_(kinds),
+            self._authority_predicate(context, source, wanted.c.permission_id, resource, parent))
+
+    @_safe_storage
+    def grantable_on(self, connection, actor, resource: ResourceRef, *, now):
+        """The permissions ``actor`` may grant at ``resource``: exactly those for which ``can_grant_on`` with that one
+        permission at ``resource`` is allowed, worked out in at most four queries (one per scope kind) after one
+        check of the credential, instead of one ``can_grant_on`` per permission, each checking the credential again
+        (/auth/me asked 38 times inside the access write transaction)."""
+        source = self._current_source_on(connection, actor, now)
+        self.store.require_lock_on(connection)
+        if source.reset_required or not self._valid_ref(resource):
+            return frozenset()
+        groups = {}
+        for permission in sorted(PERMISSIONS):
+            groups.setdefault(self._scope_kinds(permission), []).append(permission)
+        found = set()
+        for kinds, permissions in groups.items():
+            found.update(connection.execute(
+                self._coverage_many_query(actor, source, permissions, resource.id, kinds)).scalars())
+        return frozenset(found)
+
     @_safe_storage
     def scope_projection_on(self, connection, permissions: frozenset[str], resource: ResourceRef):
         """Project known role members onto a valid grant scope, without granting authority.
