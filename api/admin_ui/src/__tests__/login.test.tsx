@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import App from '../App';
 import AdminAPIClient, { TRANSPORT_REFUSED } from '../api/client';
-import { backend } from '../test/server';
+import { backend, server } from '../test/server';
 
 function type(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -124,6 +125,46 @@ describe('console sign-in', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
     expect(screen.getByText('Ada Admin')).toBeTruthy();
+  });
+
+  describe('a busy server never signs a valid session out', () => {
+    const BUSY = 'The server is busy. Try again in a moment.';
+    const busy = (headers: Record<string, string> = {}) => HttpResponse.json(
+      { detail: 'Access service is temporarily unavailable.' }, { status: 503, headers });
+
+    for (const path of ['/auth/context', '/auth/me']) {
+      it(`asks ${path} once more after its Retry-After and lands signed in`, async () => {
+        backend.state.session = { principalId: 'p_admin' };
+        let refused = 0;
+        server.use(http.get(path, () => { refused += 1; return busy({ 'Retry-After': '0' }); }, { once: true }));
+        render(<App />);
+        expect(await screen.findByText('Ada Admin')).toBeTruthy();
+        expect(refused).toBe(1);
+        expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
+        expect(screen.queryByText(BUSY)).toBeNull();
+      });
+    }
+
+    it('says the server is busy in place, never the sign-in form, when it is still busy, and Try again signs in',
+      async () => {
+        backend.state.session = { principalId: 'p_admin' };
+        // No Retry-After, as Faxbot's own 503 sends: the console waits 1 second before asking again.
+        server.use(http.get('/auth/context', () => busy(), { once: true }),
+          http.get('/auth/context', () => busy(), { once: true }));
+        render(<App />);
+        expect(await screen.findByText(BUSY, {}, { timeout: 4000 })).toBeTruthy();
+        expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
+        expect(backend.state.session).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+        expect(await screen.findByText('Ada Admin')).toBeTruthy();
+      });
+
+    it('still shows sign-in for a session the server refuses', async () => {
+      backend.state.session = null;
+      render(<App />);
+      await screen.findByRole('heading', { name: 'Sign in' });
+      expect(screen.queryByText(BUSY)).toBeNull();
+    });
   });
 
   it('returns to sign-in when the session ends', async () => {

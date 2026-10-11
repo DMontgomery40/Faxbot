@@ -1,8 +1,11 @@
-"""Route decisions and cost capture against real durable delivery stores."""
+"""Route decisions and cost capture against real durable delivery stores, and the shared reflection they use."""
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
+import gc
+import threading
 from uuid import uuid4
+import weakref
 
 import pytest
 import sqlalchemy as sa
@@ -12,8 +15,10 @@ from api.tests.test_schema import database
 from api.app.outbound_worker import OutboundWorker, SubmissionReceipt, PreparationFailure
 from api.app.routing.capture import CostRecorder
 from api.app.routing.costs import RateCard, parse_amount
+from api.app.routing.database import DeliveryStoreError, reflect
 from api.app.routing.store import RouteStore, RoutingConflict, RoutingInputError
 from api.app.routing.transport import DirectRefused, RoutedTransport
+from api.app.schema import create_database_engine, upgrade_schema
 
 
 CAPTURED = datetime(2026, 10, 3)
@@ -87,7 +92,6 @@ def test_seed_waits_for_a_rate_card_save_in_progress(routes, tmp_path):
     so it only runs after the save commits, sees the table is not empty, and stops.
     """
     import json
-    import threading
     import time
     from api.app.routing.database import write_transaction
     from api.app.routing.seed import load_cards
@@ -270,7 +274,6 @@ async def test_direct_route_goes_first_and_only_a_definite_refusal_falls_back(
 
 
 def signalwire_installation(database, tmp_path):
-    from api.app.schema import upgrade_schema
     from api.app.config_store import ConfigurationStore
     from api.app.config_values import ConfigurationValues
     from api.app.config_profiles import ProviderConfiguration
@@ -453,3 +456,101 @@ def test_the_configured_sip_preset_comes_from_active_settings():
         assert _configured_sip_preset() == 'telnyx'
     with use_configuration(ConfigurationValues.from_environment({})):
         assert _configured_sip_preset() == ''
+
+
+# -- the shared reflection (routing/database.reflect): once per database, again after a schema change -------------
+
+def _reflections(monkeypatch):
+    """The tables reflected from here on: MetaData.reflect and autoload_with both go through reflect_table."""
+    from sqlalchemy.engine import reflection
+    found, real = [], reflection.Inspector.reflect_table
+
+    def counted(self, table, *args, **kwargs):
+        found.append(table.name)
+        return real(self, table, *args, **kwargs)
+    monkeypatch.setattr(reflection.Inspector, 'reflect_table', counted)
+    return found
+
+
+def test_tables_are_reflected_once_per_database_and_names(database, monkeypatch):
+    """Stores and readers call reflect on every request (one Capabilities read made about 90 calls); only the first
+    call for the same names on a database reflects. A connection always reflects: it may be inside a migration."""
+    upgrade_schema(database)
+    reflected = _reflections(monkeypatch)
+    first = reflect(database, RouteStore.TABLES)
+    assert set(RouteStore.TABLES) <= set(reflected)
+    reflected.clear()
+    again = reflect(database, RouteStore.TABLES)
+    assert reflected == []
+    assert list(again) == list(RouteStore.TABLES) and all(again[name] is first[name] for name in again)
+    # Each caller gets its own dict, so one that changes it changes nobody else's.
+    again.pop('fax_jobs')
+    assert 'fax_jobs' in reflect(database, RouteStore.TABLES)
+    RouteStore(database)
+    assert reflected == []
+    # Other names are reflected once too.
+    reflect(database, ('fax_jobs',))
+    assert 'fax_jobs' in reflected
+    reflected.clear()
+    reflect(database, ('fax_jobs',))
+    assert reflected == []
+    with database.connect() as connection:
+        reflect(connection, ('fax_jobs',))
+    assert 'fax_jobs' in reflected
+
+
+def test_a_table_not_migrated_yet_is_missing_every_time_until_its_migration(database):
+    """Some readers learn that a migration has not run yet from reflect's refusal; a refusal is never kept."""
+    for _ in range(2):
+        with pytest.raises(DeliveryStoreError):
+            reflect(database, ('fax_jobs',))
+    upgrade_schema(database)
+    assert 'id' in reflect(database, ('fax_jobs',))['fax_jobs'].c
+
+
+def test_a_schema_change_on_the_same_database_is_seen_on_the_next_call(database):
+    """Migrations run at start-up, before Faxbot serves, but a table is never read as it was before one, even one
+    another process runs: a migration's DDL and its alembic_version row change together (the stamp PostgreSQL
+    reads), and SQLite's schema_version changes with any DDL."""
+    upgrade_schema(database)
+    assert 'synthetic_note' not in reflect(database, ('fax_jobs',))['fax_jobs'].c
+    assert 'synthetic_note' not in RouteStore(database).jobs.c
+    with database.begin() as connection:
+        connection.exec_driver_sql('ALTER TABLE fax_jobs ADD COLUMN synthetic_note VARCHAR(20)')
+        connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'synthetic_next'")
+    assert 'synthetic_note' in reflect(database, ('fax_jobs',))['fax_jobs'].c
+    assert 'synthetic_note' in RouteStore(database).jobs.c
+
+
+def test_threads_reading_at_once_share_one_set_of_tables(database):
+    """The first reads after start come from several request threads at once; however many of them reflect, every
+    caller ends up with the same Tables."""
+    upgrade_schema(database)
+    start, found = threading.Barrier(6), []
+
+    def read():
+        start.wait()
+        found.append(reflect(database, RouteStore.TABLES))
+    threads = [threading.Thread(target=read) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(found) == 6
+    assert all(tables[name] is found[0][name] for tables in found for name in RouteStore.TABLES)
+
+
+def test_each_database_keeps_its_own_tables_and_lets_them_go_with_its_engine(tmp_path, monkeypatch):
+    """Keyed by engine: another database reflects its own tables, and an engine that is dropped (a test's, or one
+    replaced when the installation moves its database) is not kept alive by what was reflected for it."""
+    engines = [create_database_engine('sqlite:///' + str(tmp_path / f'{name}.db')) for name in ('one', 'two')]
+    list(map(upgrade_schema, engines))
+    reflected = _reflections(monkeypatch)
+    one, two = (reflect(engine, ('fax_jobs',))['fax_jobs'] for engine in engines)
+    assert one is not two and reflected.count('fax_jobs') == 2
+    gone = weakref.ref(engines[1])
+    engines[1].dispose()
+    del engines[1], two
+    gc.collect()
+    assert gone() is None
+    engines[0].dispose()

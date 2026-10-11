@@ -60,7 +60,8 @@ def domain(provider) -> str:
 # -- settings ------------------------------------------------------------------------------------------------
 
 def _table(db):
-    return sa.Table('power_sources', sa.MetaData(), autoload_with=db)
+    from .routing.database import reflect
+    return reflect(db, ('power_sources',))['power_sources']
 
 
 def settings(db) -> dict | None:

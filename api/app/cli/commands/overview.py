@@ -44,6 +44,9 @@ NOT_READY_TEXT = {
     'receive': 'Faxbot is not ready to receive faxes',
     'both': 'Faxbot is not ready to send or receive faxes',
 }
+# What to do about sent faxes with an uncertain result, whichever routes carried them (as the console says it).
+UNCERTAIN_DETAIL = ('Check with each recipient, or in your provider account for faxes a fax service sent, before you '
+                    'send any of them again.')
 
 
 def read_sources(api, reads=SOURCES):
@@ -107,7 +110,7 @@ def attention(sources):
         if jobs.get('reconciliation_required'):
             add('uncertain', 'serious', 'Sent faxes with an uncertain result', jobs['reconciliation_required'],
                 'faxbot faxes sent list --status reconciliation_required', serious=True,
-                detail='Check your provider account before you send any of them again.')
+                detail=UNCERTAIN_DETAIL)
         if jobs.get('recent_failures'):
             add('failed', 'failed', 'Sent faxes that failed in the last 24 hours', jobs['recent_failures'],
                 'faxbot faxes sent list --status failed --hours 24')
@@ -180,7 +183,8 @@ def attention_lines(view):
 
 # Read only with settings:read; a key without it is told so for each block.
 VALUE_SOURCES = (
-    ('capabilities', '/routing/capabilities', None),
+    # Without what advice and charge checks found: the Overview never shows it, and counting it is slow.
+    ('capabilities', '/routing/capabilities', {'findings': 'false'}),
     ('savings', '/routing/savings', None),
     ('sending', '/routing/recommendations/sending', None),
     ('facts', '/routing/recommendations/facts', None),

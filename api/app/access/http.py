@@ -2,6 +2,7 @@
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
+import logging
 from typing import Literal
 
 import sqlalchemy as sa
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import settings
 from ..config_runtime import run_lifecycle_step
+from ..log_safety import cause_text, frames_text
 from .auth_work import AuthenticationBusyError
 from .authentication import AuthenticationThrottledError
 from .credentials import InvalidCredentialInputError
@@ -40,15 +42,22 @@ def utcnow():
 
 
 def private_operation(operation):
-    """Never propagate SQL parameters or a backend exception to the transport."""
+    """Never propagate SQL parameters or a backend exception to the transport.
+
+    The swallowed exception is logged once as a warning naming the operation, with the class of each exception
+    in its chain, the SQL statement (placeholders only) and the traceback's frames, but no exception message:
+    on these tables a message or parameter can be a password hash or a session or key token."""
+    name = f"{getattr(operation, '__module__', None) or '?'}.{getattr(operation, '__qualname__', None) or '?'}"
+
     @wraps(operation)
     def wrapped(*args, **kwargs):
         try:
             return operation(*args, **kwargs)
         except AccessError:
             raise
-        except Exception:
-            pass
+        except Exception as error:
+            logging.getLogger(__name__).warning('Access operation %s could not finish: %s\n%s', name,
+                                                cause_text(error), frames_text(error))
         raise AccessUnavailableError()
     return wrapped
 
@@ -97,6 +106,8 @@ async def access_error_response(request, error):
         status, message = 400, 'Invalid credential input.'
     else:
         status, message = 503, 'Access service is temporarily unavailable.'
+        # Usually a moment's database contention: the console asks once more after this.
+        headers['Retry-After'] = '1'
     return JSONResponse({'detail':message}, status_code=status, headers=headers)
 
 

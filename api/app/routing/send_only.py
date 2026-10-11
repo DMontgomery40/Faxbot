@@ -165,13 +165,14 @@ def _rental(values, preset):
 def _received(engine, number, since):
     if engine is None:
         return 0
+    from .database import DeliveryStoreError, reflect
     try:
-        table = sa.Table('sip_call_records', sa.MetaData(), autoload_with=engine)
+        table = reflect(engine, ('sip_call_records',))['sip_call_records']
         with engine.connect() as connection:
             return int(connection.scalar(sa.select(sa.func.count()).select_from(table).where(
                 table.c.direction == 'inbound', sa.or_(table.c.did == number, table.c.called == number),
                 table.c.started_at >= since)) or 0)
-    except sa.exc.SQLAlchemyError:
+    except (sa.exc.SQLAlchemyError, DeliveryStoreError):
         return 0
 
 

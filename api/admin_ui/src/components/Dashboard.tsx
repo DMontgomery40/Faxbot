@@ -34,7 +34,8 @@ import { spendingLines, spendingTotalText } from './delivery/spendingSummary';
 import { providerLabel } from '../providerLabels';
 import NeedsAttention from './overview/NeedsAttention';
 import {
-  attentionView, loadAttentionSources, NOT_READY_TEXT, notReadyFor, settle, type AttentionSources, type Loaded,
+  attentionView, loadAttentionSources, NOT_READY_TEXT, notReadyFor, settle, UNCERTAIN_DETAIL, type AttentionSources,
+  type Loaded,
 } from './overview/attention';
 import {
   blockState, clockText, connectNext, everydayLines, nextImprovements, resultLines, STALE_AFTER_MS, staleText,
@@ -190,7 +191,8 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
     }
     void settle(client.getSavingsMechanisms(), clock).then(setMechanisms);
     const [capabilities, savings, sending, facts] = await Promise.all([
-      settle(client.getCapabilities(), clock),
+      // Without what advice and charge checks found: the Overview never shows it, and counting it is slow.
+      settle(client.call<Capabilities>({ method: 'GET', path: '/routing/capabilities?findings=false' }), clock),
       settle(client.getSavings(), clock),
       settle(client.getSendingRecommendations(), clock),
       settle(client.call<FactAdvice>({ method: 'GET', path: '/routing/recommendations/facts' }), clock),
@@ -387,7 +389,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
                     </Box>
                     {(health.jobs.reconciliation_required ?? 0) > 0 && (
                       <Typography variant="caption" color={warningTextColor} sx={{ display: 'block', mt: 1 }}>
-                        Check your provider account before resending faxes that need review.
+                        {UNCERTAIN_DETAIL}
                       </Typography>
                     )}
                   </CardContent>

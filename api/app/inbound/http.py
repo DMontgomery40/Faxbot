@@ -246,15 +246,21 @@ def receiving_account(provider, path, path_key=None):
     otherwise every provider's address is open and checks its own secret. After that, each address serves one
     account: ``/<provider>-inbound/<key>`` that account, ``/<provider>-inbound`` the default receiving account
     of that provider, else its first account, else its only receiving account.
+
+    The fax engines' hand-over (``sip``) is also open whenever the saved settings receive over the trunk
+    (``sip_handover.receives_over_trunk``), whichever provider receives too: a fax the engine already took must
+    not wait on another provider's choice or on the variable that only seeded the first start.
     """
     from .. import accounts
     from ..config import configuration_values
+    from .sip_handover import receives_over_trunk
     if not settings.inbound_enabled:
         raise HTTPException(404, detail='Inbound not enabled')
     values = configuration_values()
     if path_key is None and not accounts.extra_receiving(values):
         # With no inbound provider set up yet, no provider's receiving route is active.
-        if (os.getenv('FAX_INBOUND_BACKEND') or not active_inbound()) and active_inbound() != provider:
+        if ((os.getenv('FAX_INBOUND_BACKEND') or not active_inbound()) and active_inbound() != provider
+                and not (provider == 'sip' and receives_over_trunk(values))):
             _blocked(path)
         account = accounts.original_path_account(values, provider)
         if not account.enabled:
@@ -266,9 +272,12 @@ def receiving_account(provider, path, path_key=None):
     return account
 
 
-def _require_route(provider, path):
-    """The original-address gate (the SSL Fax engine's hand-over uses it too)."""
-    return receiving_account(provider, path)
+def handover_account(path, payload):
+    """The trunk account a fax engine's hand-over (Asterisk's or the SSL Fax engine's) is for: the trunk the
+    hand-over names, else the first trunk. 404 with an audit row when that trunk does not receive."""
+    from ..config import configuration_values
+    from .sip_handover import receiving_trunk
+    return receiving_account('sip', path, receiving_trunk(configuration_values(), payload))
 
 
 def _own_values(account):
@@ -667,10 +676,7 @@ async def _sinch_inbound(request, path_key):
 @router.post('/_internal/asterisk/inbound')
 def asterisk_inbound(request: Request, payload: dict = Body(...),
                      x_internal_secret: Optional[str] = Header(default=None)):
-    from .sip_handover import receiving_trunk
-    from ..config import configuration_values
-    trunk = receiving_trunk(configuration_values(), payload)
-    receiving_account('sip', '/_internal/asterisk/inbound', trunk)
+    handover_account('/_internal/asterisk/inbound', payload)
     if not settings.asterisk_inbound_secret:
         raise HTTPException(401, detail='Internal secret not configured')
     if not hmac.compare_digest((x_internal_secret or '').encode(), settings.asterisk_inbound_secret.encode()):

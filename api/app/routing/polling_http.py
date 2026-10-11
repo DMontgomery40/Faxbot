@@ -28,6 +28,7 @@ import sqlalchemy as sa
 
 from ..access.route_policy import require_permission
 from ..config_runtime import run_lifecycle_step
+from ..log_safety import loggable
 from . import polling
 from .database import DeliveryStoreError
 from .schedule_http import _engine, _number, _values
@@ -52,8 +53,9 @@ async def _collect_due(app):
         return
     try:
         started = await polling.collect_due(engine, values, ami_client, seal=polling.PollSeal(runtime.manager.store))
-    except (DeliveryStoreError, sa.exc.SQLAlchemyError):
-        logging.getLogger(__name__).warning('Timed fax collection could not read its settings.')
+    except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+        logging.getLogger(__name__).warning('Timed fax collection could not read its settings.',
+                                            exc_info=loggable(error))
         return
     if started:
         from ..audit import audit_event

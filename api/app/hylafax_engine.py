@@ -71,6 +71,14 @@ NOT_SET_UP = "Faxbot's fax engine starts when you select Apply and connect."
 LINES_NOT_READY = "Faxbot's fax engine is still starting, so this fax was sent as an ordinary fax."
 ASTERISK_NOT_CURRENT = ("Faxbot's fax engine is waiting for the phone connection to restart, "
                         'so this fax was sent as an ordinary fax.')
+# A fax whose sender chose the engine (``POST /fax`` ``engine``; ``choose(requested=...)``).
+CHOSE_BUILTIN = 'You chose the built-in engine for this fax.'
+CHOSE_ENGINE = 'You chose the SSL Fax engine for this fax; it places the call when it is running.'
+CHOSE_ENGINE_NOT_READY = ('You chose the SSL Fax engine for this fax, but it is not running, so the built-in engine '
+                          'sent it.')
+CHOSE_ENGINE_STARTING = ('You chose the SSL Fax engine for this fax, but it is still starting, so the built-in '
+                         'engine sent it.')
+REQUESTED_ENGINES = ('auto', 'builtin', 'hylafax')
 # Engine states for the trunk page and System diagnostics.
 STOPPED = "Faxbot's fax engine is not running, so faxes are sent the ordinary way."
 STARTING = "Faxbot's fax engine is still starting."
@@ -595,14 +603,41 @@ def engine_t38_failed(at=None) -> bool:
         audit_event('sslfax_engine_audio_chosen', backend='sip', reason='no_fax_signal')
     except Exception:
         pass
+    _sync_soon(settings)
+    return True
+
+
+def engine_t38_restored() -> bool:
+    """An engine call on audio fax heard no fax machine either while the engine was on audio fax: the engine
+    goes back to T.38 from the next call on. True when it had been on audio fax.
+
+    A carrier that moves fax calls to T.38 itself (Telnyx) hangs up an audio call whose T.38 request nothing
+    answers, so audio fax can fail on every call. Should T.38 fail again, the engine goes to audio again:
+    it alternates instead of staying on a mode that fails, and each failed fax takes its next route.
+    """
+    from .config import settings
+    try:
+        if not engine_t38_off(settings) or not clear_engine_t38(settings):
+            return False
+    except OSError:
+        logging.getLogger(__name__).warning('Faxbot could not put its fax engine back on T.38.')
+        return False
+    from .audit import audit_event
+    audit_event('sslfax_engine_t38_restored', backend='sip', reason='no_fax_signal_on_audio')
+    _sync_soon(settings)
+    return True
+
+
+def _sync_soon(values) -> None:
+    """Start sync_engine_t38 on the running event loop; without one (a command-line tool), Apply and connect
+    syncs it."""
     try:
         from .ami import ami_client
-        task = asyncio.get_running_loop().create_task(sync_engine_t38(settings, ami_client))
+        task = asyncio.get_running_loop().create_task(sync_engine_t38(values, ami_client))
         _pending_tasks.add(task)
         task.add_done_callback(_pending_tasks.discard)
     except RuntimeError:
-        pass  # No event loop (a command-line tool): Apply and connect syncs it.
-    return True
+        pass
 
 
 _pending_tasks: set = set()
@@ -664,10 +699,26 @@ def recipient_limits(engine, number):
     return hylafax_records.safely(hylafax_records.records_for(engine).recipient_settings, number)
 
 
-async def choose(values, *, members=False, ami=None) -> EngineChoice:
-    """Which engine places this call, and why when it is the built-in one. No call is placed here."""
+async def choose(values, *, members=False, ami=None, requested=None) -> EngineChoice:
+    """Which engine places this call, and why when it is the built-in one. No call is placed here.
+
+    ``requested``: the engine the sender chose for this fax. ``builtin`` always gets the built-in engine;
+    ``hylafax`` gets this engine when it is ready and otherwise the built-in engine, as with no choice, with a
+    sentence that says the choice could not be kept; ``auto`` or None chooses as before. Faxes sent together in one
+    call always go on the built-in engine.
+    """
     if members:
         return EngineChoice('builtin', SENDING_TOGETHER)
+    if requested == 'builtin':
+        return EngineChoice('builtin', CHOSE_BUILTIN)
+    choice = await _choose(values, ami=ami)
+    if requested == 'hylafax' and choice.engine == 'builtin':
+        starting = choice.reason in (LINES_NOT_READY, ASTERISK_NOT_CURRENT)
+        return EngineChoice('builtin', CHOSE_ENGINE_STARTING if starting else CHOSE_ENGINE_NOT_READY)
+    return choice
+
+
+async def _choose(values, *, ami=None) -> EngineChoice:
     if not engine_conf_path(values).is_file():
         status = read_status(values)
         return EngineChoice('builtin', NOT_SET_UP if status.state != 'absent' else NOT_RUNNING)
@@ -959,6 +1010,8 @@ NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
 _REASONS = (
     (re.compile(r'busy', re.IGNORECASE), 'The fax did not go through: the line was busy.'),
     (re.compile(r'no answer', re.IGNORECASE), 'The fax did not go through: no one answered.'),
+    # Phase B training never succeeded (E105, E137, E156): no page was sent.
+    (re.compile(r'fail\w* to train', re.IGNORECASE), 'The fax machines could not agree on a speed; no page was sent.'),
     # "No response to MPS/EOP/PPS/...": a page went out and its confirmation never came back.
     (re.compile(r'no response to', re.IGNORECASE), NOT_CONFIRMED),
     (re.compile(r'no carrier|no remote fax|not a fax', re.IGNORECASE),
@@ -972,8 +1025,13 @@ _REASONS = (
 # mismatch (E013), and no T.30 answer within T1 (E102 receiving, E126 sending). After any other ending
 # the pages may have arrived: npages counts only confirmed pages, and "No response to EOP" (E151) follows
 # a page the other machine may well have printed.
+# Phase B training that never succeeded: "Failure to train modems" (E105), "Failure to train remote modem at
+# 2400 bps or minimum speed" (E137) and "Unspecified failure to train with receiver" (E156). The other machine
+# may have named itself (its CSI) first, but no page data follows failed training, so these end before fax
+# data even after that exchange (#73: HP's test line, 10 October 2026).
+_TRAINING_FAILED = frozenset({'E105', 'E137', 'E156'})
 _BEFORE_FAX_DATA = frozenset({'E001', 'E002', 'E003', 'E004', 'E005', 'E007', 'E008', 'E009', 'E010', 'E011',
-                              'E013', 'E102', 'E126'})
+                              'E013', 'E102', 'E126'}) | _TRAINING_FAILED
 _BEFORE_FAX_DATA_TEXT = re.compile(r'busy|no answer|no carrier', re.IGNORECASE)
 
 
@@ -1020,15 +1078,34 @@ def exchanged(payload: dict) -> bool:
                 or _text64(payload, 'data_format_b64', 32))
 
 
-def ended_before_fax_data(payload: dict, status_text: str) -> bool:
-    """Whether the engine's own code (or, without one, its words) says the call ended before any fax data."""
+def _status_code(payload: dict, status_text: str) -> str:
+    """The engine's own code (``E156``), from the result or, without it, from its words; '' when none."""
     code = payload.get('status_code') if isinstance(payload.get('status_code'), str) else ''
     if not code:
         found = re.search(r'\{(E[0-9]{3})\}', status_text or '')
         code = found.group(1) if found else ''
+    return code
+
+
+def ended_before_fax_data(payload: dict, status_text: str) -> bool:
+    """Whether the engine's own code (or, without one, its words) says the call ended before any fax data."""
+    code = _status_code(payload, status_text)
     if code:
         return code in _BEFORE_FAX_DATA
     return bool(_BEFORE_FAX_DATA_TEXT.search(status_text or ''))
+
+
+def never_trained(payload: dict) -> bool:
+    """Whether the call sent no page data, for certain: its session log was read (the engine reports the session
+    time only from it), and the session agreed no speed and no coding and opened no SSL Fax connection. No page
+    goes before a training succeeds (CFR) or an SSL Fax connection opens, and bin/notify reports the speed and
+    coding only after "TRAINING succeeded" in the log, or over SSL Fax. It holds whatever the engine's code
+    (E103, E104, E127, E136, E137, E156: sendTraining's endings). A retrain after the other machine asked for one
+    (RTN) trained first, so the engine reports what it agreed; without the session log (no session time) nothing
+    shows the call never trained. Both stay unconfirmed."""
+    seconds = payload.get('session_seconds')
+    return (isinstance(seconds, int) and not isinstance(seconds, bool) and payload.get('sslfax') is not True
+            and not _text64(payload, 'signal_rate_b64', 32) and not _text64(payload, 'data_format_b64', 32))
 
 
 def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
@@ -1036,7 +1113,7 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
 
     ``done`` is a delivered fax. A job that never dialed failed for certain,
     and so did a call that ended before any fax data (busy, no answer, no fax
-    machine, no T.30 answer; see _BEFORE_FAX_DATA): another route may send it.
+    machine, no T.30 answer, training that never succeeded; see _BEFORE_FAX_DATA): another route may send it.
     With some pages confirmed it failed and is never sent again by itself
     (``partly_sent``). Every other ending after a dial may have delivered pages
     that were never confirmed, so it waits for a person (uncertain, category
@@ -1058,7 +1135,8 @@ def result_outcome(payload: dict) -> tuple[str, str | None, str | None]:
         if why == 'failed':
             if pages:
                 return 'failed', failure_sentence(status_text, pages), 'partly_sent'
-            if not exchanged(payload) and ended_before_fax_data(payload, status_text):
+            # A call that never trained sent no page, even after the other machine named itself.
+            if never_trained(payload) or (not exchanged(payload) and ended_before_fax_data(payload, status_text)):
                 return 'failed', failure_sentence(status_text, 0), None
             return UNCERTAIN, NOT_CONFIRMED, 'pages_unconfirmed'
     return UNCERTAIN, None, None

@@ -218,3 +218,23 @@ def publish_as(client, headers, document):
     published = client.post('/routing/rules/publish', headers=headers, json={
         'expected_active_revision': active, 'expected_draft_version': saved.json()['version'], 'note': 'Synthetic'})
     assert published.status_code == 200, published.text
+
+
+def test_send_names_the_route_a_label_rule_chose(ruled_cli):
+    """#71: on acceptance `faxbot send --label partner-trunk-test` printed "Planned route HumbleFax" while the
+    label's rule sent the fax by Telnyx. The send output names what the fax's own decision chose; without the
+    label, the number's recommended route as before."""
+    from api.tests.test_cli import BOOTSTRAP
+    cli, tmp_path = ruled_cli
+    admin = {'X-API-Key': BOOTSTRAP}
+    assert cli.client.put('/routing/rate-cards', headers=admin, json={'cards': [HUMBLEFAX, PHAXIO]}).status_code == 200
+    first = cli.client.get('/routing/destinations/' + US, headers=admin).json()['recommended_routes'][0]
+    chosen, label = (PHAXIO, 'Phaxio') if first['route'] != 'phaxio' else (HUMBLEFAX, 'HumbleFax')
+    publish_as(cli.client, admin, {'format': 1, 'labels': ['partner-trunk-test'], 'routes': [
+        rule('r-trunk', {'use': chosen['provider_id']}, {'labels': ['partner-trunk-test']})]})
+    document = tmp_path / 'note.txt'
+    document.write_text('Synthetic page\n')
+    labelled = _cli_ok(cli('send', US, str(document), '--label', 'partner-trunk-test'))
+    assert f'Planned route {label}' in labelled and f"Planned route {first['label']}" not in labelled
+    plain = _cli_ok(cli('send', US, str(document)))
+    assert f"Planned route {first['label']}" in plain

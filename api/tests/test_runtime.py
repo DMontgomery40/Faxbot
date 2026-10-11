@@ -173,7 +173,7 @@ async def test_api_lifespan_closes_ami_and_does_not_duplicate_callbacks(isolated
     client = AMIClient()
     monkeypatch.setattr(main, "ami_client", client)
     monkeypatch.setattr(main, "providerHasTrait", lambda *args: True)
-    monkeypatch.setattr(main, "_handle_fax_result", results.put_nowait)
+    monkeypatch.setattr(main, "_on_fax_result", results.put_nowait)
     monkeypatch.setenv("FAX_DISABLED", "false")
     monkeypatch.setenv("ASTERISK_AMI_HOST", "127.0.0.1")
     monkeypatch.setenv("ASTERISK_AMI_PORT", str(server.sockets[0].getsockname()[1]))
@@ -575,3 +575,121 @@ def test_startup_without_the_fax_engine_still_serves_the_console(isolated_instal
     finally:
         if asterisk:
             asterisk.close()
+
+
+class _ListeningAsterisk:
+    """A manager port that accepts the login, reports the first trunk as registered, answers every other action
+    with an error, and keeps the name of each action it was sent."""
+
+    def __init__(self):
+        import socketserver
+        import threading
+        self.actions = []
+        outer = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.wfile.write(b'Asterisk Call Manager/9.0.0\r\n')
+                data = b''
+                while True:
+                    while b'\r\n\r\n' not in data:
+                        chunk = self.rfile.read1(4096)
+                        if not chunk:
+                            return
+                        data += chunk
+                    block, data = data.split(b'\r\n\r\n', 1)
+                    fields = dict(line.split(': ', 1) for line in block.decode().split('\r\n') if ': ' in line)
+                    action, tag = fields.get('Action', ''), fields.get('ActionID', '')
+                    outer.actions.append(action)
+                    if action == 'Login':
+                        reply = 'Response: Success\r\nMessage: Authentication accepted\r\n\r\n'
+                    elif action == 'PJSIPShowRegistrationsOutbound':
+                        reply = (f'Response: Success\r\nActionID: {tag}\r\nEventList: start\r\n\r\n'
+                                 f'Event: OutboundRegistrationDetail\r\nActionID: {tag}\r\n'
+                                 'ObjectName: trunk-registration\r\nStatus: Registered\r\n'
+                                 'Transport: trunk-transport-udp\r\n\r\n'
+                                 f'Event: OutboundRegistrationDetailComplete\r\nActionID: {tag}\r\n'
+                                 'EventList: Complete\r\n\r\n')
+                    else:
+                        reply = f'Response: Error\r\nActionID: {tag}\r\nMessage: Not in this test\r\n\r\n'
+                    self.wfile.write(reply.encode())
+
+        self.server = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _sending_off_with_a_trunk(monkeypatch, installation, asterisk, *, beside):
+    """Sending off, the SIP trunk as provider, and the manager port of ``asterisk``; ``beside``: that Asterisk
+    shares Faxbot's data folder, as in the Docker Compose install (it writes its start marker there)."""
+    from app import sip_http, stun
+    bootstrap = 'synthetic-runtime-bootstrap'
+    for name, value in {'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'true', 'ASTERISK_AMI_HOST': '127.0.0.1',
+                        'ASTERISK_AMI_PORT': str(asterisk.port), 'ASTERISK_AMI_USERNAME': 'synthetic-runtime',
+                        'ASTERISK_AMI_PASSWORD': 'synthetic-runtime-password', 'SIP_TRUNK_PRESET': 'telnyx',
+                        'SIP_TRUNK_USERNAME': 'faxbotuser', 'SIP_TRUNK_PASSWORD': 'synthetic-Trunk-Pass!42',
+                        'API_KEY': bootstrap, 'REQUIRE_API_KEY': 'true', 'PUBLIC_API_URL': 'https://testserver',
+                        'MAX_REQUESTS_PER_MINUTE': '0', 'FAXBOT_CONSOLE_ORIGINS': 'https://testserver'}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(stun, 'probe', lambda servers, **_: None)
+    monkeypatch.setattr(sip_http, '_probes', {})
+    if beside:
+        marker = Path(installation['FAX_DATA_DIR']) / 'asterisk' / 'engine-started'
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text('1791180000\n')
+    return {'X-API-Key': bootstrap}
+
+
+def test_with_sending_off_faxbot_still_checks_the_trunk_and_dials_nothing(isolated_installation, monkeypatch):
+    """#69: a new trunk's registration is checked through Faxbot before sending is turned on. The manager
+    connection starts while sending is off; sending stays off (the fax is held, nothing is dialled)."""
+    import time
+    from fastapi.testclient import TestClient
+    from app.ami import ami_client
+    from app.outbound_store import OutboundStore
+    from api.tests.test_work_http import pdf
+    asterisk = _ListeningAsterisk()
+    headers = _sending_off_with_a_trunk(monkeypatch, isolated_installation, asterisk, beside=True)
+    try:
+        with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
+            deadline = time.monotonic() + 10
+            while not ami_client._connected.is_set() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            status = client.get('/admin/sip/status', headers=headers).json()
+            assert (status['asterisk_connected'], status['registration']) == (True, 'registered'), status
+            sent = client.post('/fax', headers=headers, data={'to': '+15555550123'},
+                               files={'file': ('synthetic.pdf', pdf('Synthetic page'), 'application/pdf')})
+            assert sent.status_code in (200, 202), sent.text
+            delivery = OutboundStore(client.app.state.configuration_runtime.manager.store)
+            assert delivery.claim('synthetic-runtime-worker') is None
+            assert client.get('/fax/' + sent.json()['id'], headers=headers).json()['delivery_state'] == 'held'
+        assert 'Login' in asterisk.actions and 'Originate' not in asterisk.actions
+    finally:
+        asterisk.close()
+
+
+def test_with_sending_off_and_no_asterisk_beside_it_faxbot_never_reaches_for_one(isolated_installation, monkeypatch,
+                                                                                 caplog):
+    """The test runs use sending off with SIP settings and no Asterisk: no connection is tried, nothing waits
+    for one and nothing is logged about one."""
+    from fastapi.testclient import TestClient
+    from app.ami import ami_client, ENGINE_NOT_IN_USE
+    asterisk = _ListeningAsterisk()
+    headers = _sending_off_with_a_trunk(monkeypatch, isolated_installation, asterisk, beside=False)
+    try:
+        with caplog.at_level('WARNING'):
+            with TestClient(main.app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
+                status = client.get('/admin/sip/status', headers=headers).json()
+                assert status['asterisk_connected'] is False
+                assert ami_client._connection_task is None and ami_client.engine_message() == ENGINE_NOT_IN_USE
+        assert asterisk.actions == []
+        assert not [record for record in caplog.records if 'AMI' in record.getMessage()
+                    or 'manager login' in record.getMessage()]
+    finally:
+        asterisk.close()

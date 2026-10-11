@@ -68,6 +68,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
 * `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
+* `--engine ENGINE`: For a call over your SIP trunk, the fax engine that places it: auto (Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax engine when it is running, else the built-in engine).  [default: auto]
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -356,6 +357,7 @@ $ faxbot savings predict [OPTIONS]
 * `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
 * `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
 * `--file <file>`: Price this document (PDF or plain text) instead: Faxbot measures each fax coding on its own pages. --pages, --layout and --resolution then come from the document.
+* `--engine ENGINE`: With --file: the fax engine you would choose for the fax (as faxbot send --engine): auto, builtin or hylafax. A call over your SIP trunk is then measured as that engine sends it.  [default: auto]
 * `--help`: Show this message and exit.
 
 ### `faxbot savings analysis`
@@ -1781,7 +1783,7 @@ $ faxbot faxes expected [OPTIONS] COMMAND [ARGS]...
 * `match`: Link a received fax to an expected fax by...
 * `cancel`: Cancel an expected fax that is no longer...
 * `done-elsewhere`: Record that an expected fax was completed...
-* `conflict`: Decide about a row the import changed...
+* `conflict`: Decide about an expected fax the import...
 * `report`: What is still missing, what is overdue,...
 * `export`: Download an expected fax&#x27;s evidence as a...
 * `import`: Import open work from another system as...
@@ -1956,7 +1958,7 @@ $ faxbot faxes expected done-elsewhere [OPTIONS] {code}
 
 #### `faxbot faxes expected conflict`
 
-Decide about a row the import changed without a new revision.
+Decide about an expected fax the import changed without marking it as a new version.
 
 **Usage**:
 

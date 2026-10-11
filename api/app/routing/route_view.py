@@ -20,6 +20,7 @@ import sqlalchemy as sa
 
 from ..rules import model, text
 from . import envelope as envelopes, holds as hold_store
+from .database import reflect
 
 
 REAPPLY_LIMIT = 1000
@@ -111,8 +112,8 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
     zone = getattr(values, 'time_zone', '') or None if values is not None else None
     names = _scope_names(engine)
     label = lambda key: text.account_label(key, accounts)  # noqa: E731
-    attempts_t = sa.Table('outbound_attempts', sa.MetaData(), autoload_with=engine)
-    costs_t = sa.Table('delivery_attempt_costs', sa.MetaData(), autoload_with=engine)
+    tables = reflect(engine, ('outbound_attempts', 'delivery_attempt_costs'))
+    attempts_t, costs_t = tables['outbound_attempts'], tables['delivery_attempt_costs']
     with engine.connect() as connection:
         t = envelopes.tables(connection)
         rows = [dict(row) for row in connection.execute(
@@ -164,8 +165,25 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
         sentence = None
     trace = _trace(engine, pinned, accounts, names, rules)
     return {'job_id': job_id, 'sentence': sentence, 'attempts': attempts, 'hold': hold_view, 'trace': trace,
+            'planned': planned_route(decision, accounts) if decision is not None else None,
             'page_layout': pinned.envelope.page_layout if pinned is not None else None,
             'dial': text.dial_sentence(decision, pinned.facts.destination) if decision is not None else None}
+
+
+def planned_route(decision, accounts=()):
+    """The route the fax's own decision (labels, mailbox and workflow rules included) sends it by first, as
+    `faxbot send` names it; None when no rule chose one and Faxbot picks the cheapest reliable route."""
+    envelope = decision.envelope
+    if envelope.local:
+        return 'This Faxbot'
+    if envelope.require_direct:
+        return 'Direct delivery'
+    if decision.route.kind == 'automatic' or envelope.mode == 'automatic' or not envelope.accounts:
+        return None
+    names = [text.account_label(key, accounts) for key in envelope.accounts]
+    if envelope.mode == 'cheapest' and len(names) > 1:
+        return f'The cheapest reliable of {text._join(names)}'
+    return names[0]
 
 
 def _plan_fax(cards, key, cost):

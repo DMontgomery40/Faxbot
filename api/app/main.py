@@ -56,7 +56,7 @@ from .config_secrets import ConfigurationSecretError
 from .provider_catalog import ProviderCatalogError, validate_http_provider_document
 from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
-from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL
+from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL, engine_request_recorder
 from .outbound_worker import OutboundWorker
 from .analysis.http import router as analysis_router
 from .analysis.store import AnalysisStore
@@ -132,6 +132,8 @@ from .codec.send import combine as codec_combine
 from .diagnostics_report import router as diagnostics_router
 from .batching.transport import BatchingTransport
 from .batching import acceptance as batching_acceptance, results as batching_results
+from . import engine_results
+from .database_busy import busy_cause, retry_when_busy
 import logging
 
 # How long startup gives Asterisk to accept Faxbot's manager login before the
@@ -161,15 +163,17 @@ async def lifespan(application: FastAPI):
             try:
                 owns_ami = await _initialize_runtime(tasks)
                 if owns_ami:
-                    ami_client.on_fax_result(_handle_fax_result)
-                    ami_client.on_originate_response(_handle_originate_response)
+                    # Saved on the results thread in arrival order, never on the event loop (engine_results.py).
+                    ami_client.on_fax_result(_on_fax_result)
+                    ami_client.on_originate_response(_on_originate_response)
                     sip_calls.attach(ami_client, runtime.manager.store.engine)
                     # A T.38 call whose fax data never came back switches new calls to audio fax.
                     sip_fax_mode.attach(ami_client, runtime)
                     tasks.append(asyncio.create_task(ami_client.connect(), name="faxbot-ami-connect"))
                     # Start without the fax engine rather than lock people out of the
                     # console that fixes it; the client keeps retrying in the background.
-                    if not await ami_client.settle(AMI_STARTUP_WAIT_SECONDS):
+                    # With sending off no fax waits for it, so startup does not either.
+                    if not settings.fax_disabled and not await ami_client.settle(AMI_STARTUP_WAIT_SECONDS):
                         logging.getLogger(__name__).warning(ami_client.engine_message())
                 async with AsyncExitStack() as stack:
                     _mount_enabled_mcp(application, mounts)
@@ -187,6 +191,12 @@ async def lifespan(application: FastAPI):
                                         local=installation_route(application, runtime))))
                     tasks.append(asyncio.create_task(worker.run(), name='faxbot-outbound-worker'))
                     tasks.append(asyncio.create_task(OutboundPoller(delivery).run(), name='faxbot-outbound-poller'))
+                    # A built-in engine fax whose result never arrived waits for a person, never for ever.
+                    from .routing.background import repeat
+                    tasks.append(asyncio.create_task(repeat(
+                        lambda: engine_results.settle_lost_results(delivery), interval=300.0, initial_delay=60.0,
+                        warning='Faxes whose call result was lost could not be checked.'),
+                        name='faxbot-lost-results'))
                     # The task's frame keeps the startup values; the watcher reads the current ones.
                     tasks.append(asyncio.create_task(watch_public_address(
                         values_source=lambda: runtime.manager.store.read().active.values, runtime=runtime),
@@ -200,6 +210,8 @@ async def lifespan(application: FastAPI):
                 await asyncio.gather(*tasks, return_exceptions=True)
                 if owns_ami:
                     await ami_client.close()
+                    # Results Asterisk already sent are saved before the API stops.
+                    await engine_results.drain()
                 for mount in mounts:
                     application.router.routes.remove(mount)
                 close_audit_logger()
@@ -524,17 +536,23 @@ def _provider_requires_ami(provider_id: str) -> bool:
 
 
 def _ami_required() -> bool:
-    """Connect AMI when sending is on and Asterisk serves this installation.
+    """Connect AMI when Asterisk serves this installation.
 
     That is when the provider in either direction needs AMI, or when an extra
     outbound route (FAX_OUTBOUND_ROUTES) does: a fax routed to SIP as an
     alternative is sent through the same Asterisk connection.
+
+    Also while sending is off, so a new trunk can be checked (and Apply and
+    connect can restart Asterisk) before sending is turned on; then only when
+    Asterisk shares Faxbot's data folder (``sip_trunk.engine_managed``), so a
+    test run never reaches for an Asterisk that is not there. Sending itself
+    stays off: the outbound store claims no fax while sending is off.
     """
-    if settings.fax_disabled:
+    from . import sip_trunk
+    if not (providerHasTrait("any", "requires_ami")
+            or any(_provider_requires_ami(identity) for identity in settings.outbound_route_providers)):
         return False
-    if providerHasTrait("any", "requires_ami"):
-        return True
-    return any(_provider_requires_ami(identity) for identity in settings.outbound_route_providers)
+    return not settings.fax_disabled or sip_trunk.engine_managed(settings)
 
 
 def _deliveries():
@@ -578,9 +596,32 @@ def _native_partly_sent(event):
     return pages if pages > 0 else None
 
 
+def _on_fax_result(event):
+    """AMI listener: the result is saved on the results thread, after every result Asterisk sent before it."""
+    engine_results.submit(lambda: _handle_fax_result(event))
+
+
+def _on_originate_response(event):
+    engine_results.submit(lambda: _handle_originate_response(event))
+
+
+def _result_unsaved(error, job_id, attempt):
+    """Asterisk never sends a result again: say why this one was not kept (engine_results.settle_lost_results is
+    the safety net for the fax)."""
+    cause = busy_cause(error)
+    if cause is not None:
+        audit_event('native_result_requires_reconciliation', provider='sip', reason='database_busy')
+        logging.getLogger(__name__).error(
+            'The result of fax %s (attempt %s) was not saved because the database stayed busy; the fax shows as '
+            'sending until Faxbot marks it uncertain, 45 minutes after its call started.', job_id, attempt)
+    else:
+        audit_event('native_result_requires_reconciliation', provider='sip')
+
+
 def _handle_fax_result(event):
     fields = {str(key).lower(): value for key, value in event.items()}
     job_id, attempt = fields.get('jobid'), fields.get('attemptid')
+    what = f'the result of fax {job_id} (attempt {attempt})'
     try:
         # A call that carried several faxes gives each its own outcome from the confirmed pages.
         # A person or a voice line answered: the fax fails and takes no other route (sip_calls.PERSON_ANSWERED).
@@ -596,14 +637,17 @@ def _handle_fax_result(event):
         if pages is not None:
             # Pages went before the call broke: never sent again whole by itself (the SSL Fax engine's sentence).
             from .hylafax_engine import failure_sentence
-            _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                            error=failure_sentence('', pages), before_data=False, error_category='partly_sent')
+            retry_when_busy(lambda: _observe_native(
+                job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+                error=failure_sentence('', pages), before_data=False, error_category='partly_sent'),
+                what=what, idempotent=True)
             return
-        _observe_native(job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
-                        error=sip_calls.result_summary(event), before_data=native_event(event),
-                        **({'error_category': answered_by} if answered_by else {}))
-    except Exception:
-        audit_event('native_result_requires_reconciliation', provider='sip')
+        retry_when_busy(lambda: _observe_native(
+            job_id, attempt, status, 'sip', event_key='ami-result:' + str(status),
+            error=sip_calls.result_summary(event), before_data=native_event(event),
+            **({'error_category': answered_by} if answered_by else {})), what=what, idempotent=True)
+    except Exception as error:
+        _result_unsaved(error, job_id, attempt)
     finally:
         # After the outcome is kept: the station the far end answered as, kept when the fax went through, and
         # what the station check found (asterisk patch 0007, routing/stations.py). Storage trouble, in reaching
@@ -634,10 +678,12 @@ def _handle_originate_response(event):
                                                     failure_sentence=sip_calls.originate_summary(event)):
             return
         # The call was never placed: nothing reached a fax machine.
-        _observe_native(parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
-                        error=sip_calls.originate_summary(event), before_data=True)
-    except Exception:
-        audit_event('native_result_requires_reconciliation', provider='sip')
+        retry_when_busy(lambda: _observe_native(
+            parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
+            error=sip_calls.originate_summary(event), before_data=True),
+            what=f'the result of fax {parts[1]} (attempt {parts[2]})', idempotent=True)
+    except Exception as error:
+        _result_unsaved(error, parts[1], parts[2])
 
 
 app.include_router(sip_router)
@@ -1778,9 +1824,22 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
             'send_by': _send_by_view(row),
+            # The fax engine the sender chose for a call over the SIP trunk; None for Faxbot's own choice.
+            'engine_choice': await run_lifecycle_step(lambda: _engine_choice_view(job_id)),
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
             'waiting_reason': await run_lifecycle_step(
                 lambda: _waiting_reason(_configuration_manager().store, job_id, datetime.utcnow()))}
+
+
+def _engine_choice_view(job_id):
+    """{'engine', 'sentence'} for the engine the sender chose for this fax, or None (``outbound_store``)."""
+    from .hylafax_engine import CHOSE_BUILTIN, CHOSE_ENGINE
+    from .outbound_store import requested_engine_on
+    with _configuration_manager().store.engine.connect() as connection:
+        requested = requested_engine_on(connection, job_id)
+    if requested is None:
+        return None
+    return {'engine': requested, 'sentence': CHOSE_BUILTIN if requested == 'builtin' else CHOSE_ENGINE}
 
 
 def _send_by_view(row):
@@ -1948,6 +2007,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                 "goes in the header notice printed on every page instead, so that "
                                                 "page is not sent. Needs a header notice for your organization or "
                                                 "the mailbox; a recipient that needs a cover sheet still gets it."),
+                   engine: Literal['auto', 'builtin', 'hylafax'] = Form('auto', description="For a call over your "
+                                                "SIP trunk, the fax engine that places it: auto (Faxbot chooses, "
+                                                "the default), builtin (the built-in engine), or hylafax (the SSL "
+                                                "Fax engine when it is running, else the built-in engine). Faxes "
+                                                "sent together in one call always use the built-in engine."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -1986,6 +2050,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     if cover_in_header:
         # Only when chosen, so every earlier request keeps its fingerprint (header_notice.py).
         routing_intent['cover_in_header'] = True
+    if engine != 'auto':
+        # The engine the sender chose: the same key with another engine is another request.
+        routing_intent['engine'] = engine
     # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
     # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
@@ -2162,7 +2229,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         }, request_identity=request_identity, also=codec_combine(
             rules_acceptance.recorder(rules_plan, job_id, identity.actor, control=access.control),
             None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor),
-            None if notice_plan is None else header_notice.recorder(job_id, notice_plan))))
+            None if notice_plan is None else header_notice.recorder(job_id, notice_plan),
+            # The engine the sender chose, kept with the fax for every attempt (outbound_store).
+            engine_request_recorder(job_id, engine))))
     except IdempotentReplay as replay:
         discard()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))

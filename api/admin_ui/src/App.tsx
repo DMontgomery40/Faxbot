@@ -5,6 +5,7 @@ import {
   Toolbar,
   Typography,
   Alert,
+  Button,
   IconButton,
   Drawer,
   useMediaQuery,
@@ -58,15 +59,24 @@ function signInError(error: unknown, kind: 'password' | 'key'): string {
   return 'Sign-in failed. Try again.';
 }
 
-function bootNotice(error: unknown): string | undefined {
+// Only a refused credential ends a session: a 401, or a 403 for a browser session this connection does not allow
+// (sign-in then offers an API key). A busy or unreachable server keeps the session (the client has already asked
+// once more after Retry-After).
+function sessionRefused(error: unknown): boolean {
+  return error instanceof AdminAPIError && (error.status === 401 || error.status === 403);
+}
+
+function unavailableNotice(error: unknown): string {
   if (error instanceof TypeError) return 'Could not reach the server. Check the connection and try again.';
   if (error instanceof AdminAPIError && error.status === 503) return 'The server is busy. Try again in a moment.';
-  return undefined;
+  return 'The console could not load. Try again in a moment.';
 }
 
 type AuthState =
   | { phase: 'booting' }
   | { phase: 'signed-out'; notice?: string }
+  // The server could not answer just now; the session (if any) is kept and Try again asks again.
+  | { phase: 'unavailable'; client: AdminAPIClient; notice: string }
   | { phase: 'change-password'; client: AdminAPIClient; me: AuthMe }
   | { phase: 'ready'; client: AdminAPIClient; me: AuthMe; context: ConsoleContext };
 
@@ -96,23 +106,39 @@ function AppContent() {
     setAuth({ phase: 'ready', client, me, context });
   }, []);
 
+  // Establish, keeping the credential when the server is only busy or out of reach: a refused credential is
+  // thrown for the caller (sign-in), anything else shows the busy notice in place with Try again.
+  const settle = useCallback(async (client: AdminAPIClient, isCurrent: () => boolean = () => true) => {
+    try {
+      await establish(client);
+    } catch (error) {
+      if (sessionRefused(error)) throw error;
+      if (isCurrent()) setAuth({ phase: 'unavailable', client, notice: unavailableNotice(error) });
+    }
+  }, [establish]);
+
   useEffect(() => {
     try { window.localStorage.removeItem(LEGACY_KEY_STORAGE); } catch { /* storage unavailable */ }
     let cancelled = false;
-    establish(makeClient({ kind: 'session', csrf: null })).catch((error) => {
-      if (!cancelled) setAuth({ phase: 'signed-out', notice: bootNotice(error) });
+    settle(makeClient({ kind: 'session', csrf: null }), () => !cancelled).catch(() => {
+      if (!cancelled) setAuth({ phase: 'signed-out' });
     });
     return () => { cancelled = true; };
-  }, [establish, makeClient]);
+  }, [settle, makeClient]);
+
+  const tryAgain = useCallback((client: AdminAPIClient) => {
+    setAuth({ phase: 'booting' });
+    settle(client).catch(() => setAuth({ phase: 'signed-out' }));
+  }, [settle]);
 
   const passwordSignIn = useCallback(async (login: string, password: string) => {
     try {
       await AdminAPIClient.login(login, password);
-      await establish(makeClient({ kind: 'session', csrf: null }));
+      await settle(makeClient({ kind: 'session', csrf: null }));
     } catch (error) {
       throw new Error(signInError(error, 'password'));
     }
-  }, [establish, makeClient]);
+  }, [settle, makeClient]);
 
   const keySignIn = useCallback(async (apiKey: string) => {
     try {
@@ -122,18 +148,18 @@ function AppContent() {
       // Browser sessions are not allowed on this connection. Use the key
       // directly for this tab only; it is kept in memory and never stored.
       try {
-        await establish(makeClient({ kind: 'key', key: apiKey }));
+        await settle(makeClient({ kind: 'key', key: apiKey }));
       } catch (inner) {
         throw new Error(signInError(inner, 'key'));
       }
       return;
     }
     try {
-      await establish(makeClient({ kind: 'session', csrf: null }));
+      await settle(makeClient({ kind: 'session', csrf: null }));
     } catch (error) {
       throw new Error(signInError(error, 'key'));
     }
-  }, [establish, makeClient]);
+  }, [settle, makeClient]);
 
   const signOut = useCallback(async () => {
     const client = activeClient.current;
@@ -155,6 +181,19 @@ function AppContent() {
       }}>
         <CircularProgress aria-label="Loading" />
         <Typography variant="body1">Loading…</Typography>
+      </Box>
+    );
+  }
+
+  if (auth.phase === 'unavailable') {
+    const { client } = auth;
+    return (
+      <Box sx={{
+        minHeight: '100vh', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 2, px: 2,
+      }}>
+        <Alert severity="warning" data-testid="console-unavailable">{auth.notice}</Alert>
+        <Button variant="contained" onClick={() => tryAgain(client)}>Try again</Button>
       </Box>
     );
   }

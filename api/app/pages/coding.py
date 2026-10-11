@@ -677,11 +677,12 @@ def usable_codings(*, ecm, far_ecm=None, dis=None, views=(), configured='jbig', 
                   frozenset(coding for coding in failed if coding in left_out))
 
 
-def usable_for(engine, values, number, *, recipient=None, capability=None, now=None) -> Usable:
+def usable_for(engine, values, number, *, recipient=None, capability=None, now=None, requested=None) -> Usable:
     """``usable_codings`` for a call to ``number`` from the installation's records: the call's error correction
     (``hylafax_engine.call_settings``, your settings, the number's own limits and what engine learning turned
     on), the receiving machine's newest DIS and error correction, engine learning's calls to the number and
-    the compression it chose, and your compression setting. Unreadable records raise SQLAlchemy's error."""
+    the compression it chose, and your compression setting. Unreadable records raise SQLAlchemy's error.
+    ``requested``: the engine the sender chose for the fax (``measuring_tuning``)."""
     from .. import engine_learning as learning, hylafax_engine
     now = now or learning.utcnow()
     # Error correction is the same on either engine: your setting, the number's own limit, and what engine learning
@@ -705,7 +706,7 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
                            learned=learned)
     from dataclasses import replace
     tuning = measuring_tuning(values, engine, number, ecm=settings.ecm, far_ecm=far_ecm, max_rate=settings.max_rate,
-                              capability=capability)
+                              capability=capability, requested=requested)
     if tuning.engine == 'builtin' and 'JBIG' in found.codings:
         # The built-in engine places the call and has no JBIG: the pages are priced and requested in the codings
         # it sends (a measured JBIG would price the call below what it costs, and send it in MMR).
@@ -714,15 +715,17 @@ def usable_for(engine, values, number, *, recipient=None, capability=None, now=N
     return replace(found, tuning=tuning)
 
 
-def measuring_tuning(values, engine, number, *, ecm, far_ecm, max_rate, capability=None) -> Tuning:
+def measuring_tuning(values, engine, number, *, ecm, far_ecm, max_rate, capability=None, requested=None) -> Tuning:
     """The ``Tuning`` this call's pages are measured with: the SSL Fax engine when it is set up and running (it then
-    places the call, ``hylafax_engine.choose``), else the built-in engine; the MR schedule and tuned JBIG as
+    places the call, ``hylafax_engine.choose``), else the built-in engine, which also places every call whose sender
+    chose it (``requested`` 'builtin', ``POST /fax`` engine); the MR schedule and tuned JBIG as
     ``pages.tuning.for_call`` asks for them (tuned JBIG over SSL Fax only for a machine that took SSL Fax before);
     and, without error correction on both sides, the receiving machine's minimum scan line time at this call's
     speed, when on record."""
     from .. import hylafax_engine, hylafax_records
     from . import tuning as rules
-    running = (bool(getattr(values, 'fax_data_dir', None)) and hylafax_engine.engine_conf_path(values).is_file()
+    running = (requested != 'builtin' and bool(getattr(values, 'fax_data_dir', None))
+               and hylafax_engine.engine_conf_path(values).is_file()
                and hylafax_engine.read_status(values).state == 'running')
     chosen = rules.for_call(values, engine, number)
     sslfax = False

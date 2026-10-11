@@ -33,6 +33,22 @@ def scoped_key(client, scopes):
     return {'X-API-Key': response.json()['token']}
 
 
+def test_the_lists_costs_build_their_stores_once_not_per_request(client, monkeypatch):
+    """Every open console asks for the Sent and Received lists' costs once a minute; the stores behind them
+    (13 reflected tables) are built once, not on every request."""
+    from app.routing import http as routing_http
+    built, real = [], routing_http.RouteStore
+
+    def counted(engine, **options):
+        built.append(engine)
+        return real(engine, **options)
+    monkeypatch.setattr(routing_http, 'RouteStore', counted)
+    for _ in range(3):
+        assert client.get('/routing/fax-costs', headers=ADMIN, params={'ids': '0' * 32}).json() == {'costs': {}}
+        assert client.get('/routing/inbound-costs', headers=ADMIN, params={'ids': 'x'}).json() == {'costs': {}}
+    assert len(built) <= 1
+
+
 def test_shipped_rate_cards_are_in_place_before_the_first_request(client):
     """The seed finishes during startup, so a save right after start is never overwritten by it."""
     shipped = client.get('/routing/rate-cards', headers=ADMIN).json()['cards']

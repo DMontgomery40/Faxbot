@@ -6,6 +6,9 @@
 // Only a fingerprint of the number and document is stored, never the number or
 // file name themselves. If two different sends ever shared a fingerprint, the
 // server refuses the reused key for the different fax, so nothing is sent twice.
+// The fax engine the sender picked is kept too, so the retry is the same request.
+
+import type { FaxEngineRequest } from '../api/types';
 
 const STORAGE_KEY = 'faxbot_pending_send';
 export const PENDING_SEND_LIFETIME_MS = 24 * 60 * 60 * 1000;
@@ -16,7 +19,11 @@ export interface PendingSend {
   queueOnly: boolean;
   maxFileSizeBytes: number;
   createdAt: number;
+  // The fax engine the send asked for; absent for Faxbot's own choice.
+  engine?: Exclude<FaxEngineRequest, 'auto'>;
 }
+
+const ENGINES: ReadonlyArray<unknown> = ['builtin', 'hylafax'];
 
 // A small non-cryptographic hash (cyrb53), enough to recognize the same send.
 function hash(text: string): string {
@@ -70,5 +77,7 @@ export function loadPendingSend(fingerprint: string, now = Date.now()): PendingS
     clearPendingSend();
     return null;
   }
-  return pending.fingerprint === fingerprint ? pending as PendingSend : null;
+  if (pending.fingerprint !== fingerprint) return null;
+  // An engine this console does not know is left out rather than sent.
+  return { ...pending, engine: ENGINES.includes(pending.engine) ? pending.engine : undefined } as PendingSend;
 }

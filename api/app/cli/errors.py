@@ -46,6 +46,9 @@ _TRANSLATED = {
                            'to allow them.',
     'AUDIT_LOG_FILE not configured': 'The server does not keep an activity log file. Set AUDIT_LOG_FILE to keep one.',
     'v3 plugins feature disabled': 'Provider plugins are turned off on this installation.',
+    'Idempotency-Key already belongs to a different fax request.':
+        'This idempotency key was already used for a different fax. Use a new key, or send the same fax again with '
+        'the same choices.',
 }
 
 
