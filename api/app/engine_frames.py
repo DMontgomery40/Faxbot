@@ -410,15 +410,17 @@ def _when(call):
 
 
 def untrained(call) -> bool:
-    """A sent fax that reached the other fax machine and never trained at any speed it tried: it failed with no
-    page, after at least one training. The SSL Fax engine reports a speed only once a training succeeded
-    (hylafax/bin/negotiation), so a call with trainings and no speed never trained; the built-in engine counts
-    the FTT answers, so there every training it tried was refused. A call over SSL Fax trains no modem."""
+    """A sent fax whose receiver refused every speed it tried: it failed with no page, and each of its trainings
+    was answered with FTT (failure to train). Only the built-in engine counts FTT answers (patch 0004). A
+    training nobody answered is not a refusal: the control messages did not get through, at any speed (they
+    go at 300 bit/s), so a lower speed would not help; HP's test line on 11 October timed out on every one of
+    eight trainings (defect #49). The SSL Fax engine reports trainings but not their answers, so its calls
+    never count here."""
     trainings = call.get('trainings') or 0
     if call.get('status') != 'FAILED' or trainings < 1 or call.get('sslfax') or (call.get('pages') or 0) > 0:
         return False
-    if call.get('engine', 'builtin') == 'hylafax':
-        return not call.get('rate_lowest')
+    if call.get('engine', 'builtin') != 'builtin':
+        return False
     return (call.get('ftt') or 0) >= trainings
 
 
@@ -428,11 +430,11 @@ def learn_rate(calls):
     failing at the floor stops lowering it (the note says so). A later call that started higher and trained
     cleanly ends it.
 
-    A call that never trained at all (``untrained``) starts later calls one speed below where it started
-    (``rate_first``, else ``rate_start``: the speed the call was allowed to start at). Both engines step down
-    one speed for each refused training (spandsp's fallback sequence; HylaFAX+ Class1Send.c++ sendTraining), and
-    a receiver that gives up after a few refused trainings, as some do (HylaFAX+ says so there), hangs up
-    before the sender reaches the speeds it could take; starting lower reaches them in fewer trainings."""
+    A call whose receiver refused every speed it tried (``untrained``) starts later calls one speed below where
+    it started (``rate_first``, else ``rate_start``: the speed the call was allowed to start at). The engine
+    steps down one speed for each refused training (spandsp's fallback sequence), and a receiver that gives up
+    after a few refused trainings, as some do (HylaFAX+ Class1Send.c++ sendTraining says so), hangs up before
+    the sender reaches the speeds it could take; starting lower reaches them in fewer trainings."""
     trained = [call for call in calls
                if (call.get('rate_first') and call.get('rate_lowest')) or untrained(call)]
     state, reason, note, failing = None, '', '', []
@@ -452,7 +454,7 @@ def learn_rate(calls):
                         'its starting speed for it.')
             else:
                 state, failing = lower, []
-                reason = (f'A fax to this number failed to train at every speed it tried from {started:,} bit/s, '
+                reason = (f'The fax machine at this number refused every speed a fax tried from {started:,} bit/s, '
                           f'so Faxbot starts at {state:,} bit/s.')
             continue
         if state is None:
