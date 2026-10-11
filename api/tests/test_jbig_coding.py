@@ -208,6 +208,36 @@ def test_the_built_in_engine_is_never_priced_or_asked_for_jbig(installation, dat
     assert 'JBIG' not in usable.codings and usable.left_out['JBIG'] == coding.BUILTIN_NO_JBIG
 
 
+def test_a_fax_whose_sender_chose_the_built_in_engine_is_measured_as_it_sends_while_the_engine_runs(
+        installation, database, tmp_path):  # noqa: F811
+    """POST /fax engine=builtin: the built-in engine places the call even while the SSL Fax engine runs, so the pages
+    are measured and priced as it sends them (MH, MR or MMR, never JBIG); auto and hylafax stay as before."""
+    import json as json_module
+    from app import hylafax_engine
+    values = SimpleNamespace(**vars(KEEP_SHADING), fax_data_dir=str(tmp_path / 'faxdata'))
+    hylafax_engine.engine_conf_path(values).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.engine_conf_path(values).write_text('synthetic engine configuration\n')
+    hylafax_engine.status_path(values).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.status_path(values).write_text(json_module.dumps({'state': 'running', 'lines': 2}))
+    installation.record_observation(PEER, source='d' * 32, engine='hylafax', now=NOW,
+                                    values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1,
+                                            'codings': 'MH,MR,MMR,JBIG'})
+    capability = installation.capability(PEER)
+    chosen = coding.usable_for(database, values, PEER, capability=capability, requested='builtin')
+    assert chosen.tuning.engine == 'builtin'
+    assert 'JBIG' not in chosen.codings and chosen.left_out['JBIG'] == coding.BUILTIN_NO_JBIG
+    for requested in (None, 'auto', 'hylafax'):
+        usable = coding.usable_for(database, values, PEER, capability=capability, requested=requested)
+        assert usable.tuning.engine == 'hylafax' and 'JBIG' in usable.codings, requested
+    # Through the sending path: the job's kept choice reaches the measurement (pages/sending.permission_for).
+    from app.pages import sending
+    account = SimpleNamespace(provider_id='sip', mode='image', card=None)
+    permission = sending.permission_for(database, values, account, {'to_number': PEER, 'engine_request': 'builtin'})
+    assert permission.usable.tuning.engine == 'builtin' and 'JBIG' not in permission.usable.codings
+    automatic = sending.permission_for(database, values, account, {'to_number': PEER})
+    assert automatic.usable.tuning.engine == 'hylafax' and 'JBIG' in automatic.usable.codings
+
+
 def test_a_recorded_jbig_machine_gets_jbig_on_the_next_fax(installation, database, tmp_path,  # noqa: F811
                                                          ssl_fax_engine_places_calls):
     installation.record_observation(PEER, source='d' * 32, engine='hylafax', now=NOW,

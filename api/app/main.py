@@ -56,7 +56,7 @@ from .config_secrets import ConfigurationSecretError
 from .provider_catalog import ProviderCatalogError, validate_http_provider_document
 from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
-from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL
+from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL, engine_request_recorder
 from .outbound_worker import OutboundWorker
 from .analysis.http import router as analysis_router
 from .analysis.store import AnalysisStore
@@ -1824,9 +1824,22 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
             'send_by_call': bool(row.get('send_by_call')), 'urgent': bool(row.get('urgent')),
             # The send-by time and whether the fax may miss it (routing/schedule.py); None without one.
             'send_by': _send_by_view(row),
+            # The fax engine the sender chose for a call over the SIP trunk; None for Faxbot's own choice.
+            'engine_choice': await run_lifecycle_step(lambda: _engine_choice_view(job_id)),
             # Why it has not started yet, or why its number stays reserved (capacity.py); None otherwise.
             'waiting_reason': await run_lifecycle_step(
                 lambda: _waiting_reason(_configuration_manager().store, job_id, datetime.utcnow()))}
+
+
+def _engine_choice_view(job_id):
+    """{'engine', 'sentence'} for the engine the sender chose for this fax, or None (``outbound_store``)."""
+    from .hylafax_engine import CHOSE_BUILTIN, CHOSE_ENGINE
+    from .outbound_store import requested_engine_on
+    with _configuration_manager().store.engine.connect() as connection:
+        requested = requested_engine_on(connection, job_id)
+    if requested is None:
+        return None
+    return {'engine': requested, 'sentence': CHOSE_BUILTIN if requested == 'builtin' else CHOSE_ENGINE}
 
 
 def _send_by_view(row):
@@ -1994,6 +2007,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                 "goes in the header notice printed on every page instead, so that "
                                                 "page is not sent. Needs a header notice for your organization or "
                                                 "the mailbox; a recipient that needs a cover sheet still gets it."),
+                   engine: Literal['auto', 'builtin', 'hylafax'] = Form('auto', description="For a call over your "
+                                                "SIP trunk, the fax engine that places it: auto (Faxbot chooses, "
+                                                "the default), builtin (the built-in engine), or hylafax (the SSL "
+                                                "Fax engine when it is running, else the built-in engine). Faxes "
+                                                "sent together in one call always use the built-in engine."),
                    idempotency_key: Optional[str] = Header(default=None, alias='Idempotency-Key',
                        description='Optional key for replaying the same fax request; 1 to 128 printable ASCII characters without spaces.'),
                    identity=Depends(require_identity)):
@@ -2032,6 +2050,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
     if cover_in_header:
         # Only when chosen, so every earlier request keeps its fingerprint (header_notice.py).
         routing_intent['cover_in_header'] = True
+    if engine != 'auto':
+        # The engine the sender chose: the same key with another engine is another request.
+        routing_intent['engine'] = engine
     # The send-by time, as UTC (routing/schedule.py). A new fax's is refused below when it has passed or is
     # over a month away; a replay is read without that check, so it still finds its original fax.
     from .routing import schedule as fax_schedule
@@ -2208,7 +2229,9 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         }, request_identity=request_identity, also=codec_combine(
             rules_acceptance.recorder(rules_plan, job_id, identity.actor, control=access.control),
             None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor),
-            None if notice_plan is None else header_notice.recorder(job_id, notice_plan))))
+            None if notice_plan is None else header_notice.recorder(job_id, notice_plan),
+            # The engine the sender chose, kept with the fax for every attempt (outbound_store).
+            engine_request_recorder(job_id, engine))))
     except IdempotentReplay as replay:
         discard()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))

@@ -695,3 +695,49 @@ def test_the_dry_run_measures_each_coding_on_the_document_itself(client, tmp_pat
     too_big = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
                           files={'file': ('big.txt', b'x' * (11 * 1024 * 1024), 'text/plain')})
     assert too_big.status_code == 413 and too_big.json()['detail'] == 'File exceeds the configured upload limit.'
+
+
+@pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
+def test_the_dry_run_measures_a_document_as_the_engine_you_would_choose_sends_it(client, tmp_path,  # noqa: F811
+                                                                                 monkeypatch):
+    """POST /routing/predict engine (as on POST /fax): builtin is measured and priced as the built-in engine sends
+    the pages (no JBIG) even while the SSL Fax engine runs; left out, it is as before; anything else is a 422."""
+    from types import SimpleNamespace
+    import app.main as main_module
+    from app import hylafax_engine
+    from app.pages import coding
+    from app.pages.capability import records_for
+    values = main_module.app.state.configuration_runtime.manager.store.read().active.values
+    running = SimpleNamespace(fax_data_dir=values.fax_data_dir)
+    hylafax_engine.engine_conf_path(running).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.engine_conf_path(running).write_text('synthetic engine configuration\n')
+    hylafax_engine.status_path(running).parent.mkdir(parents=True, exist_ok=True)
+    hylafax_engine.status_path(running).write_text(json.dumps({'state': 'running', 'lines': 2}))
+    database = main_module.app.state.configuration_runtime.manager.store.engine
+    records_for(database).record_observation(NUMBER, source='d' * 32, engine='hylafax', now=datetime.utcnow(),
+                                             values={'max_length': 'unlimited', 'ecm': 1, 'fine': 1,
+                                                     'codings': 'MH,MR,MMR,JBIG'})
+    seen, real = [], coding.usable_for
+
+    def spy(*args, **kwargs):
+        found = real(*args, **kwargs)
+        seen.append((kwargs.get('requested'), found.tuning.engine, 'JBIG' in found.codings))
+        return found
+    monkeypatch.setattr(coding, 'usable_for', spy)
+    page = Image.new('L', (1700, 2200), 255)
+    ImageDraw.Draw(page).text((120, 105), 'Synthetic page', fill=0)
+    pdf = tmp_path / 'page.pdf'
+    page.save(pdf, 'PDF', resolution=200)
+
+    def post(**extra):
+        return client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER, **extra},
+                           files={'file': ('page.pdf', pdf.read_bytes(), 'application/pdf')})
+    chosen = post(engine='builtin')
+    assert chosen.status_code == 200, chosen.text
+    assert seen and all(entry == ('builtin', 'builtin', False) for entry in seen), seen
+    trunk = {route['route']: route for route in chosen.json()['routes']}.get('sip')
+    assert trunk is None or (trunk['coding'] or {}).get('coding') != 'JBIG'
+    seen.clear()
+    assert post().status_code == 200
+    assert seen and all(entry == (None, 'hylafax', True) for entry in seen), seen
+    assert post(engine='fast').status_code == 422

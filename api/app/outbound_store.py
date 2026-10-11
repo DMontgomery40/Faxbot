@@ -26,7 +26,8 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured', 'operator_settled'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured',
+    'engine_requested', 'operator_settled'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -187,6 +188,37 @@ def accepted_dial(connection, to_number, values):
     except Exception:
         return None, None
     return (number, approval_id) if number != to_number else (None, None)
+
+
+# The engine a sender chose for a fax over the SIP trunk (``POST /fax`` ``engine``): kept once, at acceptance, as an
+# ``engine_requested`` event in the fax's history, so every attempt (a retry, a claim after a restart) reads the
+# same choice (``load_dispatch``). ``auto`` keeps nothing: the engine is chosen as before.
+ENGINE_REQUESTS = ('builtin', 'hylafax')
+_ENGINE_EVENTS = sa.table('outbound_events', sa.column('id'), sa.column('job_id'), sa.column('attempt_id'),
+                          sa.column('kind'), sa.column('dedupe_key'), sa.column('details'), sa.column('created_at'))
+
+
+def engine_request_recorder(job_id, engine):
+    """The acceptance step (``AuthorizedOutbound.accept(also=...)``) that keeps the sender's engine choice; None for
+    ``auto``."""
+    if engine not in ENGINE_REQUESTS:
+        return None
+
+    def record(connection, now):
+        _event(connection, _ENGINE_EVENTS, job_id, 'engine_requested', now, details={'engine': engine},
+               dedupe_key='engine_requested')
+    return record
+
+
+def requested_engine_on(connection, job_id):
+    """The engine the sender chose for this fax (``builtin`` or ``hylafax``), or None for the automatic choice."""
+    details = connection.execute(sa.select(_ENGINE_EVENTS.c.details).where(
+        _ENGINE_EVENTS.c.job_id == job_id, _ENGINE_EVENTS.c.kind == 'engine_requested').limit(1)).scalar()
+    try:
+        engine = json.loads(details or '{}').get('engine')
+    except (ValueError, AttributeError):
+        return None
+    return engine if engine in ENGINE_REQUESTS else None
 
 
 def record_acceptance(connection, tables, job_id, *, held, now, to_number=None, values=None):
@@ -505,14 +537,17 @@ class OutboundStore:
     def load_dispatch(self, claim):
         """Read private submission inputs only while the preparation lease is held.
 
-        The job also carries the number choice kept at acceptance (``dial``) and
-        the number this attempt already recorded (``dialed_number``), if any.
+        The job also carries the number choice kept at acceptance (``dial``),
+        the number this attempt already recorded (``dialed_number``), if any,
+        and the engine its sender chose (``engine_request``: ``builtin``,
+        ``hylafax`` or None).
         """
         with self.configuration._locked() as connection:
             revision, profile = self._preparing(connection, claim, datetime.utcnow())
             job = connection.execute(sa.select(self.configuration.jobs).where(
                 self.configuration.jobs.c.id == claim.job_id)).mappings().one()
             job = dict(job)
+            job['engine_request'] = requested_engine_on(connection, claim.job_id)
             if 'dialed_number' in self.attempts.c:
                 job['dial'] = self._dial_state_on(connection, claim.job_id)
                 job['dialed_number'] = connection.scalar(sa.select(self.attempts.c.dialed_number).where(

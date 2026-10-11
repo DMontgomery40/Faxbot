@@ -233,6 +233,178 @@ async def test_engine_choice_says_why_the_built_in_engine_places_a_call(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_the_engine_a_sender_chose_for_one_fax_is_kept_or_said_why_not(tmp_path):
+    """POST /fax engine: builtin always gets the built-in engine; hylafax gets this engine when it is ready, else the
+    built-in engine as with no choice, with a sentence; auto chooses as before; sending together stays built-in."""
+    values = trunk_values(tmp_path)
+    choose, choice = hylafax_engine.choose, hylafax_engine.EngineChoice
+    # Not running: a hylafax choice goes on the built-in engine and says so; never waits, never fails.
+    assert await choose(values, ami=FakeAmi(), requested='hylafax') == choice('builtin',
+                                                                               hylafax_engine.CHOSE_ENGINE_NOT_READY)
+    assert await choose(values, ami=FakeAmi(), requested='builtin') == choice('builtin', hylafax_engine.CHOSE_BUILTIN)
+    running(tmp_path, values)
+    # Running: builtin still gets the built-in engine; hylafax and auto get this engine.
+    assert await choose(values, ami=FakeAmi(), requested='builtin') == choice('builtin', hylafax_engine.CHOSE_BUILTIN)
+    assert await choose(values, ami=FakeAmi(), requested='hylafax') == choice('hylafax')
+    assert await choose(values, ami=FakeAmi(), requested='auto') == choice('hylafax')
+    assert await choose(values, ami=FakeAmi(), requested=None) == choice('hylafax')
+    # Still starting: said as starting.
+    assert (await choose(values, ami=FakeAmi(ready=0), requested='hylafax')).reason == (
+        hylafax_engine.CHOSE_ENGINE_STARTING)
+    # Faxes sent together in one call go on the built-in engine whatever was chosen.
+    for requested in ('hylafax', 'builtin', 'auto'):
+        assert (await choose(values, members=True, ami=FakeAmi(), requested=requested)).reason == (
+            hylafax_engine.SENDING_TOGETHER)
+
+
+@pytest.fixture
+def chosen_store(tmp_path):
+    """A delivery store with one fax to the trunk whose sender chose an engine; ``accept(engine)`` adds one."""
+    from datetime import datetime
+    from uuid import uuid4
+    import sqlalchemy as sa  # noqa: F401
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.config_store import ConfigurationStore
+    from api.app.config_values import ConfigurationValues as StoreValues
+    from api.app.outbound_store import OutboundStore, engine_request_recorder
+    from api.app.schema import create_database_engine, upgrade_schema
+    database = create_database_engine('sqlite:///' + str(tmp_path / 'chosen.db'))
+    upgrade_schema(database)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    snapshot = configuration.initialize(StoreValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false'}),
+                                        actor='test', providers={'outbound': ProviderConfiguration(
+                                            'phaxio', credentials={'api_key': 'synthetic-key'})})
+
+    def accept(engine):
+        job_id, now = uuid4().hex, datetime.utcnow()
+        configuration.accept_outbound(snapshot.active, {'id': job_id, 'to_number': '+15551230009',
+                                                        'file_name': 'synthetic.pdf', 'tiff_path': '',
+                                                        'status': 'queued', 'pages': 1, 'created_at': now,
+                                                        'updated_at': now})
+        record = engine_request_recorder(job_id, engine)
+        if record is not None:
+            with database.begin() as connection:
+                record(connection, now)
+        return job_id
+    yield configuration, OutboundStore, accept
+    database.dispose()
+
+
+def test_the_engine_choice_survives_a_retry_and_a_claim_after_a_restart_and_the_call_honours_it(chosen_store,
+                                                                                               tmp_path):
+    """The choice is kept with the fax, so every attempt reads it (load_dispatch), including one claimed by a new
+    worker after a restart; the trunk call honours it: builtin while the engine runs, hylafax while it is down goes
+    built-in with its sentence, and faxes sent together go built-in."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from app import outbound_transport
+    configuration, OutboundStore, accept = chosen_store
+    job = accept('builtin')
+    first = OutboundStore(configuration)
+    claim = first.claim('worker-before-restart')
+    assert claim.job_id == job and first.load_dispatch(claim)[2]['engine_request'] == 'builtin'
+    # The worker stops (a restart); its lease runs out and a new worker claims the fax again.
+    after = OutboundStore(configuration)
+    after.recover_expired(now=datetime.utcnow() + timedelta(minutes=5))
+    again = after.claim('worker-after-restart')
+    assert again.job_id == job and again.attempt_id != claim.attempt_id
+    _, _, dispatched = after.load_dispatch(again)
+    assert dispatched['engine_request'] == 'builtin'
+    values = trunk_values(tmp_path)
+    running(tmp_path, values)
+    transport = SimpleNamespace(store=after, ami=FakeAmi())
+
+    def prepare(job_row, members=()):
+        call = SimpleNamespace(job_id=job, attempt_id=again.attempt_id, members=members)
+        return asyncio.run(outbound_transport.CapturedTransport._prepare_engine(
+            transport, values, call, job_row, str(tmp_path / 'synthetic.tiff')))
+    engine_job, choice, _, _ = prepare(dispatched)
+    assert engine_job is None and (choice.engine, choice.reason) == ('builtin', hylafax_engine.CHOSE_BUILTIN)
+    # Sending together always goes on the built-in engine.
+    _, choice, _, _ = prepare({**dispatched, 'engine_request': 'hylafax'}, members=(again, again))
+    assert (choice.engine, choice.reason) == ('builtin', hylafax_engine.SENDING_TOGETHER)
+    # The SSL Fax engine chosen while it is down: the built-in engine, and the sentence says why.
+    running(tmp_path, values, state='failed')
+    _, choice, _, _ = prepare({**dispatched, 'engine_request': 'hylafax'})
+    assert (choice.engine, choice.reason) == ('builtin', hylafax_engine.CHOSE_ENGINE_NOT_READY)
+    # Auto keeps nothing: the engine is chosen as before.
+    from api.app.outbound_store import requested_engine_on
+    automatic = accept('auto')
+    with configuration.engine.connect() as connection:
+        assert requested_engine_on(connection, automatic) is None
+        assert requested_engine_on(connection, job) == 'builtin'
+
+
+@pytest.fixture
+def engine_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for client in _serve(monkeypatch, tmp_path):
+        yield Cli(client)
+
+
+def test_post_fax_and_faxbot_send_keep_the_engine_choice_with_the_fax(engine_cli, tmp_path):
+    """POST /fax engine and faxbot send --engine: kept with the fax at acceptance, said in Sent details and in
+    faxbot faxes sent show; auto (the default) keeps nothing; anything else is refused."""
+    from api.tests.test_cli import BOOTSTRAP
+    cli, admin = engine_cli, {'X-API-Key': BOOTSTRAP}
+
+    def post(**extra):
+        return cli.client.post('/fax', headers=admin, data={'to': '+15551230001', 'queue_only': 'true', **extra},
+                               files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    for value, sentence in (('builtin', hylafax_engine.CHOSE_BUILTIN), ('hylafax', hylafax_engine.CHOSE_ENGINE)):
+        accepted = post(engine=value)
+        assert accepted.status_code == 202, accepted.text
+        job = accepted.json()['id']
+        view = cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()
+        assert view['engine_choice'] == {'engine': value, 'sentence': sentence}
+        assert sentence in ' '.join(cli('sent', 'show', job).stdout.split())
+    for extra in ({'engine': 'auto'}, {}):
+        job = post(**extra).json()['id']
+        assert cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()['engine_choice'] is None
+    refused = post(engine='fast')
+    assert refused.status_code == 422
+    # The same idempotency key with another engine is another request.
+    first = cli.client.post('/fax', headers={**admin, 'Idempotency-Key': 'engine-key'},
+                            data={'to': '+15551230001', 'queue_only': 'true', 'engine': 'builtin'},
+                            files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    other = cli.client.post('/fax', headers={**admin, 'Idempotency-Key': 'engine-key'},
+                            data={'to': '+15551230001', 'queue_only': 'true', 'engine': 'hylafax'},
+                            files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    assert first.status_code == 202 and other.status_code == 409
+    # The command line.
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230002', note, '--queue', '--engine', 'builtin')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Fax engine' in shown and hylafax_engine.CHOSE_BUILTIN in shown
+    plain = cli.json('send', '+15551230002', note, '--queue')
+    assert 'Fax engine' not in cli('sent', 'show', plain['id']).stdout
+    wrong = cli('send', '+15551230002', note, '--queue', '--engine', 'fast')
+    assert wrong.exit_code != 0 and 'Choose --engine auto, builtin or hylafax.' in wrong.stderr + wrong.stdout
+    # D20: after the call, the built-in engine's reason is the choice itself: said once, not twice. A choice the
+    # engine could not keep is said with what happened.
+    import app.main as main_module
+    from app.hylafax_records import records_for
+    database = main_module.app.state.configuration_runtime.manager.store.engine
+    records_for(database).record_call(direction='outbound', call_key='a' * 32, engine='builtin', job_id=sent['id'],
+                                      reason=hylafax_engine.CHOSE_BUILTIN, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert shown.count(hylafax_engine.CHOSE_BUILTIN) == 1
+    wanted = cli.json('send', '+15551230002', note, '--queue', '--engine', 'hylafax')
+    records_for(database).record_call(direction='outbound', call_key='b' * 32, engine='builtin', job_id=wanted['id'],
+                                      reason=hylafax_engine.CHOSE_ENGINE_NOT_READY, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', wanted['id']).stdout.split())
+    assert hylafax_engine.CHOSE_ENGINE in shown and hylafax_engine.CHOSE_ENGINE_NOT_READY in shown
+    # The same idempotency key for a different fax request: one plain sentence, never the server's own words.
+    first = cli('send', '+15551230002', note, '--queue', '--engine', 'builtin', '--idempotency-key', 'cli-engine')
+    assert first.exit_code == 0, first.stdout
+    other = cli('send', '+15551230002', note, '--queue', '--engine', 'hylafax', '--idempotency-key', 'cli-engine')
+    said = ' '.join((other.stdout + other.stderr).split())
+    assert other.exit_code != 0 and 'This idempotency key was already used for a different fax.' in said
+    assert 'Idempotency-Key already belongs' not in said
+
+
+@pytest.mark.asyncio
 async def test_a_call_the_engine_did_not_answer_restarts_it_and_the_trunk_page_says_why(tmp_path, monkeypatch):
     """Asterisk's FaxEngineMissed (a free line rang and did not answer): Faxbot asks the engine to start again
     (it reads the request once no call is up) and says what happened in one sentence for a day."""

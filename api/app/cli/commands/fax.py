@@ -41,6 +41,7 @@ EVENT_LABELS = {
     'repair_started': 'Sending only the missing pages directly to the partner',
     'repair_completed': 'Completed directly by the partner after the call broke',
     'repair_failed': 'The partner did not receive the missing pages',
+    'engine_requested': 'Fax engine chosen for this fax',
     'operator_settled': 'Result confirmed by a person'}
 RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot faxes received list --ids.'
 
@@ -210,8 +211,14 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                               help='The first page is a cover sheet: print its notice in the header '
                                                    'of every page instead and leave that page out. Needs a header '
                                                    "notice ('faxbot delivery identity notice set'); a recipient that "
-                                                   'needs a cover sheet still gets it.')):
+                                                   'needs a cover sheet still gets it.'),
+         engine: str = typer.Option('auto', '--engine', metavar='ENGINE',
+                                    help='For a call over your SIP trunk, the fax engine that places it: auto '
+                                         '(Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax '
+                                         'engine when it is running, else the built-in engine).')):
     """Send a fax. Faxbot accepts it and sends it in the background."""
+    if engine not in ('auto', 'builtin', 'hylafax'):
+        raise CliError('Choose --engine auto, builtin or hylafax.')
     api = state.api()
     warning = _first_send_warning(api, to, recipient)
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
@@ -231,6 +238,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['labels'] = list(label)
     if by:
         data['send_by'] = by
+    if engine != 'auto':
+        data['engine'] = engine
     if cover_in_header:
         data['cover_in_header'] = 'true'
         # As Send a fax offers the choice only when a notice applies: say which notice every page will carry.
@@ -384,6 +393,9 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
         route.append(('Send by', job['send_by']['sentence']))
     if job.get('send_by_call'):
         route.append(('Note', 'You asked for a real phone call through your carrier, even if the number is one of your own.'))
+    # The fax engine the sender chose for a call over the SIP trunk.
+    if (job.get('engine_choice') or {}).get('sentence'):
+        route.append(('Fax engine', job['engine_choice']['sentence']))
 
     # What the phone call negotiated (speed, compression, error correction), and what Faxbot changed for this
     # call from what it learned about the number, with why (engine learning).
@@ -409,9 +421,11 @@ def jobs_get(fax_id: str = typer.Argument(..., help='Fax ID.')):
                    + ([('Changed for this call', ' '.join(changes))] if changes else []))
         if line:
             out.line(line)
-        # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it.
-        if (job.get('fax_engine') or {}).get('sentence'):
-            out.line(job['fax_engine']['sentence'])
+        # Over the SIP trunk: SSL Fax's line, or why the built-in fax engine carried it; once, when it is the
+        # engine choice the Fax engine line already says.
+        engine_sentence = (job.get('fax_engine') or {}).get('sentence')
+        if engine_sentence and engine_sentence != (job.get('engine_choice') or {}).get('sentence'):
+            out.line(engine_sentence)
         # The layout the newest attempt kept (long pages, or the experimental encoded pages), then blank space left
         # out, standard resolution kept or shading lightened.
         for sentence in (job.get('page_layout') or {}).get('sentences') or []:
