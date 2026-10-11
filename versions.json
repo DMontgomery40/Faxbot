@@ -125,6 +125,13 @@
     "aliases": []
   },
   {
+    "version": "b6ad92e8c6deccf415209c15393349ca04c20242",
+    "title": "b6ad92e8c6deccf415209c15393349ca04c20242",
+    "aliases": [
+      "latest"
+    ]
+  },
+  {
     "version": "af4decea",
     "title": "af4decea",
     "aliases": []
@@ -417,9 +424,7 @@
   {
     "version": "1cee9243866c7735bef384c0c247371c1fd29ff9",
     "title": "1cee9243866c7735bef384c0c247371c1fd29ff9",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "0abecd77",
