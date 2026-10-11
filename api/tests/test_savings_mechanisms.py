@@ -459,11 +459,6 @@ def test_faxbot_savings_mechanisms_prints_the_map_by_stage(cli):
     assert [stage['title'] for stage in body['stages']] == [title for _, title in mechanisms.STAGES]
 
 
-# The one table these reads still reflect on every call: power.settings builds its Table with autoload_with each time
-# (app/power.py, another owner's module). Everything else is reflected once per database (routing/database.py).
-REFLECTED_EVERY_READ = {'power_sources'}
-
-
 def reflected_while(monkeypatch, module, name):
     """The tables reflected while ``module.name`` runs, counted in the thread that runs it, since the installation's
     background tasks build their own stores meanwhile. Every reflection, whether through MetaData.reflect or a Table
@@ -496,8 +491,7 @@ def test_a_second_read_of_the_map_reflects_no_tables(installation, monkeypatch):
         reflected = reflected_while(monkeypatch, mechanisms, 'evaluate')
         again = client.get('/routing/savings/mechanisms', headers=ADMIN)
         assert again.status_code == 200, again.text
-        assert set(reflected) <= REFLECTED_EVERY_READ, sorted(set(reflected) - REFLECTED_EVERY_READ)
-        assert len(reflected) <= len(REFLECTED_EVERY_READ)
+        assert reflected == []
     scenario(installation, then=read_again)
 
 

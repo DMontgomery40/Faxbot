@@ -156,7 +156,7 @@ def _read(engine, connection, operation):
     if connection is not None:
         return operation(connection, sa.Table(TABLE, sa.MetaData(), autoload_with=connection))
     with read_connection(engine) as opened:
-        return operation(opened, sa.Table(TABLE, sa.MetaData(), autoload_with=opened))
+        return operation(opened, reflect(engine, (TABLE,))[TABLE])
 
 
 def _latest(connection, table, number):

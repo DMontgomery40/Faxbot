@@ -32,7 +32,7 @@ from api.tests.test_cli import cli, server  # noqa: F401 (fixtures)
 from api.tests.test_config_env_secrets import (  # noqa: F401 (fixtures)
     ADMIN, database_url, installation)
 from api.tests.test_savings_mechanisms import (
-    AGREED, DID, JUNK, REFLECTED_EVERY_READ, TOLL_FREE_FOR, _fax, _navigation_pages, _record, reflected_while)
+    AGREED, DID, JUNK, TOLL_FREE_FOR, _fax, _navigation_pages, _record, reflected_while)
 
 API_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = API_ROOT / 'admin_ui' / 'src' / '__tests__' / 'capabilities.json'
@@ -845,8 +845,7 @@ def test_a_second_read_reflects_no_tables_and_reads_the_installation_once(instal
             built.clear()
             again = client.get('/routing/capabilities', headers=ADMIN, params=params)
             assert again.status_code == 200, again.text
-            assert set(reflected) <= REFLECTED_EVERY_READ, (params, sorted(set(reflected) - REFLECTED_EVERY_READ))
-            assert len(reflected) <= len(REFLECTED_EVERY_READ), params
+            assert reflected == [], params
             assert len(built) == 1, params
     scenario(installation, then=read_again)
 
