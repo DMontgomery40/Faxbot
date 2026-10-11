@@ -32,6 +32,7 @@ class ScreeningSync:
         self.synced_for = None  # the connection (connected_at) the list was last loaded on
         self.synced_at = 0.0
         self.drained_at = 0.0
+        self._built = None  # the ScreeningStore, once built (``_store``)
         ami.on_screened(lambda _event: self.wake(drain=True))
 
     def wake(self, *, sync=False, drain=False):
@@ -43,8 +44,14 @@ class ScreeningSync:
         return self.ami._connected.is_set() and self.synced_for == self.ami.connected_at and not self.dirty
 
     def _store(self):
+        """The screening store, built once per installation database: building it reflects its tables, which held
+        the event loop's worker threads on every sync and drain when it was built each time."""
         engine, _ = installation_engine(self.app)
-        return screening.ScreeningStore(engine) if engine is not None else None
+        if engine is None:
+            return None
+        if self._built is None or self._built.engine is not engine:
+            self._built = screening.ScreeningStore(engine)
+        return self._built
 
     async def step(self):
         if not self.ami._connected.is_set():
