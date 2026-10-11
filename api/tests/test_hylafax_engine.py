@@ -546,6 +546,52 @@ def test_a_send_whose_training_never_succeeded_failed_for_certain_after_the_othe
         'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
 
 
+# HP's test line +18884732963, 11 October 2026 03:19Z, as the SSL Fax engine reported it (defect #49): the job
+# file (doneq/q19) said "errorcode:E156" and "status:Unspecified failure to train with receiver ; too many
+# attempts to dial" (HylaFAX+ 7.0.11 takes "{E156}" out of status), and bin/notify read a "statuscode" field
+# that does not exist, so the result carried no code. The other machine named itself (CSI "HPFAX"), none of
+# eight trainings was answered, and the session log was read (87 seconds, bin/negotiation's summary below).
+HP_NEGOTIATION = {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': 8, 'compression': None,
+                  'resolution': None, 'ecm': None, 'session': 87, 'page_length': 'unlimited', 'page_width': 'A3',
+                  'fine': 1, 'remote_ecm': 0, 'scan_ms': 0, 'remote_codings': 'MH,MR', 'boundary_ms': None,
+                  'boundaries': None}
+
+
+def hp_result(**changes):
+    return result('failed', **{
+        'state': 8, 'pages': 0, 'total_pages': 1, 'dials': 0, 'total_dials': 1, 'total_tries': 1,
+        'status_b64': b64('Unspecified failure to train with receiver ; too many attempts to dial'),
+        'status_code': '', 'remote_station_b64': b64('HPFAX'), 'signal_rate_b64': '', 'data_format_b64': '',
+        'sslfax': False, 'sslfax_offered': False, 'sslfax_refused': False, 'transfer_seconds': None,
+        'session_seconds': 87, 'negotiation_b64': b64(json.dumps(HP_NEGOTIATION)), **changes})
+
+
+@pytest.mark.parametrize('code', ['', 'E156'], ids=['as-reported', 'with-errorcode'])
+def test_hps_send_that_never_trained_failed_for_certain(code):
+    """#82's rule needed the code, which never arrived: HP's result waited for a person, its call record kept no
+    status, and engine learning never saw the failure. A call that never trained sent no page, whatever the code
+    says; with bin/notify reading errorcode it now arrives too."""
+    assert hylafax_engine.result_outcome(hp_result(status_code=code)) == (
+        'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
+
+
+@pytest.mark.parametrize('changes', [
+    # A retrain after RTN: the call trained at 14,400 first and sent a page the other machine may have printed.
+    {'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR'), 'status_code': 'E156'},
+    {'data_format_b64': b64('2-D MR')},
+    # No session log: nothing shows the call never trained.
+    {'session_seconds': None, 'negotiation_b64': ''},
+    # Pages over SSL Fax train no modem.
+    {'sslfax': True, 'signal_rate_b64': b64('SSL Fax')},
+    # GotFreeFax, 11 October 03:22Z: trained at 14,400, then "No response to PPS repeated 3 times" after CTC.
+    {'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('1-D MH'), 'status_code': 'E147',
+     'status_b64': b64('No response to PPS repeated 3 times. ; too many attempts to dial'),
+     'remote_station_b64': b64('+1.888.293.3691'), 'session_seconds': 149},
+], ids=['retrain-after-rtn', 'coding-agreed', 'no-session-log', 'sslfax', 'after-ctc'])
+def test_a_send_that_trained_or_shows_no_session_log_stays_uncertain(changes):
+    assert hylafax_engine.result_outcome(hp_result(**changes)) == UNCONFIRMED
+
+
 @pytest.mark.parametrize('status, code', TRAINING)
 @pytest.mark.parametrize('trained, session', [
     ({'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR')}, 60),

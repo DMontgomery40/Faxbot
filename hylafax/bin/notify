@@ -45,7 +45,9 @@ ndials=$(digits ndials)
 totdials=$(digits totdials)
 tottries=$(digits tottries)
 status_text=$(field status)
-status_code=$(field statuscode | tr -cd 'A-Za-z0-9')
+# HylaFAX+ 7.0.11 keeps the code apart, as errorcode, and takes "{E156}" out of status (faxd/FaxRequest.c++,
+# writeQFile); there is no statuscode field.
+status_code=$(field errorcode | tr -cd 'A-Za-z0-9')
 csi=$(field csi)
 signalrate=$(field signalrate)
 dataformat=$(field dataformat)
