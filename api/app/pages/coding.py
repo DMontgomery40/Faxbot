@@ -264,7 +264,7 @@ def jbig_settings(pages, tools, *, tuned=False, check=False):
     def size(job):
         index, options, mx = job
         return _jbig_size(tools, pbms[index][0], pbms[index][1], options, mx)
-    workers = max(1, min(len(jobs), processors()))
+    workers = min(len(jobs), measuring_workers())
     if workers == 1:
         sizes = [size(job) for job in jobs]
     else:
@@ -433,8 +433,8 @@ def measure(raster_pages, *, codings=None, check=False, tuning=None) -> dict:
 # MH, MR and MMR are measured by libtiff page by page, CPU work during which Pillow keeps the interpreter lock: a
 # document of at least PARALLEL_PAGES pages is measured by up to MEASURE_WORKERS processes side by side, each page
 # exactly as here (defect 71: a 30-page dry run took 49-87 s on a 4-processor install). Smaller documents, and the
-# tests' decode-again check, stay in this process. The processes run at a lower priority (MEASURE_NICENESS), so live
-# calls and the console come first.
+# tests' decode-again check, stay in this process. The processes run at a lower priority (MEASURE_NICENESS) and
+# leave one processor free (``measuring_workers``), so live calls and the console come first.
 PARALLEL_PAGES = 6
 MEASURE_WORKERS = 8
 MEASURE_NICENESS = 10
@@ -451,6 +451,13 @@ def processors():
         return max(1, os.cpu_count() or 1)
 
 
+def measuring_workers():
+    """How many pages are measured at once: one processor fewer than this process may use (at least 1, at most
+    MEASURE_WORKERS), so a call on the SSL Fax engine's software modem, which needs its audio on time, always has a
+    processor free."""
+    return max(1, min(processors() - 1, MEASURE_WORKERS))
+
+
 def _lower_priority():
     try:
         os.nice(MEASURE_NICENESS)
@@ -462,7 +469,7 @@ def _measuring_pool():
     """The processes that measure pages (started once, on first use, and kept for later documents), or None on a
     single processor or once they could not start or stopped working (said once in the log)."""
     global _POOL, _POOL_STOPPED
-    workers = min(processors(), MEASURE_WORKERS)
+    workers = measuring_workers()
     if workers < 2:
         return None
     with _POOL_LOCK:

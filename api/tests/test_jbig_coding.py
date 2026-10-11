@@ -387,3 +387,43 @@ def test_processes_that_cannot_start_leave_the_pages_measured_here_and_are_not_t
     assert started == [1]
     assert [record.getMessage() for record in caplog.records].count(
         'The processes that measure fax pages could not start; this process measures the pages one at a time.') == 1
+
+
+@pytest.mark.parametrize('cpus, workers, pool', [(1, 1, None), (2, 1, None), (3, 2, 2), (4, 3, 3), (6, 5, 5),
+                                                 (16, 8, 8)])
+def test_measuring_always_leaves_one_processor_free(monkeypatch, cpus, workers, pool):
+    """The SSL Fax engine's software modem needs its audio on time: measuring uses one processor fewer than this
+    process may use (its CPU set), at least 1 and at most MEASURE_WORKERS, at a lower priority; with fewer than two
+    to use, the pages are measured in this process."""
+    import concurrent.futures
+    monkeypatch.setattr(coding, 'processors', lambda: cpus)
+    assert coding.measuring_workers() == workers
+    started = []
+
+    def recorded(**kwargs):
+        started.append(kwargs)
+        return SimpleNamespace(_max_workers=kwargs['max_workers'])
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', recorded)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    found = coding._measuring_pool()
+    if pool is None:
+        assert found is None and started == []
+    else:
+        assert [entry['max_workers'] for entry in started] == [pool]
+        assert started[0]['initializer'] is coding._lower_priority and coding.MEASURE_NICENESS == 10
+    # The JBIG settings run as many at once.
+    import threading
+    seen, lock, running = [], threading.Lock(), [0]
+
+    def size(tools, pbm, packed, options, mx):
+        with lock:
+            running[0] += 1
+            seen.append(running[0])
+        __import__('time').sleep(0.01)
+        with lock:
+            running[0] -= 1
+        return 8
+    monkeypatch.setattr(coding, '_jbig_size', size)
+    coding.jbig_settings(list(_long_document(2)), ('pbmtojbg', 'jbgtopbm'), tuned=True)
+    assert max(seen) <= workers
