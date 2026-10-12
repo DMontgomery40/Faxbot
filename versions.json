@@ -205,6 +205,13 @@
     "aliases": []
   },
   {
+    "version": "84522bec4d4694fb5ef884f475c5f1e69494df21",
+    "title": "84522bec4d4694fb5ef884f475c5f1e69494df21",
+    "aliases": [
+      "latest"
+    ]
+  },
+  {
     "version": "74791c41e474bab5e805d1e2e5451e028cc4c178",
     "title": "74791c41e474bab5e805d1e2e5451e028cc4c178",
     "aliases": []
@@ -472,9 +479,7 @@
   {
     "version": "2e1fc3f0a7bd89a513ed4fbeb9cf4165679fc3c9",
     "title": "2e1fc3f0a7bd89a513ed4fbeb9cf4165679fc3c9",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "2cd56bf",
