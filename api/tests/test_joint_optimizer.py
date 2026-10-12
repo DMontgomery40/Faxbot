@@ -101,6 +101,26 @@ def joint(database, tmp_path, monkeypatch):
     monkeypatch.setattr('api.app.sip_trunk.trunk_loaded', lambda values, key: True)
     env.ami = Ami()
     env.runtime = type('Runtime', (), {'frame': staticmethod(_Frame)})()
+    # Defect 75: how many accounts are measured never depends on how fast the machine runs. CI once took the claim's
+    # whole 20 s measuring budget before measuring began ("0 of 2"). Measuring starts at the moment the fax was
+    # claimed (its own lease, not the wall clock since), and no time passes while it measures unless a test moves
+    # the clock itself (the deadline test does).
+    from api.app.routing import joint as joint_module
+    claimed_at, claim = {}, env.delivery.claim
+
+    def claim_at_a_known_moment(owner, **kwargs):
+        kwargs.setdefault('now', datetime.utcnow())
+        found = claim(owner, **kwargs)
+        for member in found.everyone if found is not None else ():
+            claimed_at[member.attempt_id] = kwargs['now']
+        return found
+    monkeypatch.setattr(env.delivery, 'claim', claim_at_a_known_moment)
+    deadline_for = joint_module.deadline_for
+    monkeypatch.setattr(joint_module, 'deadline_for',
+                        lambda claim, now=None: deadline_for(claim, now=claimed_at.get(claim.attempt_id, now)))
+    monkeypatch.setattr(joint_module, '_clock', lambda: 1000.0)
+    # Kept measurements (pages/coding.py, coding-measured/) live in this test's own data folder, never another's.
+    assert env.configuration.read().active.values.fax_data_dir == str(tmp_path)
     return env
 
 
