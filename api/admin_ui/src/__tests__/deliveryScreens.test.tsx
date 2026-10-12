@@ -209,7 +209,8 @@ describe('Savings and Recommendations', () => {
     expect(screen.getByText('No faxes were sent together in the last 30 days.')).toBeTruthy();
     unmount();
     render(<Recommendations client={client()} canWrite />);
-    expect((await screen.findByTestId('recommendations-empty')).textContent).toBe(NO_RECOMMENDATIONS);
+    // The empty state appears only after every advice section has answered.
+    expect((await screen.findByTestId('recommendations-empty', {}, { timeout: 10000 })).textContent).toBe(NO_RECOMMENDATIONS);
     expect((await screen.findByTestId('receiving-sentence')).textContent)
       .toBe('Faxbot needs 60 days of call history to advise on shared lines; it has none yet.');
   });
