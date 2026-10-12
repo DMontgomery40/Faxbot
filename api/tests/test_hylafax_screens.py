@@ -129,3 +129,11 @@ def test_the_command_line_shows_the_consoles_sentence_or_not_known_yet():
     assert sslfax.limits_fields(known) == [('Faster pages', known['sslfax_sentence']),
                                            ('Highest speed', '9600 bits per second'), ('Error correction', 'off')]
 
+
+
+def test_the_sslfax_sentence_never_calls_a_slower_call_faster():
+    # A plain page: SSL Fax beat the ordinary estimate (about 8 seconds a page).
+    assert hylafax_records.sslfax_sentence(12, 6) == 'The pages were sent faster during the call: 12 seconds instead of about 48.'
+    # One dense encoded page took longer than an ordinary page's estimate (rehearsal R009, 11 October): say how long, not "faster".
+    assert hylafax_records.sslfax_sentence(9, 1) == 'The pages went over SSL Fax during the call in 9 seconds.'
+    assert hylafax_records.sslfax_sentence(8, 1) == 'The pages went over SSL Fax during the call in 8 seconds.'

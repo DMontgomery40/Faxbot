@@ -286,3 +286,230 @@ def test_the_engine_is_built_with_jbig_and_the_api_image_can_measure_it():
     assert 'jbigkit-bin' in api_image and 'command -v pbmtojbg && command -v jbgtopbm' in api_image
     # The GPL source offer is written down beside each install.
     assert 'apt-get source jbigkit' in api_image and 'apt-get source jbigkit' in engine_image
+
+
+# Defect 71: a 30-page dry run took 49-87 s ------------------------------------------------------------------------
+
+def _long_document(count=8):
+    from app.conversion import FaxFrames
+    pages = FaxFrames()
+    for index in range(count):
+        for page in frames(('shaded_0', 'drawn_text')[index % 2]):
+            pages.append(page)
+    return pages
+
+
+@pytest.mark.parametrize('tuning', [None, coding.Tuning(engine='hylafax', mr=True, jbig=False),
+                                    coding.Tuning(engine='hylafax', mr=False, jbig=False, min_line_bytes=12)],
+                         ids=['estimate', 'fewest-bytes MR', 'fixed MR with a minimum line'])
+def test_a_long_document_is_measured_side_by_side_exactly_as_one_page_at_a_time(monkeypatch, tuning):
+    pages = _long_document()
+    assert len(pages) >= coding.PARALLEL_PAGES
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning)
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    assert coding.measure(pages, codings=('MH', 'MR', 'MMR'), tuning=tuning) == here
+
+
+class StandInPool:
+    """A measuring pool that runs each page here, or fails as asked: on ``submit`` (the processes start then) or in
+    a page's result."""
+    _max_workers = 2
+
+    def __init__(self, *, on_submit=None, on_result=None):
+        self.on_submit, self.on_result = on_submit, on_result
+
+    def submit(self, function, job):
+        import concurrent.futures
+        if self.on_submit is not None:
+            raise self.on_submit
+        future = concurrent.futures.Future()
+        if self.on_result is not None:
+            future.set_exception(self.on_result)
+        else:
+            future.set_result(function(job))
+        return future
+
+
+def pool_failures():
+    from concurrent.futures import CancelledError
+    from concurrent.futures.process import BrokenProcessPool
+    # (where, what, the processes given up for good, what is said)
+    return [
+        pytest.param('result', BrokenProcessPool('synthetic'), True, 'stopped', id='the processes died'),
+        pytest.param('submit', BrokenProcessPool('synthetic'), True, 'stopped', id='already dead when submitted'),
+        pytest.param('submit', OSError(11, 'synthetic: cannot start a process'), True, 'could not start',
+                     id='a process cannot start'),
+        pytest.param('result', CancelledError(), False, None, id='shut down under it by another caller'),
+        pytest.param('submit', RuntimeError('cannot schedule new futures after shutdown'), False, None,
+                     id='shut down before it'),
+        pytest.param('result', OSError(5, 'synthetic: one page'), False, 'A page could not be',
+                     id='one page failed in its process'),
+    ]
+
+
+@pytest.mark.parametrize('where, error, given_up, said', pool_failures())
+def test_a_failing_pool_leaves_the_document_measured_here_and_only_dead_processes_are_given_up(
+        monkeypatch, caplog, where, error, given_up, said):
+    """Eng's review of #99: the pages are measured here, the same, whatever went wrong; only processes that died or
+    cannot start are not used again. Processes shut down under a document by another caller (``CancelledError``),
+    or one page failing in its process, leave them in use for the next document."""
+    pages = _long_document()
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MR', 'MMR'))
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    pool = StandInPool(**{'on_' + where: error})
+    forgotten = []
+    monkeypatch.setattr(coding, '_measuring_pool', lambda: pool)
+    monkeypatch.setattr(coding, '_forget_pool', forgotten.append)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    with caplog.at_level('WARNING'):
+        assert coding.measure(pages, codings=('MH', 'MR', 'MMR')) == here
+    assert forgotten == ([pool] if given_up else [])
+    messages = ' '.join(record.getMessage() for record in caplog.records)
+    assert (said in messages) if said else messages == ''
+
+
+def test_every_jbig_setting_runs_side_by_side_and_the_first_smallest_still_wins(tmp_path):
+    """The 12 tuned settings for every page run at once; the choice per page is the one faxd makes: the smallest, the
+    first of equals in JBIG_CANDIDATES order (here options 8 with MX 0 and options 64 with MX 8 tie)."""
+    encoder = tmp_path / 'pbmtojbg'
+    encoder.write_text('#!/bin/sh\ncat > /dev/null\ncase "$*" in\n  *"-p 8 -m 0"*|*"-p 64 -m 8"*) printf xxx ;;\n'
+                       '  *) printf xxxxx ;;\nesac\n')
+    encoder.chmod(encoder.stat().st_mode | stat.S_IEXEC)
+    pages = list(_long_document(3))
+    tools = (str(encoder), str(encoder))
+    assert coding.jbig_settings(pages, tools, tuned=True) == [(3, 8, 0)] * len(pages)
+    assert coding.jbig_setting(pages[0], tools, tuned=True) == (3, 8, 0)
+    assert coding.jbig_settings(pages, tools) == [(5, 0, 0)] * len(pages)
+
+
+def test_measurements_are_kept_by_the_pages_and_mh_and_mmr_are_taken_under_another_tuning(tmp_path, monkeypatch):
+    """The shared cache (MeasureCache.shared): the same pages are not measured again, by another dry run or by the
+    fax's own delivery, and MH and MMR measured under one tuning serve every other; only what depends on the tuning
+    is measured."""
+    pages = _long_document(2)
+    asked, real = [], coding.measure
+
+    def counted(raster_pages, *, codings=None, check=False, tuning=None):
+        asked.append(tuple(codings))
+        return real(raster_pages, codings=codings, check=check, tuning=tuning)
+    monkeypatch.setattr(coding, 'measure', counted)
+    shared = tmp_path / 'coding-measured'
+    first = coding.measure_cached(pages, coding.MeasureCache(path=tmp_path / 'one.coding.json', shared=shared),
+                                  codings=('MH', 'MR', 'MMR'))
+    # Another dry run, or the delivery with its own attempt file: read from the shared cache, nothing measured.
+    again = coding.measure_cached(pages, coding.MeasureCache(path=tmp_path / 'two.coding.json', shared=shared),
+                                  codings=('MH', 'MR', 'MMR'))
+    assert again == first and asked == [('MH', 'MR', 'MMR')]
+    tuned = coding.Tuning(engine='hylafax', mr=True, jbig=False)
+    found = coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR'),
+                                  tuning=tuned)
+    assert asked[-1] == ('MR',)
+    assert found == {'MH': first['MH'], 'MR': real(pages, codings=('MR',), tuning=tuned)['MR'], 'MMR': first['MMR']}
+    assert list(found) == ['MH', 'MR', 'MMR']
+    # The shared cache holds counts only, readable by the installation alone.
+    [kept] = list(shared.glob('*/*.json'))
+    assert kept.stat().st_mode & 0o077 == 0 and kept.parent.stat().st_mode & 0o077 == 0
+    assert shared.stat().st_mode & 0o077 == 0
+    # Eng's review of #99: measurements kept by another release (another MEASURE_VERSION) are measured again.
+    asked.clear()
+    monkeypatch.setattr(coding, 'MEASURE_VERSION', coding.MEASURE_VERSION + 1)
+    assert coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR')) == first
+    assert asked == [('MH', 'MR', 'MMR')]
+    assert coding.measure_cached(pages, coding.MeasureCache(shared=shared), codings=('MH', 'MR', 'MMR')) == first
+    assert asked == [('MH', 'MR', 'MMR')]  # and kept under the new one
+
+
+def test_processes_that_cannot_start_leave_the_pages_measured_here_and_are_not_tried_again(monkeypatch, caplog):
+    """No /dev/shm, a process limit or another refusal to start: the pages are measured here, with the same result,
+    said once; this process does not try to start them again for every later fax."""
+    import concurrent.futures
+    pages = _long_document()
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 10 ** 6)
+    here = coding.measure(pages, codings=('MH', 'MMR'))
+    monkeypatch.setattr(coding, 'PARALLEL_PAGES', 6)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    monkeypatch.setattr(coding, 'processors', lambda: 4)
+    started = []
+
+    def refused(*args, **kwargs):
+        started.append(1)
+        raise OSError('synthetic: no semaphores')
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', refused)
+    with caplog.at_level('WARNING'):
+        assert coding.measure(pages, codings=('MH', 'MMR')) == here
+        assert coding.measure(pages, codings=('MH', 'MMR')) == here
+    assert started == [1]
+    assert [record.getMessage() for record in caplog.records].count(
+        'The processes that measure fax pages could not start; this process measures the pages one at a time.') == 1
+
+
+@pytest.mark.parametrize('cpus, workers, pool', [(1, 1, None), (2, 1, None), (3, 2, 2), (4, 3, 3), (6, 5, 5),
+                                                 (16, 8, 8)])
+def test_measuring_always_leaves_one_processor_free(monkeypatch, cpus, workers, pool):
+    """The SSL Fax engine's software modem needs its audio on time: measuring uses one processor fewer than this
+    process may use (its CPU set), at least 1 and at most MEASURE_WORKERS, at a lower priority; with fewer than two
+    to use, the pages are measured in this process."""
+    import concurrent.futures
+    monkeypatch.setattr(coding, 'processors', lambda: cpus)
+    assert coding.measuring_workers() == workers
+    started = []
+
+    def recorded(**kwargs):
+        started.append(kwargs)
+        return SimpleNamespace(_max_workers=kwargs['max_workers'])
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', recorded)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    found = coding._measuring_pool()
+    if pool is None:
+        assert found is None and started == []
+    else:
+        assert [entry['max_workers'] for entry in started] == [pool]
+        assert started[0]['initializer'] is coding._lower_priority and coding.MEASURE_NICENESS == 10
+    # The JBIG settings run as many at once.
+    import threading
+    seen, lock, running = [], threading.Lock(), [0]
+
+    def size(tools, pbm, packed, options, mx):
+        with lock:
+            running[0] += 1
+            seen.append(running[0])
+        __import__('time').sleep(0.01)
+        with lock:
+            running[0] -= 1
+        return 8
+    monkeypatch.setattr(coding, '_jbig_size', size)
+    coding.jbig_settings(list(_long_document(2)), ('pbmtojbg', 'jbgtopbm'), tuned=True)
+    assert max(seen) <= workers
+
+
+def test_the_measuring_processes_stop_with_the_api_and_start_again_when_needed(monkeypatch):
+    import concurrent.futures
+    monkeypatch.setattr(coding, 'processors', lambda: 4)
+    monkeypatch.setattr(coding, '_POOL', None)
+    monkeypatch.setattr(coding, '_POOL_STOPPED', False)
+    pools = []
+
+    class Recorded:
+        def __init__(self, **kwargs):
+            self.shut = []
+            pools.append(self)
+
+        def shutdown(self, **kwargs):
+            self.shut.append(kwargs)
+    monkeypatch.setattr(concurrent.futures, 'ProcessPoolExecutor', Recorded)
+    first = coding._measuring_pool()
+    coding.stop_measuring()
+    assert first.shut == [{'wait': True, 'cancel_futures': True}] and coding._POOL is None
+    coding.stop_measuring()  # nothing to stop
+    assert coding._measuring_pool() is not first and len(pools) == 2
+
+
+def test_the_jbig_encoder_runs_at_the_measuring_priority(monkeypatch):
+    monkeypatch.setattr(coding.shutil, 'which', lambda name: '/usr/bin/nice' if name == 'nice' else None)
+    assert coding._lowered(['pbmtojbg', '-q']) == ['/usr/bin/nice', '-n', '10', 'pbmtojbg', '-q']
+    monkeypatch.setattr(coding.shutil, 'which', lambda name: None)
+    assert coding._lowered(['pbmtojbg', '-q']) == ['pbmtojbg', '-q']

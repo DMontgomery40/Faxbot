@@ -741,3 +741,39 @@ def test_the_dry_run_measures_a_document_as_the_engine_you_would_choose_sends_it
     assert post().status_code == 200
     assert seen and all(entry == (None, 'hylafax', True) for entry in seen), seen
     assert post(engine='fast').status_code == 422
+
+
+@pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
+def test_a_second_dry_run_of_the_same_document_measures_nothing_again_and_says_the_same(client, tmp_path,  # noqa: F811
+                                                                                       monkeypatch):
+    """Defect 71: the measurement is kept by the pages (the shared cache in the data folder), so the same document
+    estimated again, or then sent, is not measured again; the answer is the same."""
+    from app.pages import coding
+    pages = []
+    for index in range(3):
+        page = Image.new('L', (1700, 2200), 255)
+        draw = ImageDraw.Draw(page)
+        for row in range(12):
+            draw.rectangle((100, 100 + row * 150, 1600, 160 + row * 150), fill=200 + index * 10)
+            draw.text((120, 110 + row * 150), f'Synthetic page {index} row {row}', fill=0)
+        pages.append(page)
+    pdf = tmp_path / 'three.pdf'
+    pages[0].save(pdf, 'PDF', resolution=200, save_all=True, append_images=pages[1:])
+    measured, real = [], coding.measure
+
+    def counted(raster_pages, **kwargs):
+        measured.append(len(raster_pages))
+        return real(raster_pages, **kwargs)
+    monkeypatch.setattr(coding, 'measure', counted)
+
+    def post():
+        response = client.post('/routing/predict', headers=ADMIN, data={'to': NUMBER},
+                               files={'file': ('three.pdf', pdf.read_bytes(), 'application/pdf')})
+        assert response.status_code == 200, response.text
+        return response.json()
+    first = post()
+    assert first['pages'] == 3 and 3 in measured
+    measured.clear()
+    second = post()
+    assert second == first
+    assert 3 not in measured, measured  # no whole-document measurement the second time
