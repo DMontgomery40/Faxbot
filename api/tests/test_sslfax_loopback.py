@@ -2313,6 +2313,11 @@ def test_x_the_engines_header_line_leaves_encoded_and_packed_pages_intact(tmp_pa
     # (c) An ordinary fax.
     ordinary = send_and_collect(tmp_path, context, document=standard_proof_pdf() if standard else None)
     text = header_line(ordinary['received_pages'][0]) if ordinary['received_pages'] else None
+    if text:
+        # At standard resolution the reader can take the day's digits for letters ("lz" for "12"): the first word,
+        # the day of the month, is read as digits.
+        day, _, rest = text.partition(' ')
+        text = day.translate(str.maketrans('liIzZoOsSbg', '11122005569')) + ' ' + rest
     digits = ''.join(character for character in (text or '') if character.isdigit())
     days = {moment.strftime('%d %b %Y').lower() for moment in (datetime.now(timezone.utc), datetime.now())}
     # Packing leaves TOP_ROWS fine rows white for the header line: half as many rows at standard.
