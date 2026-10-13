@@ -64,9 +64,13 @@ This is the **top selling feature for funded fax-intake startups.** Partial rese
 - Can run in parallel with other tests or after main mechanisms validate.
 - Suggest to Claude's lead once their communication channel appears (`.claude/` or shared file).
 
+**Reference case (600 pages):**
+- Full resend: $1.505
+- Partial resend (missing pages only): $0.38
+
 **Expected outcome:**
-- Partial resend cost ≈ 60–70% of full resend (depends on provider's per-minute charge structure)
-- Time recovery: milliseconds overhead per page, negligible vs. retransmit time
+- Quantify the per-page cost advantage with Faxbeep data
+- Measure recovery time and overhead vs. full call duration
 - This becomes a case study for the enterprise roadmap (reliable intake under call failures)
 
 ---
