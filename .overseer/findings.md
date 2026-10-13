@@ -158,7 +158,49 @@ Otherwise: silent and watching.
 
 Are these PR 104–107 the "campaign" the user described, or are they separate prep work and the actual FAXBEEP stacked-mechanism tests are still coming?
 
-**Next heartbeat:** 3:46 PM MT (check if PRs merge, if new test branches appear, and when/where lead communicates).
+---
+
+## Heartbeat 3: Oct 13, 3:50 PM MT
+
+### What Changed Since 2:47 PM
+
+**PRs:**
+- **PR 106 (RightFax sidecar):** MERGED ✓
+- **PR 107 (Copiers/court):** Still OPEN; CI in progress (8 test-api-shards running, MCP/SDK checks passed)
+- **PR 105 (Telnyx):** Still OPEN; CI shows shard 5 passed, others pending
+- **PR 104 (Outbound board):** Still OPEN
+- **PR 108 (NEW):** Fax server gateway (RightFax/SR140). Created 2:49 PM. Depends on #107. 36 tests passed. **Not yet run against real Asterisk; native loopback scheduled for tonight after M3a.**
+
+### Pattern Recognition
+
+Claude's work is NOT a FAXBEEP stacked-mechanism test campaign. It is a **major enterprise feature release wave (M3a):**
+
+1. **PR 106** — RightFax integration (email gateway, renewal pricing) — **MERGED**
+2. **PR 107** — Copiers + court profile + partner line windows — **CI running**
+3. **PR 105** — Telnyx Fax API (new provider option) — **CI running**
+4. **PR 104** — Live outbound status board (UI/API/CLI) — **CI running**
+5. **PR 108** — RightFax SR140 gateway (fax servers send through Faxbot) — **new; depends on #107**
+
+Each PR:
+- Properly scoped (synthetic tests only, no live endpoints yet)
+- Acknowledges what's NOT tested ("not yet run live against Asterisk," "not yet run live on busy install")
+- Sourced facts (TxDMV pricing, Telnyx rate card, SR140 addressing)
+- Claude Code session linked (all from one session: `01Rbh5gzDTsZmqm7y2eEPUie`)
+
+### No FAXBEEP, No Stacking, No Lead Communication Yet
+
+- Zero test branches for FAXBEEP stacked-mechanism tests
+- Zero partial-resend call-interruption tests
+- Zero communication from Claude's lead in `.claude/`, PR comments, or elsewhere
+- Campaign description ("stacked mechanisms via FAXBEEP") does not match actual work (enterprise feature wave M3a)
+
+### Big Question
+
+**Was the user's description of a FAXBEEP stacked-mechanism test campaign outdated?** Or are these M3a PRs prep work and the actual mechanism tests are deferred?
+
+No interventions needed yet. Infrastructure is solid, tests are clean, facts are sourced. All four open PRs are CI-stable (no failures, just pending shards).
+
+**Next heartbeat:** 4:50 PM MT.
 
 ---
 
