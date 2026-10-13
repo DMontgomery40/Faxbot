@@ -325,7 +325,8 @@ export const NAVIGATION: NavArea[] = [
     pages: [
       { id: 'overview', label: 'Overview', icon: <DashboardIcon />, gate: OVERVIEW_GATE,
         render: (ctx) => <Dashboard client={ctx.client} onNavigate={ctx.navigate} canSetUp={ctx.canSetUp} onSendFax={sendFax(ctx)}
-          canReadSettings={ctx.permissions.has('settings:read')} canReadAnalysis={ctx.permissions.has('settings:read')} /> },
+          canReadSettings={ctx.permissions.has('settings:read')} canReadAnalysis={ctx.permissions.has('settings:read')}
+          onOpenSentFax={ctx.openJob} /> },
     ],
   },
   {
