@@ -164,6 +164,15 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'sandbox': values.documo_use_sandbox,
             'configured': bool(values.documo_api_key),
         },
+        'telnyx_fax': {
+            # The API key is the one a Telnyx trunk uses too (telnyx_api_key).
+            'api_key': mask_secret(values.telnyx_api_key),
+            'connection_id': values.telnyx_fax_connection_id,
+            'from_number': values.telnyx_fax_from_number,
+            'public_key': values.telnyx_fax_public_key,
+            'configured': bool(values.telnyx_api_key and values.telnyx_fax_connection_id
+                               and values.telnyx_fax_from_number),
+        },
         'humblefax': {
             'access_key': mask_secret(values.humblefax_access_key),
             'secret_key': mask_secret(values.humblefax_secret_key),

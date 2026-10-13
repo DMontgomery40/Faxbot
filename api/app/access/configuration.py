@@ -45,6 +45,7 @@ _PROVIDER_FIELDS = frozenset({
     'signalwire_status_callback_url', 'signalwire_webhook_signing_key',
     'signalwire_status_poll_seconds',
     'documo_api_key', 'documo_base_url', 'documo_use_sandbox',
+    'telnyx_fax_connection_id', 'telnyx_fax_from_number', 'telnyx_fax_public_key',
     'humblefax_access_key', 'humblefax_secret_key', 'humblefax_from_number', 'humblefax_receive_enabled',
     'humblefax_poll_seconds',
     'efax_app_id', 'efax_api_key', 'efax_user_id', 'efax_caller_id', 'efax_csid', 'efax_poll_seconds',

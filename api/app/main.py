@@ -964,6 +964,8 @@ def get_admin_config(request: Request, identity=Depends(require_identity)):
             "sinch": bool(values.sinch_project_id and values.sinch_api_key and values.sinch_api_secret),
             "signalwire": bool(values.signalwire_space_url and values.signalwire_project_id and values.signalwire_api_token),
             "documo": bool(values.documo_api_key),
+            "telnyx_fax": bool(values.telnyx_api_key and values.telnyx_fax_connection_id
+                               and values.telnyx_fax_from_number),
             "humblefax": bool(values.humblefax_access_key and values.humblefax_secret_key),
             "efax": bool(values.efax_app_id and values.efax_api_key and values.efax_user_id),
             "sip_ami_configured": bool(values.ami_username and values.ami_password),
@@ -2812,6 +2814,15 @@ def _installed_plugins(snapshot=None) -> list[dict[str, Any]]:
         "categories": ["outbound"],
         "capabilities": ["send", "get_status"],
         "enabled": (current == "documo"),
+        "configurable": True,
+    })
+    items.append({
+        "id": "telnyx_fax",
+        "name": "Telnyx Fax API",
+        "version": "1.0.0",
+        "categories": ["outbound"],
+        "capabilities": ["send", "get_status", "webhook"],
+        "enabled": (current == "telnyx_fax"),
         "configurable": True,
     })
     items.append({

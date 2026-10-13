@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .plugins.http_provider import HttpProviderRuntime
     from .signalwire_service import SignalWireFaxService
     from .sinch_service import SinchFaxService
+    from .telnyx_fax_service import TelnyxFaxService
 
 
 class ProviderExecutionError(RuntimeError):
@@ -31,7 +32,7 @@ def _string(values, name):
 
 
 def service_from_profile(profile: ProviderProfile) -> (
-        PhaxioFaxService | SinchFaxService | SignalWireFaxService | DocumoFaxService
+        PhaxioFaxService | SinchFaxService | SignalWireFaxService | DocumoFaxService | TelnyxFaxService
         | HumbleFaxFaxService | EfaxFaxService | HttpProviderRuntime):
     """Return a new adapter; never resolve current credentials or installed files.
 
@@ -60,6 +61,10 @@ def service_from_profile(profile: ProviderProfile) -> (
             return SinchFaxService(project_id=_string(settings, 'project_id'),
                 api_key=_string(credentials, 'api_key'), api_secret=_string(credentials, 'api_secret'),
                 base_url=_string(settings, 'base_url'))
+        if identity == 'telnyx_fax':
+            from .telnyx_fax_service import TelnyxFaxService
+            return TelnyxFaxService(api_key=_string(credentials, 'api_key'),
+                connection_id=_string(settings, 'connection_id'), from_number=_string(settings, 'from_number'))
         if identity == 'documo':
             from .documo_service import DocumoFaxService
             return DocumoFaxService(api_key=_string(credentials, 'api_key'),

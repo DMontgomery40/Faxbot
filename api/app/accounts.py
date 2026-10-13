@@ -79,6 +79,17 @@ FIELDS = {
     'documo': (
         ('api_key', 'documo_api_key', 'API key', True, None),
     ),
+    'telnyx_fax': (
+        ('api_key', 'telnyx_api_key', 'Telnyx API key', True,
+         'From Telnyx under Keys & Credentials. A Telnyx trunk uses the same key.'),
+        ('connection_id', 'telnyx_fax_connection_id', 'Fax Application ID', True,
+         'Leave it empty and Faxbot can create a Fax Application in your Telnyx account for you.'),
+        ('from_number', 'telnyx_fax_from_number', 'Fax number', True,
+         'A number in your Telnyx account, such as +13035550100. Faxes come from it.'),
+        ('public_key', 'telnyx_fax_public_key', 'Telnyx public key', False,
+         "From Telnyx under Keys & Credentials, Public Key. With it, Faxbot hears each fax's result at once; "
+         'without it, Faxbot checks with Telnyx until the fax is done.'),
+    ),
     'sip': (
         ('preset', 'sip_trunk_preset', 'Carrier', False, None),
         ('host', 'sip_trunk_host', 'Server', True, None),
@@ -109,7 +120,8 @@ FIELDS = {
     ),
 }
 # The order primary accounts are listed in after the default and listed routes.
-PROVIDER_ORDER = ('sip', 'humblefax', 'sinch', 'phaxio', 'efax', 'signalwire', 'documo', 'freeswitch')
+PROVIDER_ORDER = ('sip', 'humblefax', 'sinch', 'phaxio', 'telnyx_fax', 'efax', 'signalwire', 'documo',
+                  'freeswitch')
 # Paths where each provider's received-fax notifications arrive; an extra account's is this plus /<key>.
 WEBHOOK_PATHS = {'sinch': '/sinch-inbound', 'phaxio': '/phaxio-inbound', 'efax': '/efax-inbound'}
 POLLING = ('humblefax', 'efax')
