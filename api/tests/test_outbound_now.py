@@ -118,7 +118,7 @@ class Desk:
     def read(self, actor=None):
         scope = self.board.scope(self.access, actor or self.olive, now=NOW)
         found = self.board.aggregate(self.values, now=NOW)
-        return outbound_now.view(found, scope, mask=mask, sentence_for=lambda fax: None)
+        return outbound_now.view(found, scope, mask=mask, sentence_for=lambda fax: self.board.sentence(fax, found))
 
 
 @pytest.fixture
@@ -173,8 +173,13 @@ def test_the_board_shows_sending_waiting_needs_you_and_today_from_the_real_claim
     assert [entry['count'] for entry in board['waiting']['reasons']] == sorted(counts.values(), reverse=True)
     waiting = items(board, 'waiting')
     assert set(waiting) == {behind, after_unsure, preparing, nothing}
+    # Each fax shown says it in the claim's own words (Capacity.waiting_sentence).
     assert waiting[behind]['reason'] == 'number_busy'
+    assert waiting[behind]['sentence'] == 'Waiting: another fax is calling this number.'
     assert waiting[after_unsure]['reason'] == 'unknown_result' and waiting[after_unsure]['until'].endswith('Z')
+    assert waiting[after_unsure]['sentence'] == ('Waiting: an earlier fax to this number has an unknown result. '
+                                                 'Faxbot waits until it is known or until 12:30 PM UTC.')
+    assert waiting[preparing]['sentence'] == 'Being prepared.'
     assert waiting[nothing]['sentence'] == 'Next to go.'
     needs = items(board, 'needs_you')
     assert needs[unsure]['kind'] == 'uncertain' and needs[unsure]['actions'] == ['settle']
@@ -290,6 +295,7 @@ def test_faxes_wait_for_a_free_line_when_the_trunk_is_at_its_limit(trunk):
     waits = trunk.accept(to=THIRD, trunk=True)
     board = trunk.look()
     assert items(board, 'waiting')[waits]['reason'] == 'lines_busy'
+    assert items(board, 'waiting')[waits]['sentence'] == 'Waiting for a free line: all 2 lines are in use.'
     entry = next(item for item in board['waiting']['reasons'] if item['key'] == 'lines_busy')
     assert entry['count'] == 1 and entry['sentence'] == 'Waiting for a free line: all 2 lines are in use.'
     assert board['waiting']['reasons'][0]['key'] == 'lines_busy'
@@ -337,6 +343,8 @@ def test_a_fax_waits_for_the_recipients_hours_from_the_real_schedule(desk):
     board = desk.look()
     item = items(board, 'waiting')[job]
     assert item['reason'] == 'recipient_hours' and item['until'] == '2026-10-05T09:00:00Z'
+    assert item['sentence'] == ('Waiting until Monday at 9:00 AM UTC: this recipient takes faxes only Monday to '
+                                'Friday, 9:00 AM to 5:00 PM UTC.')
     assert reasons(board)['recipient_hours'] == 1
 
 

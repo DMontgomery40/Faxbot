@@ -150,7 +150,6 @@ class Aggregate:
     engine: dict | None = None
     lines_sentence: str | None = None
     names: dict = field(default_factory=dict)
-    sentences: dict = field(default_factory=dict)   # the claim's own sentence for one waiting fax, once asked
     values: object = None
 
 
@@ -179,8 +178,9 @@ class Board:
         self._last = None
         self._last_read = None
         self._scopes = {}
-        # The recipient's schedule decision for each waiting fax, kept as long as the claim keeps one (RECHECK).
-        self._decided = {}
+        # The recipient's schedule decision for each waiting fax, kept as long as the claim keeps one (RECHECK), and
+        # the claim's own sentence for each waiting fax shown, kept as long.
+        self._decided, self._sentences = {}, {}
         self._scope_lock = threading.Lock()
         # How many aggregates and scopes were read (tests count them instead of timing).
         self.reads = 0
@@ -212,7 +212,7 @@ class Board:
     def forget(self):
         """Read everything afresh at the next poll."""
         with self._lock:
-            self._last, self._decided = None, {}
+            self._last, self._decided, self._sentences = None, {}, {}
         with self._scope_lock:
             self._scopes.clear()
 
@@ -520,6 +520,23 @@ class Board:
         return {'audio': True, 'since': (at if not at or at.endswith('Z') else at + 'Z'),
                 'sentence': said[:1].upper() + said[1:], 'fix': ENGINE_FIXES.get(found['reason'])}
 
+    def sentence(self, fax, found):
+        """The claim's own sentence for one waiting fax shown (``Capacity.waiting_sentence``): asked once for its
+        reason and wait, and again after ``schedule.RECHECK``, so a watched board does not ask the predictor every
+        poll."""
+        from . import capacity
+        from .routing.schedule import RECHECK
+        kept = self._sentences.get(fax.id)
+        if (kept is not None and kept[:2] == (fax.reason, fax.until)
+                and self.clock() - kept[3] < RECHECK.total_seconds()):
+            return kept[2]
+        said = capacity.for_engine(self.engine).waiting_sentence(fax.id, found.values, found.at)
+        with self._scope_lock:
+            if len(self._sentences) > 4 * LIST_LIMIT * 16:
+                self._sentences.clear()
+            self._sentences[fax.id] = (fax.reason, fax.until, said, self.clock())
+        return said
+
     # What one person may see ------------------------------------------------------------------------------------
 
     def _policy_version(self):
@@ -763,14 +780,8 @@ def for_engine(engine):
 
 def board_for(engine, access, actor, values, *, mask, now=None):
     """The board ``actor`` sees now: their scope (cached), the shared aggregate, and the claim's own sentence for
-    each waiting fax shown (``Capacity.waiting_sentence``, asked once per fax per aggregate)."""
+    each waiting fax shown (``Board.sentence``)."""
     board = for_engine(engine)
     scope = board.scope(access, actor, now=now)
     found = board.aggregate(values, now=now)
-
-    def sentence_for(fax):
-        if fax.id not in found.sentences:
-            from . import capacity
-            found.sentences[fax.id] = capacity.for_engine(engine).waiting_sentence(fax.id, found.values, found.at)
-        return found.sentences[fax.id]
-    return view(found, scope, mask=mask, sentence_for=sentence_for)
+    return view(found, scope, mask=mask, sentence_for=lambda fax: board.sentence(fax, found))
