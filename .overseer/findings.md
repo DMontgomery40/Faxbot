@@ -330,7 +330,17 @@ Claude has not pushed a fix to PR 108 yet. Shard 4 failure is visible in CI, rou
 
 ~2h remaining to campaign close. PR 108 may merge before close or stay open for post-campaign review—either normal.
 
-*Campaign window: 5:30 PM MT (~2h).*
+---
+
+## Heartbeat 10: Oct 13, 10:35 PM UTC (4:35 PM MT, ~55min to campaign close)
+
+### Status
+
+No changes. **PR 108 shard 4 still failing, no fix pushed.** Same CI run from 18:54 UTC. PR 107 shipped, 4 of 5 M3a features complete. SR140 gateway (PR 108) waiting on shard 4 fix or deferred post-campaign.
+
+~55min to close. If no fix by 5:30 PM MT, PR 108 stays open for post-campaign work.
+
+*Campaign closes 5:30 PM MT (55min).*
 
 ---
 
