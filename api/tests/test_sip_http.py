@@ -314,7 +314,12 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         ('GET', '/admin/sip/send-only'): [('providers:read', False)],
                         ('PUT', '/admin/sip/send-only'): [('settings:write', False)],
                         # Copiers that fax over the network (N22): read with the trunk.
-                        ('GET', '/admin/sip/copiers'): [('providers:read', False)]}
+                        ('GET', '/admin/sip/copiers'): [('providers:read', False)],
+                        # Copiers that fax through Faxbot (store and forward): enrol and remove with the trunk; one
+                        # copier fax's received record is that fax's own read check, as its detail.
+                        ('POST', '/admin/sip/copiers/extensions'): [('providers:write', False)],
+                        ('POST', '/admin/sip/copiers/extensions/{copier_id}/remove'): [('providers:write', False)],
+                        ('GET', '/admin/sip/copiers/received/{inbound_id}'): []}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):
