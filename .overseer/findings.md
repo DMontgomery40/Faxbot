@@ -111,30 +111,54 @@ Otherwise: silent and watching.
 
 ---
 
-## Heartbeat 2: Oct 13, 2:46 PM MT
+## Heartbeat 2: Oct 13, 2:46 PM MT → 2:47 PM (REVISED)
 
 ### What Changed Since 1:32 PM
 
-**Code/branches:**
-- No new test branches from Claude's campaign yet.
-- Four new open PRs from other work (copiers/court, RightFax sidecar, Telnyx Fax API, outbound board) — unrelated to test campaign.
-- Main branch still clean; no new commits to main.
+**Claude's four new PRs (2:08–2:22 PM, created by David Montgomery, all Claude Code sessions):**
 
-**Claude's status:**
-- No activity detected in `.claude/` or any communication channel.
-- No commits from Claude's agent or leads.
-- Campaign window opened ~7:30 AM MT; currently 2:46 PM (7+ hours in). Either still warming up, or activity is private.
+1. **PR 107: Land copiers as Faxbot extensions, court profile, partner line windows** (feat/copiers-court-landing)
+   - Migrations 0082–0085: partner layouts, court profile, partner admission, copier extensions
+   - Tested against: SQLite (93 passed before, 169 passed with 17 skipped after fix); court/engine tests (46 passed); console (54 passed); PostgreSQL (CI only)
+   - NOT a stacked-mechanism test or FAXBEEP test. This is a data model/schema landing (one-way door for live installs).
+   - **Reading:** Correct. Schema validation, syntax, and merge conflict resolution are the right tests.
 
-**Infrastructure:**
-- Faxbeep lines still available and documented.
-- CI healthy (no new test failures).
-- No broken harness detected.
+2. **PR 106: RightFax sidecar fixes** (fix/rightfax-sidecar)
+   - Gateway addressing in email-to-fax (parse `/fax=NUMBER/` tags)
+   - Renewal valuation by line item (per-channel pricing input, not stored)
+   - Real data: TxDMV $387.48/channel, Brooktrout SR140 $4,296.99
+   - Tested: mail sources (forms, domain limits), renewal valuation, console field
+   - **Reading:** Correct. Documented sourcing, synthetic tests, no live RightFax gateway tested.
 
-### Assessment
+3. **PR 105: Telnyx Fax API as a per-page sending route** (feat/telnyx-fax-api)
+   - New provider: $0.007/page + $0.005/min (sourced from telnyx.com/pricing, read 2026-10-13)
+   - Tested against: fake Telnyx (httpx.MockTransport); no real sends
+   - Tests: adapter, statuses, failures, signatures, delivery flow, pricing, route choice, console, parity
+   - **Reading:** Correct. Synthetic-only, properly acknowledges "Not yet run live."
 
-Silent observation phase. Claude's campaign has not yet published test branches or PRs. No big misses, broken harness, or wasted spend detected. All pre-requisites ready. Awaiting Claude's first test branch push.
+4. **PR 104: Live outbound board (Overview, Sent, CLI, API)** (feat/outbound-board)
+   - New UI/API: `GET /outbound/now` aggregating sending, waiting, needs-you, daily stats
+   - Polling strategy: shared aggregate every 2s, cached visibility (30s), console polls every 5/15s
+   - Tested: contract compliance, SQLite (331 passed, 176 skipped), console (594 passed)
+   - **Reading:** Correct. Acknowledges "Not yet run live" on a busy installation; research lead deploys after campaign M3.
 
-**Next heartbeat:** 3:46 PM MT.
+### Assessment So Far
+
+**NOT a FAXBEEP/stacked-mechanism test campaign.** These are four enterprise feature PRs (schema/court, RightFax integration, new provider, UI/status board). All four are:
+- Properly tested (synthetic data, documented sourcing)
+- Not claiming to be complete enterprise solutions (no live RightFax, no live Telnyx, no live board observation)
+- Correctly scoped (no blocked merges on live validation)
+- Each has Claude Code session link (evidence of Claude's work)
+
+**No stacking, no FAXBEEP, no partial-resend test here.** These are infrastructure/feature additions. The test campaign ("stacked mechanisms via FAXBEEP") has not yet landed.
+
+**Communication channel:** No lead comments on PRs yet. `.claude/` folder still empty. No handoff visible yet.
+
+### Big Question
+
+Are these PR 104–107 the "campaign" the user described, or are they separate prep work and the actual FAXBEEP stacked-mechanism tests are still coming?
+
+**Next heartbeat:** 3:46 PM MT (check if PRs merge, if new test branches appear, and when/where lead communicates).
 
 ---
 
