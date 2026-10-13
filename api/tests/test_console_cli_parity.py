@@ -38,6 +38,7 @@ HOLE = '\x00'
 NOT_OPERATOR = {
     ('POST', '/phaxio-callback'): 'webhook: Phaxio status callback',
     ('POST', '/signalwire-callback'): 'webhook: SignalWire status callback',
+    ('POST', '/telnyx-fax-callback'): 'webhook: Telnyx Fax status notice that starts a status read',
     ('POST', '/phaxio-inbound'): 'webhook: Phaxio received fax',
     ('POST', '/sinch-inbound'): 'webhook: Sinch received fax',
     ('POST', '/efax-inbound'): 'webhook: eFax notification that starts a check',
