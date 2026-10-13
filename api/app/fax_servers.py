@@ -23,8 +23,9 @@ with the differences a fax server needs:
   after it arrived), Faxbot sends one notice to the server's contact email and webhook. An uncertain fax is never
   sent again, and an uncertain notice is never sent twice.
 
-Built from Brooktrout's and OpenText's published SR140 gateway settings. Proven against an Asterisk stand-in for an
-SR140 (``tools/sr140-emulator``); not yet run against a real RightFax server.
+Built from Brooktrout's and OpenText's published SR140 gateway settings, and tested with contract tests. Not yet run
+in Asterisk, against the SR140 stand-in (``tools/sr140-emulator``, ``tests/test_fax_server_loopback.py``) or against a
+real RightFax server.
 """
 from __future__ import annotations
 
@@ -56,8 +57,10 @@ PRIVATE = (ipaddress.ip_network('10.0.0.0/8'), ipaddress.ip_network('172.16.0.0/
 DEFAULT_PER_HOUR, DEFAULT_PER_DAY = 60, 500
 MAX_PER_HOUR, MAX_PER_DAY = 3600, 50000
 NOTICE_TRIES = 3
-# A call answered this long ago whose hand-over never came is closed as not sent, with a notice (never sent late).
+# A call answered this long ago whose hand-over never came is closed as not sent, with a notice (never sent late),
+# but only once its image has been quiet this long: a long fax can still be arriving long after the call began.
 HANDOVER_WAIT = timedelta(minutes=20)
+IMAGE_QUIET = timedelta(minutes=10)
 DIAL_PREFIX = re.compile(r'[0-9*#]{1,4}')
 TABLES = ('fax_servers', 'fax_server_calls', 'fax_server_events')
 OUTCOMES = ('not_received', 'accepted', 'refused')
@@ -794,7 +797,13 @@ def settle(engine, values, *, now=None, email=_send_email, webhook=_send_webhook
         name = server.name if server is not None else 'The fax server'
         if not any(kind in kinds for kind in OUTCOMES) and call['created_at'] < now - HANDOVER_WAIT:
             image = os.path.join(getattr(values, 'fax_data_dir', ''), FOLDER, f"{call['uniqueid']}.tiff")
-            if call['uniqueid'] and os.path.isfile(image):
+            try:
+                written = datetime.utcfromtimestamp(os.stat(image).st_mtime) if call['uniqueid'] else None
+            except OSError:
+                written = None
+            if written is not None and written > now - IMAGE_QUIET:
+                continue  # pages are still arriving, or the hand-over is on its way: never closed under it
+            if written is not None:
                 detail = (f'{name} sent this fax, but its hand-over to Faxbot never finished, so Faxbot did not send '
                           f'it; send it again from {name}.')
                 if record(engine, call['id'], 'refused', detail=detail, now=now):

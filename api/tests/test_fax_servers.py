@@ -375,6 +375,102 @@ def test_an_uncertain_outcome_and_a_lost_hand_over_are_told_and_never_resent(sip
     assert len(tries) == 6  # two calls: three tries each, never a fourth
 
 
+def test_a_long_fax_still_arriving_is_never_closed_under_it(sip_client):
+    server = _enrol(sip_client)
+    engine = _engine()
+    from app.main import app
+    values = app.state.configuration_runtime.manager.store.read().active.values
+    assert _admit_http(sip_client, server, 'long').text == f'send:{OUTSIDE}'
+    image = _tiff('1791100000.4.tiff')
+    later = datetime.utcnow() + timedelta(minutes=45)
+    written = (later - timedelta(minutes=1) - datetime(1970, 1, 1)).total_seconds()
+    os.utime(image, (written, written))
+    assert fax_servers.settle(engine, values, now=later, email=lambda *args: ('sent', 'ok')) == []
+    assert image.exists() and [view['state'] for view in fax_servers.calls(engine)] == ['admitted']
+    # Its pages stopped arriving eleven minutes ago and no hand-over came: closed without sending, and told.
+    quiet = (later - timedelta(minutes=11) - datetime(1970, 1, 1)).total_seconds()
+    os.utime(image, (quiet, quiet))
+    told = []
+    changed = fax_servers.settle(engine, values, now=later, email=lambda values, address, body: (
+        told.append(body), ('sent', 'ok'))[1])
+    assert sorted(kind for _, kind in changed) == ['notice_sent', 'refused'] and not image.exists()
+    assert told[0]['state'] == 'refused' and 'never finished' in told[0]['sentence']
+
+
+def test_the_real_webhook_and_email_senders_deliver_the_notice(tmp_path):
+    import socket
+    import threading
+    from types import SimpleNamespace
+    body = {'event': 'fax_not_delivered', 'state': 'failed', 'to': OUTSIDE, 'sentence': 'The fax was not delivered.'}
+    hook = _Answer(200, '')
+    try:
+        assert fax_servers._send_webhook(hook.url + '/notice', body) == ('sent', 'Notice sent to your systems.')
+    finally:
+        hook.close()
+    assert hook.requests[0]['body'] == body and hook.requests[0]['path'] == '/notice'
+    refused = _Answer(500, '')
+    try:
+        assert fax_servers._send_webhook(refused.url, body)[0] == 'failed'
+    finally:
+        refused.close()
+    assert fax_servers._send_webhook('http://127.0.0.1:9/hook', body)[0] == 'failed'
+    # A minimal SMTP server: the real smtplib conversation, and the message it carried.
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    got = {}
+
+    def serve():
+        connection, _ = listener.accept()
+        stream = connection.makefile('rwb')
+
+        def say(line):
+            stream.write(line.encode() + b'\r\n')
+            stream.flush()
+        say('220 synthetic.example ESMTP')
+        data = []
+        while True:
+            line = stream.readline().decode().rstrip('\r\n')
+            if not line:
+                break
+            verb = line.split(' ', 1)[0].upper()
+            if verb == 'EHLO':
+                say('250 synthetic.example')
+            elif verb in ('MAIL', 'RCPT', 'RSET', 'NOOP'):
+                got.setdefault(verb, []).append(line)
+                say('250 OK')
+            elif verb == 'DATA':
+                say('354 go ahead')
+                while True:
+                    part = stream.readline().decode()
+                    if part.rstrip('\r\n') == '.':
+                        break
+                    data.append(part)
+                got['DATA'] = ''.join(data)
+                say('250 queued')
+            elif verb == 'QUIT':
+                say('221 bye')
+                break
+            else:
+                say('250 OK')
+        connection.close()
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    values = SimpleNamespace(intake_smtp_host='127.0.0.1', intake_smtp_port=listener.getsockname()[1],
+                             intake_smtp_security='none', intake_smtp_username='', intake_smtp_password='',
+                             intake_email_from='faxbot@example.com')
+    try:
+        assert fax_servers._send_email(values, 'fax-admin@example.com', body) == (
+            'sent', 'Notice emailed to fax-admin@example.com.')
+    finally:
+        thread.join(timeout=10)
+        listener.close()
+    assert [line.upper() for line in got['RCPT']] == ['RCPT TO:<FAX-ADMIN@EXAMPLE.COM>']
+    assert 'Subject: Fax to +13035550199 was not delivered' in got['DATA'] and 'The fax was not delivered.' in got['DATA']
+    assert fax_servers._send_email(SimpleNamespace(intake_smtp_host='', intake_email_from=''), 'a@example.com',
+                                   body)[0] == 'failed'
+
+
 def test_the_server_screens_and_the_routes_need_the_right_permissions(sip_client):
     assert sip_client.get('/admin/sip/fax-servers').status_code in (401, 403)
     bad = sip_client.post('/admin/sip/fax-servers', headers=_b(), json={'name': 'RightFax', 'address': '8.8.8.8'})

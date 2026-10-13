@@ -16,8 +16,12 @@ received over T.38 with both pages and handed over with its Call-ID; that a refu
 wrong password and no password never reached the admit question at all; and that Faxbot's own number went the
 ordinary receiving way. Nothing here reaches a carrier or a real RightFax server.
 
-    FAXBOT_NATIVE_PROOF=1 FAXBOT_NATIVE_IMAGE=faxbot-accept-asterisk:freeze-84522bec \\
-      make test-local VENV=... PYTEST_ARGS='-s tests/test_fax_server_loopback.py'
+    cd api && FAXBOT_NATIVE_PROOF=1 FAXBOT_DOCKER_CONTEXT=colima-faxbot-refresh \\
+      FAXBOT_NATIVE_IMAGE=faxbot-accept-asterisk:freeze-84522bec FAX_DISABLED=true FAX_DATA_DIR=./faxdata \\
+      DATABASE_URL='sqlite:///./test_faxbot_ci.db' /Users/davidmontgomery/Faxbot/.venv/bin/python -m pytest -q -s \\
+      -p no:cacheprovider -m native tests/test_fax_server_loopback.py
+
+(the same shape as ``make native-proof``; three containers on an --internal network, removed afterwards).
 """
 import base64
 import json
@@ -147,6 +151,15 @@ def exchange(tmp_path):
         time.sleep(2)
         endpoint = docker.asterisk(faxbot, f'pjsip show endpoint faxserver-{server_id}')
         dialplan = docker.asterisk(faxbot, 'dialplan show faxbot-fax-server')
+        # Fail fast, with why, before any call: everything the calls below depend on is loaded.
+        for found, wanted, what in ((endpoint, 'faxbot-fax-server', "Faxbot's fax server endpoint"),
+                                    (dialplan, 'faxbot-fax-server admit', "Faxbot's fax server dialplan"),
+                                    (standin(docker, sr140, 'module show like pbx_spool'), 'pbx_spool',
+                                     "the stand-in's call files (pbx_spool)"),
+                                    (standin(docker, sr140, 'pjsip show endpoints'), 'faxbot-gateway-none',
+                                     "the stand-in's endpoints")):
+            if wanted not in found:
+                raise AssertionError(f'Not loaded: {what}.\n{found[-2000:]}')
         results = {
             'outside': call(docker, sr140, OUTSIDE, 'faxbot-gateway'),
             'premium': call(docker, sr140, PREMIUM, 'faxbot-gateway'),
@@ -192,7 +205,6 @@ def test_the_sr140_stand_in_sends_through_faxbot_and_everything_else_is_refused(
     assert base64.b64decode(first['body']['callid64']) and first['body']['uniqueid']
     # The authenticated call to an outside number: answered, both pages received (over T.38), handed over once.
     assert 'result=SUCCESS' in results['outside'] and 'pages=2' in results['outside'], results['outside']
-    assert 'mode=T38' in results['outside'], results['outside']
     handovers = [item for item in seen if item['path'].endswith('/fax-server/handover')]
     assert len(handovers) == 1
     body = handovers[0]['body']
@@ -206,3 +218,5 @@ def test_the_sr140_stand_in_sends_through_faxbot_and_everything_else_is_refused(
     assert 'result=SUCCESS' in results['own'], results['own']
     inbound = [item for item in seen if item['path'].endswith('/asterisk/inbound')]
     assert len(inbound) == 1 and inbound[0]['body']['to_number'] == DID
+    # Last, so an audio fallback still lets every check above run: the stand-in's call went over T.38.
+    assert 'mode=T38' in results['outside'], results['outside']

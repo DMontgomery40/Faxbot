@@ -53,6 +53,9 @@ The build compiles Asterisk, which takes about ten minutes on one core. To reuse
 
 `fax/test-fax.tiff` is a synthetic two-page fax. To make another, run `python3 make_test_tiff.py fax/other.tiff 3` (it needs Pillow), then pass its name as the third argument to `send.sh`.
 
+The quickest stand-in host is the Mac's acceptance VM once no live run is using it, with the image already there and
+no compile: `SR140_IMAGE=faxbot-accept-asterisk:freeze-84522bec docker compose up -d --no-build`.
+
 ## The checks
 
 Each command waits for its call to end. It then prints the stand-in's result line and the SIP answers it received. Numbers are dialled as RightFax would dial them.
@@ -68,9 +71,16 @@ Each command waits for its call to end. It then prints the stand-in's result lin
 | `./send.sh 13038790349` (the partner's own Telnyx number) | `result=SUCCESS` | not listed: it is an ordinary received fax in the partner's Received |
 | `./send.sh 17208565062` six times within an hour, with `--per-hour 5` | the sixth gets `SIP/2.0 486` | the sixth is **Turned away** |
 
-The first row places a real call over Telnyx and is billed. Run only the rows you need.
+The first row places a real call over Telnyx and is billed. Run only the rows you need. For the limit check, one billed
+call is enough: `faxbot delivery providers trunk fax-servers change "SR140 stand-in" --per-hour 1`, then send twice.
 
-To check the failure notice, send to a number that is busy or doesn't answer. When the fax fails, its row says **Failed**, and the contact you set gets one email that names the number and the reason.
+If every call gets 401 or 403 even with the right password, the gateway never saw the stand-in's real address. Docker
+on the Faxbot host must publish ports with iptables (its default); with the userland proxy alone, every call arrives
+from Docker's own address, which no fax server is enrolled with.
+
+To check the failure notice, send to a number that is busy or doesn't answer. Email notices use the outgoing email
+settings under **Delivery setup → Email and folders**; on an install without them, add the server with `--webhook`
+instead. When the fax fails, its row says **Failed**, and the contact you set gets one email that names the number and the reason.
 
 ## Clean up
 
