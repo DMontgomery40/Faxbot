@@ -414,10 +414,10 @@ describe('the compact board on Sent', () => {
 // -- the one poll ---------------------------------------------------------------------------------------------
 
 // A poller on a hand-run clock: each test starts what is due and sees what was asked.
-function harness(replies: Array<OutboundNowReply | Error>) {
+function harness(replies: Array<OutboundNowReply | Error>, { hidden = false } = {}) {
   const timers = new Map<number, { run: () => void; ms: number }>();
   let next = 1;
-  let visible = true;
+  let visible = !hidden;
   let clock = 0;
   const listeners = new Set<() => void>();
   const pending: Array<(value: OutboundNowReply) => void> = [];
@@ -495,6 +495,23 @@ describe('the one outbound poll', () => {
     // A decision on a held fax: at once, whatever the cadence.
     run.poller.refresh();
     expect(run.timers()).toEqual([0]);
+  });
+
+  it('reads once in a tab opened hidden, then waits until the tab is shown', async () => {
+    const run = harness([ready(), ready()], { hidden: true });
+    run.poller.subscribe(() => undefined);
+    await run.fire();
+    expect(run.calls).toBe(1);
+    expect(run.poller.getView().state).toBe('ok');
+    // Hidden: no repeating poll, and a refresh waits too.
+    expect(run.timers()).toEqual([]);
+    run.poller.refresh();
+    await run.fire();
+    expect(run.calls).toBe(1);
+    run.setVisible(true);
+    await run.fire();
+    expect(run.calls).toBe(2);
+    expect(run.timers()).toEqual([5000]);
   });
 
   it('pauses while the tab is hidden and looks again when it is shown', async () => {
