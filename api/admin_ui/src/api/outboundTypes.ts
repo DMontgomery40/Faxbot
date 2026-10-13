@@ -9,7 +9,7 @@ export interface SendingItem {
   // Masked the way Sent masks numbers.
   to: string;
   recipient: string | null;
-  pages: number;
+  pages: number | null;
   // Only when the route or engine really reports progress; never estimated.
   page: number | null;
   route: string;
@@ -27,7 +27,7 @@ export interface WaitingItem {
   id: string;
   to: string;
   recipient: string | null;
-  pages: number;
+  pages: number | null;
   reason: string;
   sentence: string;
   since: string;
@@ -41,7 +41,7 @@ export interface NeedsYouItem {
   kind: NeedsYouKind;
   to: string;
   recipient: string | null;
-  pages: number;
+  pages: number | null;
   since: string;
   // A window hold's go-out time.
   until?: string | null;

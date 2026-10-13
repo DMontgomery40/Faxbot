@@ -70,9 +70,10 @@ export function faxName(fax: { recipient: string | null; to: string }): string {
   return fax.recipient || fax.to;
 }
 
-// "page 2 of 4" only when the route reports progress, else "4 pages".
+// "page 2 of 4" only when the route reports progress, else "4 pages"; nothing while the page count is unknown.
 export function pagesText(fax: Pick<SendingItem, 'page' | 'pages'>): string {
-  if (fax.page !== null && fax.page !== undefined && fax.pages) return `page ${fax.page} of ${fax.pages}`;
+  if (!fax.pages) return '';
+  if (fax.page !== null && fax.page !== undefined) return `page ${fax.page} of ${fax.pages}`;
   return `${fax.pages} ${plural(fax.pages, 'page', 'pages')}`;
 }
 
@@ -131,7 +132,7 @@ export function sendingLine(board: OutboundNow): string {
   if (count === 0) return BOARD_TEXT.sendingEmpty;
   const first = items[0];
   if (!first) return `${count} ${plural(count, 'fax', 'faxes')} on the line`;
-  if (count === 1) return `${faxName(first)}, ${pagesText(first)}`;
+  if (count === 1) return [faxName(first), pagesText(first)].filter(Boolean).join(', ');
   return `${faxName(first)} and ${count - 1} more`;
 }
 

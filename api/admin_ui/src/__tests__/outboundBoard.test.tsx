@@ -10,7 +10,7 @@ import Dashboard from '../components/Dashboard';
 import JobsList from '../components/JobsList';
 import OutboundBoard, { CompactOutboundBoard } from '../components/overview/OutboundBoard';
 import {
-  BOARD_TEXT, durationText, needsYouLine, todayLine, waitingLine, whenText,
+  BOARD_TEXT, durationText, needsYouLine, sendingLine, todayLine, waitingLine, whenText,
 } from '../components/overview/outboundText';
 import { OUTBOUND_POLL, OutboundPoller, type PollerDeps } from '../components/overview/useOutboundNow';
 import { emptyOutboundNow, server } from '../test/server';
@@ -317,6 +317,11 @@ describe("the tiles' lines", () => {
     expect(waitingLine({ ...board, lines: [{ ...board.lines[0], limit: null }] }))
       .toBe("Waiting for a free line: 2 of 2 calls in use, your carrier's limit at once.");
     expect(todayLine({ ...board, today: { ...board.today, accepted: 0, delivered: 3, failed: 0 } })).toBe('None failed today.');
+    const one = (pages: number | null, page: number | null) => sendingLine({ ...board, sending: { count: 1,
+      items: [{ ...board.sending.items[0], pages, page }] } });
+    expect(one(4, 2)).toBe('Riverside Clinic, page 2 of 4');
+    expect(one(1, null)).toBe('Riverside Clinic, 1 page');
+    expect(one(null, null)).toBe('Riverside Clinic');
     expect(durationText(3725000)).toBe('1:02:05');
     expect(durationText(-500)).toBe('0:00');
   });
