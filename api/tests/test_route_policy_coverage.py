@@ -36,6 +36,8 @@ OWN_AUTHENTICATION = {
     ("GET", "/efax-inbound"): "public: echoes only this server's one-time receiving-address check code",
     ("GET", "/efax-inbound/{key}"): "public: echoes only this server's one-time receiving-address check code",
     ("POST", "/_internal/asterisk/inbound"): "internal shared secret",
+    ("POST", "/_internal/asterisk/fax-server/admit"): "internal shared secret (before a fax server's call is answered)",
+    ("POST", "/_internal/asterisk/fax-server/handover"): "internal shared secret; images in the fax-server folder only",
     ("POST", "/_internal/freeswitch/outbound_result"): "internal shared secret",
     ("POST", "/_internal/hylafax/result"): "internal shared secret (the SSL Fax engine's job results)",
     ("POST", "/_internal/hylafax/started"): "the SSL Fax engine's own secret (faxes it took before a restart)",
