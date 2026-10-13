@@ -314,7 +314,23 @@ No overreach, no test failures, no unsourced claims. All clean.
 
 **No claim overreach,** but **broken harness = BIG MISS.** Should flag to lead now.
 
-*Campaign window closing 5:30 PM MT (~2h 50min).*
+---
+
+## Heartbeat 9: Oct 13, 9:31 PM UTC (3:31 PM MT, ~2h to campaign close)
+
+### Status
+
+- **PR 107:** MERGED ✓
+- **PR 108:** OPEN; shard 4 still failing (same CI run from 18:54 UTC, no new commits/fixes yet)
+- **M3a wave:** 4 of 5 features shipped (RightFax sidecar, outbound board, Telnyx, copiers/court). Last one (SR140 gateway) blocked on shard 4.
+
+### Notes
+
+Claude has not pushed a fix to PR 108 yet. Shard 4 failure is visible in CI, routine for Claude to see and address. No new activity on the branch.
+
+~2h remaining to campaign close. PR 108 may merge before close or stay open for post-campaign review—either normal.
+
+*Campaign window: 5:30 PM MT (~2h).*
 
 ---
 
