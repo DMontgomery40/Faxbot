@@ -475,3 +475,35 @@ def test_the_hand_over_sends_only_images_from_the_fax_server_folder(tmp_path):
     first, second = (request['body'] for request in faxbot.requests)
     assert (first['tiff_path'], first['faxstatus'], first['faxpages']) == (str(image), 'SUCCESS', 2)
     assert second['tiff_path'] is None  # a file outside its folder is never sent
+
+
+# The SR140 stand-in for the live test (tools/sr140-emulator) ----------------------------------------------------
+
+def test_the_sr140_stand_in_calls_like_an_sr140_and_has_every_refusal_case():
+    import re
+    import yaml
+    folder = ROOT / 'tools' / 'sr140-emulator'
+    template = (folder / 'etc' / 'pjsip.conf.template').read_text()
+    run = (folder / 'run.sh').read_text()
+    # Every value run.sh fills in is one it names for envsubst, so nothing is left as ${...} in pjsip.conf.
+    named = run.split('envsubst', 1)[1].split('\n', 1)[0]
+    names = set(re.findall(r'\$\{([A-Z0-9_]+)\}', template))
+    assert names and all('${' + name + '}' in named for name in names)
+    # No registration (SR140 Primary Gateway mode), T.38 offered, and the three endpoints send.sh may use.
+    assert 'type=registration' not in template and 't38_udptl=yes' in template
+    endpoints = set(re.findall(r'^\[([a-z0-9-]+)\]\ntype=endpoint', template, re.M))
+    assert endpoints == {'faxbot-gateway', 'faxbot-gateway-wrong', 'faxbot-gateway-none'}
+    send = (folder / 'send.sh').read_text()
+    assert 'faxbot-gateway|faxbot-gateway-wrong|faxbot-gateway-none' in send
+    assert 'outbound_auth=faxbot-gateway-auth' in template and 'password=${SR140_PASSWORD}' in template
+    none = template.split('[faxbot-gateway-none]\ntype=endpoint', 1)[1]
+    assert 'outbound_auth' not in none
+    dialplan = (folder / 'etc' / 'extensions.conf').read_text()
+    assert 'SendFAX(${FAXFILE},z)' in dialplan and 'exten => failed,1' in dialplan
+    assert 'Context: sr140-send' in send and 'Setvar: SR140_TO=' in send
+    compose = yaml.safe_load((folder / 'docker-compose.yml').read_text())
+    service = compose['services']['sr140']
+    assert service['network_mode'] == 'host' and service['entrypoint'] == ['/bin/sh', '/emulator/run.sh']
+    assert (folder / 'fax' / 'test-fax.tiff').stat().st_size < 20000
+    for script in ('run.sh', 'send.sh'):
+        assert subprocess.run(['sh', '-n', str(folder / script)], capture_output=True).returncode == 0
