@@ -117,7 +117,11 @@ def renewal(system: str = typer.Option(None, '--system', metavar='NAME', help='T
                                          help='The numbers Faxbot runs beside it (comma-separated).'),
             parallel_since: str = typer.Option(None, '--parallel-since', metavar='DATE',
                                                help='When the parallel run began.'),
-            remove: bool = typer.Option(False, '--remove', help="Withdraw the system's renewal.")):
+            remove: bool = typer.Option(False, '--remove', help="Withdraw the system's renewal."),
+            per_channel: str = typer.Option(None, '--per-channel', metavar='AMOUNT',
+                                            help='The price of one channel on the quote, such as 387.48: the channels '
+                                                 'the peak never needed are valued at it instead of the renewal\'s '
+                                                 'average. Used for this page only.')):
     """Show one page per fax server renewal: the amount and date, the channels it really needed, what Faxbot handled
     beside it, and the numbers still to move. With --system, --renews and --amount, record the renewal."""
     api = state.api()
@@ -134,7 +138,10 @@ def renewal(system: str = typer.Option(None, '--system', metavar='NAME', help='T
             'parallel_numbers': [item.strip() for item in parallel.split(',') if item.strip()],
             'parallel_since': parallel_since})
     else:
-        result = api.get('/routing/renewals')
+        result = api.get('/routing/renewals', params={'per_channel': per_channel})
+    if per_channel is not None and (remove or system):
+        # The page after the change, with the channels valued at the price given.
+        result = api.get('/routing/renewals', params={'per_channel': per_channel})
     state.out().result(result, lambda out: _pages(out, result))
 
 

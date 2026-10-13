@@ -205,16 +205,21 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
   const [renewals, setRenewals] = useState<RenewalsView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // A price per channel from the quote, for this page only: the server values the unused channels at it.
+  const [perChannel, setPerChannel] = useState('');
+  const [applied, setApplied] = useState('');
   const load = useCallback(async () => {
     try {
-      const pages = await client.call<unknown>({ method: 'GET', path: '/routing/renewals' });
+      const path = '/routing/renewals' + (applied ? `?per_channel=${encodeURIComponent(applied)}` : '');
+      const pages = await client.call<unknown>({ method: 'GET', path });
+      setError(null);
       setRenewals(usable<RenewalsView>(pages, 'pages') && usable<ChannelsView>((pages as RenewalsView).channels, 'systems')
         ? pages : null);
     } catch (failure) {
       setError(failure);
       onCount?.(null);
     }
-  }, [client, onCount]);
+  }, [client, onCount, applied]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (renewals) onCount?.(renewals.pages.length + renewals.channels.systems.filter((item) => !item.own).length);
@@ -237,6 +242,15 @@ export default function FaxServerRenewal({ client, canWrite, onCount }: {
       {message && <Alert severity="success" sx={{ my: 1 }} onClose={() => setMessage(null)}>{message}</Alert>}
       <DeliveryError error={error} />
       {renewals.sentence && <Typography variant="body2" mt={1}>{renewals.sentence}</Typography>}
+      {renewals.pages.length > 0 && (
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} mt={2} alignItems={{ sm: 'flex-start' }}>
+          <TextField size="small" label="Price per channel on the quote" placeholder="387.48" value={perChannel}
+            onChange={(event) => setPerChannel(event.target.value)}
+            helperText="The channels the busiest hour never needed are valued at this price instead of the renewal's average. Faxbot does not save it." />
+          <Button variant="outlined" size="small" sx={{ mt: { sm: 0.5 } }}
+            onClick={() => setApplied(perChannel.trim())}>Value at this price</Button>
+        </Stack>
+      )}
       {renewals.pages.map((page) => (
         <Box key={page.system} mt={2} data-testid="renewal-page">
           <Typography variant="subtitle1" fontWeight={600}>{page.system}</Typography>
