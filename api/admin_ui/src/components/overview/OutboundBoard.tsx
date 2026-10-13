@@ -4,7 +4,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   Alert, Box, Button, ButtonBase, Card, CardContent, Chip, CircularProgress, Collapse, LinearProgress, Tooltip,
-  Typography, useTheme,
+  Typography, useMediaQuery, useTheme,
 } from '@mui/material';
 import { alpha, type Theme } from '@mui/material/styles';
 import AdminAPIClient from '../../api/client';
@@ -491,7 +491,7 @@ function Groups({ board }: { board: OutboundNow }) {
       <Typography variant="subtitle2" component="h3" color="text.secondary">{BOARD_TEXT.groupsTitle}</Typography>
       <Box sx={{ display: 'grid', gap: 1.5, mt: 0.5,
         gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: board.groups.length > 1 ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)' } }}>
-        {board.groups.map((group) => <GroupBar key={group.who} group={group} />)}
+        {board.groups.map((group, index) => <GroupBar key={`${group.who}-${index}`} group={group} />)}
       </Box>
     </Box>
   );
@@ -527,6 +527,7 @@ export default function OutboundBoard({ client, onOpenSentFax, onNavigate }: {
   onNavigate?: (destination: AdminDestination) => void;
 }) {
   const view = useOutboundNow(client);
+  const still = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [open, setOpen] = useState<TileKey | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { setNow(Date.now()); }, [view.at]);
@@ -566,7 +567,7 @@ export default function OutboundBoard({ client, onOpenSentFax, onNavigate }: {
                   onClick={() => toggle(key)} />
               ))}
             </Box>
-            <Collapse in={open !== null} unmountOnExit>
+            <Collapse in={open !== null} unmountOnExit timeout={still ? 0 : 'auto'}>
               {open && (
                 <Box id={LIST_ID(open)} role="region" aria-label={shown[open].title} data-testid={LIST_ID(open)}
                   sx={{ mt: 1.5, px: { xs: 1.5, sm: 2 }, py: 1, borderRadius: 1, bgcolor: 'action.hover' }}>

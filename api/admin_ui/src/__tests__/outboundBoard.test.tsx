@@ -9,7 +9,9 @@ import type { OutboundNow, OutboundNowReply } from '../api/outboundTypes';
 import Dashboard from '../components/Dashboard';
 import JobsList from '../components/JobsList';
 import OutboundBoard, { CompactOutboundBoard } from '../components/overview/OutboundBoard';
-import { BOARD_TEXT, whenText } from '../components/overview/outboundText';
+import {
+  BOARD_TEXT, durationText, needsYouLine, todayLine, waitingLine, whenText,
+} from '../components/overview/outboundText';
 import { OUTBOUND_POLL, OutboundPoller, type PollerDeps } from '../components/overview/useOutboundNow';
 import { emptyOutboundNow, server } from '../test/server';
 
@@ -92,7 +94,7 @@ describe('the outbound board on Overview', () => {
     // The line is at its carrier's limit, so that is why faxes wait.
     expect(line('waiting')).toBe('Your phone line is full: 2 of 2 calls in use.');
     expect(count('needs_you')).toBe('4');
-    expect(line('needs_you')).toBe('1 waiting for approval, 1 with no route your rules allow');
+    expect(line('needs_you')).toBe('1 waiting for approval, 1 with no route your rules allow, and 2 more');
     expect(tile('needs_you').getAttribute('data-urgent')).toBe('true');
     expect(count('today')).toBe('231');
     expect(tile('today').textContent).toContain('delivered');
@@ -300,6 +302,23 @@ describe('Needs you decisions use the existing holds API', () => {
     fireEvent.click(await screen.findByTestId('tile-needs_you'));
     fireEvent.click(await screen.findByRole('button', { name: 'Open in Sent: the fax to +1 303 555 ••22' }));
     expect(open).toHaveBeenCalledWith('job-n3');
+  });
+});
+
+describe("the tiles' lines", () => {
+  it('reads past the 20 listed faxes, full lines, a day of late deliveries and long calls plainly', () => {
+    const board = busyBoard();
+    const many = { ...board, needs_you: { count: 25, items: Array.from({ length: 20 }, (_, index) => ({
+      ...board.needs_you.items[index % 2], id: `job-${index}` })) } };
+    expect(needsYouLine(many)).toBe('10 waiting for approval, 10 with no route your rules allow, and 5 more');
+    const lines = [board.lines[0], { ...board.lines[0], key: 'acct:p', label: 'Phaxio', in_use: 5, limit: 5, incoming: 0 }];
+    expect(waitingLine({ ...board, lines })).toBe('2 lines are full. Faxes wait for a free line.');
+    // No limit known: never called full.
+    expect(waitingLine({ ...board, lines: [{ ...board.lines[0], limit: null }] }))
+      .toBe("Waiting for a free line: 2 of 2 calls in use, your carrier's limit at once.");
+    expect(todayLine({ ...board, today: { ...board.today, accepted: 0, delivered: 3, failed: 0 } })).toBe('None failed today.');
+    expect(durationText(3725000)).toBe('1:02:05');
+    expect(durationText(-500)).toBe('0:00');
   });
 });
 

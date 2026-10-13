@@ -146,21 +146,26 @@ export function waitingLine(board: OutboundNow): string {
   return top ? top.sentence : `${board.waiting.count} waiting to go`;
 }
 
+// The two commonest kinds among the listed faxes, then how many more: "2 waiting for approval, 1 with an unknown
+// result, and 3 more".
 export function needsYouLine(board: OutboundNow): string {
   const { count, items } = board.needs_you;
   if (count === 0) return BOARD_TEXT.needsYouEmpty;
-  if (items.length < count) return items[0]?.sentence ?? `${count} ${plural(count, 'fax needs', 'faxes need')} a decision`;
   const kinds = new Map<NeedsYouKind, number>();
   items.forEach((item) => kinds.set(item.kind, (kinds.get(item.kind) ?? 0) + 1));
-  return [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2)
-    .map(([kind, n]) => `${n} ${KIND_WORDS[kind] ?? KIND_WORDS.other}`).join(', ');
+  const top = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
+  if (top.length === 0) return `${count} ${plural(count, 'fax needs', 'faxes need')} a decision`;
+  const rest = count - top.reduce((sum, [, n]) => sum + n, 0);
+  const parts = top.map(([kind, n]) => `${n} ${KIND_WORDS[kind] ?? KIND_WORDS.other}`);
+  return rest > 0 ? `${parts.join(', ')}, and ${rest} more` : parts.join(', ');
 }
 
 export function todayLine(board: OutboundNow): string {
-  const { accepted, failed } = board.today;
-  if (accepted === 0 && failed === 0 && board.today.delivered === 0) return BOARD_TEXT.todayEmpty;
+  const { accepted, delivered, failed } = board.today;
+  if (accepted === 0 && failed === 0 && delivered === 0) return BOARD_TEXT.todayEmpty;
   const failedPart = failed === 0 ? 'None failed' : `${failed} failed`;
-  return `${failedPart}, of ${accepted} sent today.`;
+  // Faxes accepted before midnight can still be delivered or fail today.
+  return accepted === 0 ? `${failedPart} today.` : `${failedPart}, of ${accepted} sent today.`;
 }
 
 // -- lists -----------------------------------------------------------------------------------------------
