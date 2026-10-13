@@ -76,7 +76,7 @@ export default function ProviderAccountsDialog({ open, state, account, currency,
     for (const field of kind.fields) {
       const value = (fields[field.name] ?? '').trim();
       const kept = account?.secrets_set.includes(field.name);
-      if (field.required && !value && !(field.secret && kept)) return `Fill in ${field.label}.`;
+      if (field.required && !field.faxbot_creates && !value && !(field.secret && kept)) return `Fill in ${field.label}.`;
     }
     if (daily.trim() && !AMOUNT.test(daily.trim())) return 'Write the daily limit as an amount, such as 25.';
     return null;
@@ -154,7 +154,7 @@ export default function ProviderAccountsDialog({ open, state, account, currency,
           )}
           {kind?.fields.map((field) => (
             <TextField key={field.name} size="small" label={field.label} type={field.secret ? 'password' : 'text'}
-              value={fields[field.name] ?? ''} required={field.required && !(field.secret && account?.secrets_set.includes(field.name))}
+              value={fields[field.name] ?? ''} required={field.required && !field.faxbot_creates && !(field.secret && account?.secrets_set.includes(field.name))}
               autoComplete={field.secret ? 'new-password' : 'off'}
               placeholder={field.secret && account?.secrets_set.includes(field.name) ? 'Saved. Leave empty to keep it.' : undefined}
               helperText={field.help ?? undefined}

@@ -587,6 +587,15 @@ def test_microsoft_365_internal_mail_sends_and_forged_internal_marks_do_not(clie
         server.close()
 
 
+def test_email_to_fax_reads_rightfax_addressing_from_senders_moved_off_rightfax(client, imap):
+    jane, nora = _people(client)
+    source = _email_to_fax(client, imap, jane, nora)
+    imap.add(email(subject='Referral', headers=[('Cc', '"/name=Dana Lee/fax=303-555-0177/" <fax@example.com>')]))
+    assert check(poller(imap), source['id'])[0]
+    sent = items(client)[0]
+    assert sent['state'] == 'sent' and sent['to_number'] == '+13035550177'
+
+
 def test_email_to_fax_needs_one_number_and_a_document(client, imap):
     jane, nora = _people(client)
     source = _email_to_fax(client, imap, jane, nora)

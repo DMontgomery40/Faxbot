@@ -42,6 +42,26 @@ describe('Fax server renewal', () => {
     await waitFor(() => expect(counted).toBe(2));
   });
 
+  it('values the unused channels at the price per channel from the quote, for this page only', async () => {
+    const asked: Array<string | null> = [];
+    server.use(http.get('/routing/renewals', ({ request }) => {
+      const price = new URL(request.url).searchParams.get('per_channel');
+      asked.push(price);
+      if (price === 'abc') return HttpResponse.json({ detail: 'Write the price per channel as an amount, such as 387.48.' }, { status: 400 });
+      return HttpResponse.json(price ? { ...RENEWALS, pages: [{ ...RENEWALS.pages[0], sentences: [
+        'At $387.48 a channel, the price you entered, those 5 channels are $1,937.40.'] }] } : RENEWALS);
+    }));
+    render(<FaxServerRenewal client={client()} canWrite={false} />);
+    const section = await screen.findByTestId('fax-server-renewal');
+    fireEvent.change(within(section).getByLabelText('Price per channel on the quote'), { target: { value: ' 387.48 ' } });
+    fireEvent.click(within(section).getByRole('button', { name: 'Value at this price' }));
+    await waitFor(() => expect(section.textContent).toContain('those 5 channels are $1,937.40.'));
+    expect(asked).toEqual([null, '387.48']);
+    fireEvent.change(within(section).getByLabelText('Price per channel on the quote'), { target: { value: 'abc' } });
+    fireEvent.click(within(section).getByRole('button', { name: 'Value at this price' }));
+    expect(await within(section).findByText(/Write the price per channel as an amount/)).toBeTruthy();
+  });
+
   it('saves a renewal with its parallel numbers and leaves an imported file out', async () => {
     const sent: unknown[] = [];
     const removed: string[] = [];

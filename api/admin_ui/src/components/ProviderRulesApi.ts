@@ -388,6 +388,8 @@ export interface ProviderField {
   secret: boolean;
   required: boolean;
   help?: string | null;
+  // Faxbot can fill it in itself once the account is added (a Telnyx Fax API account's Fax Application).
+  faxbot_creates?: boolean;
 }
 
 export interface ProviderKind {

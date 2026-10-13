@@ -38,6 +38,11 @@ reference, read on 2026-10-07; none is reconstructed from memory.
   Blocked", 5200 "Fax Rendering Issue") are from search-result text attributed
   to Documo's help pages. Not yet run against a real Documo account; an
   integration checks ``resultCode`` against Documo's own list.
+- **Telnyx Fax API** (``failure_reason``, https://developers.telnyx.com/api-reference/programmable-fax-commands/
+  view-a-fax and https://support.telnyx.com/en/articles/4967498-fax-api-error-list, read 2026-10-13): the adapter
+  classifies it itself (``telnyx_fax_service.BEFORE_FAX_DATA``): busy, no answer, declined, unallocated or
+  unreachable numbers, no fax tones, and refusals before any call (document, number, account limits) ended before
+  data. Telnyx publishes no such grouping; every other reason is unknown and waits for a person.
 - **eFax Enterprise**: its published quick-start guide names an error-code list
   in the API portal that is not public; Faxbot classifies nothing (no rule
   fallback) until that list is read.

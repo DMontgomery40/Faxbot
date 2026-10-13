@@ -13,6 +13,7 @@ PROVIDER_LABELS = {
     'sinch': 'Sinch',
     'signalwire': 'SignalWire',
     'documo': 'Documo',
+    'telnyx_fax': 'Telnyx Fax API',
     'humblefax': 'HumbleFax',
     'efax': 'eFax',
     'sip': 'Carrier trunk',

@@ -88,7 +88,7 @@ const CARRIER_REGIONS: Record<string, { country: string; region: string }> = {
 
 // Fax services by the names people know them; Sinch and SignalWire also sell carrier lines.
 const SERVICE_NAMES: Record<string, string> = { sinch: 'Sinch Fax', signalwire: 'SignalWire Fax' };
-const SERVICES = ['humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo'];
+const SERVICES = ['humblefax', 'efax', 'phaxio', 'sinch', 'telnyx_fax', 'signalwire', 'documo'];
 
 export interface ChoiceOption { value: string; label: string }
 export interface ChoiceGroup { title: string; options: ChoiceOption[] }

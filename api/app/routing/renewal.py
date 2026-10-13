@@ -50,11 +50,16 @@ REFERENCE = (
      'source': 'https://mypaperlessfax.com/rightfax-sustaining-maintenance/',
      'label': "A RightFax reseller's table of OpenText's support dates", 'read_on': '2026-10-08',
      'products': ('rightfax',)},
-    {'id': 'sr140-cdw', 'sentence': ('Brooktrout SR140 (R3) channel licences listed at CDW: 4 channels $2,173.99, '
-                                     '8 channels $4,286.25, 30 channels $16,266.22.'),
+    {'id': 'sr140-cdw', 'sentence': ('A Brooktrout SR140 (R3) 8-channel licence (951-104-40) is $4,296.99 at CDW, '
+                                     'against a list price of $5,221.26: about $537 a channel, paid once.'),
      'source': 'https://www.cdw.com/product/brooktrout-sr140-v.-r3-license-8-channels/2109558',
-     'label': 'CDW listings, seen in search results (pages not opened)', 'read_on': '2026-10-10',
+     'label': "CDW's product page", 'read_on': '2026-10-13',
      'products': ('rightfax', 'sr140', 'brooktrout', 'xm fax', 'xmedius')},
+    {'id': 'txdmv-rightfax', 'sentence': ('The Texas Department of Motor Vehicles paid OpenText $387.48 a FoIP channel '
+                                          'for RightFax maintenance from September 2024 to August 2025, 5% more than '
+                                          'the year before; its 9 channels were $3,487.31 of a $7,508.76 renewal.'),
+     'source': 'https://ftp.txdmv.gov/pub/txdmv-info/fas/contract_reporting/60800%200000014970.pdf',
+     'label': 'Texas DMV purchase order 14970', 'read_on': '2026-10-13', 'products': ('rightfax',)},
 )
 
 
@@ -275,8 +280,14 @@ def _parallel(engine, numbers, since, now):
             'sent': sum(sent_by.values()), 'sent_delivered': sent_by.get('SUCCESS', 0)}
 
 
-def page(engine, values, system, *, today=None, now=None, loaded=None):
-    """The renewal page for one system, in the order the administrator reads it."""
+def page(engine, values, system, *, today=None, now=None, loaded=None, per_channel=None):
+    """The renewal page for one system, in the order the administrator reads it.
+
+    ``per_channel`` (micros) is a price for one channel the administrator enters, such as the line item on the quote
+    ($387.48 a FoIP channel on Texas DMV's purchase order 14970). With it, the channels the peak never needed are valued
+    at that price; without it, at the renewal's average (its amount over the channels it licenses), which overstates
+    them when the server, support and other licences are part of the amount. Nothing is stored.
+    """
     from .channel_peak import report, system_calls
     from .database import utcnow
     from .inventory import inventory_rows
@@ -312,14 +323,30 @@ def page(engine, values, system, *, today=None, now=None, loaded=None):
         found = report(calls, licensed=licensed, time_zone=zone)
         channels = {**found, 'per_channel': None, 'unneeded_value': None}
         sentence = found['sentence']
-        if renewal and licensed and found.get('never_used'):
+        unneeded = found.get('never_used')
+        if unneeded and per_channel is not None:
+            currency = renewal['currency'] if renewal else 'USD'
+            channels['per_channel'] = _cents(per_channel, currency)
+            channels['unneeded_value'] = _cents(per_channel * unneeded, currency)
+            channels['priced_by'] = 'line_item'
+            sentence += (f" At {channels['per_channel']} a channel, the price you entered, those {unneeded} channels "
+                         f"are {channels['unneeded_value']}.")
+            if renewal and licensed:
+                from .costs import parse_amount
+                total = parse_amount(renewal['amount'], whole_digits=9)
+                channels['average_per_channel'] = _cents(total / licensed, renewal['currency'])
+                sentence += (f" The renewal's average of {channels['average_per_channel']} a channel would make them "
+                             f"{_cents(total * unneeded / licensed, renewal['currency'])}, because it spreads the "
+                             'whole amount over the channels.')
+        elif renewal and licensed and unneeded:
             from .costs import parse_amount
             total = parse_amount(renewal['amount'], whole_digits=9)
             channels['per_channel'] = _cents(total / licensed, renewal['currency'])
-            channels['unneeded_value'] = _cents(total * found['never_used'] / licensed, renewal['currency'])
+            channels['unneeded_value'] = _cents(total * unneeded / licensed, renewal['currency'])
+            channels['priced_by'] = 'average'
             sentence += (f" At this renewal's average of {channels['per_channel']} a channel, those "
-                         f"{found['never_used']} channels are {channels['unneeded_value']} of it, if it is priced by "
-                         'channel.')
+                         f"{unneeded} channels are {channels['unneeded_value']} of it, if it is priced by "
+                         'channel. Enter the price per channel from the quote to value them by line item.')
         sentences.append(sentence)
         result['channels'] = channels
     else:
@@ -383,7 +410,7 @@ def page(engine, values, system, *, today=None, now=None, loaded=None):
     return result
 
 
-def view(engine, values, *, today=None, now=None):
+def view(engine, values, *, today=None, now=None, per_channel=None):
     """A page for every system with a renewal or imported call records, and the channel report beside them; each
     system's calls are read once."""
     from .channel_peak import imports, system_calls, view as channel_view
@@ -391,7 +418,8 @@ def view(engine, values, *, today=None, now=None):
     names = list(dict.fromkeys([*renewals, *(row['system'] for row in imports(engine))]))
     loaded = {name: system_calls(engine, name) for name in names}
     licensed_for = {name: row['licensed_channels'] for name, row in renewals.items() if row['licensed_channels']}
-    return {'pages': [page(engine, values, name, today=today, now=now, loaded=loaded[name]) for name in names],
+    return {'pages': [page(engine, values, name, today=today, now=now, loaded=loaded[name], per_channel=per_channel)
+                      for name in names],
             'channels': channel_view(engine, values, now=now, loaded=loaded, licensed_for=licensed_for),
             'sentence': None if names else ('No fax server renewal yet. Enter the renewal of the fax server Faxbot '
                                             'could replace, and import its call records.'),

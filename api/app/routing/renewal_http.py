@@ -81,13 +81,25 @@ async def remove_channel_import(import_id: str, request: Request, identity=Depen
 
 
 @router.get('/renewals', dependencies=[Depends(require_permission('settings:read'))])
-async def renewals(request: Request):
+async def renewals(request: Request, per_channel: str | None = None):
     """One page per fax server renewal (amount and date, channels at peak, the parallel run, what is left to move),
-    and the channel report for Faxbot's own trunk and each fax server whose call records you imported."""
+    and the channel report for Faxbot's own trunk and each fax server whose call records you imported.
+
+    ``per_channel`` (such as 387.48) values the channels the peak never needed at that line-item price instead of the
+    renewal's average; it is read for this page only and never stored."""
+    from .costs import InvalidRateCard, parse_amount
     from .renewal import view
+    price = None
+    if per_channel not in (None, ''):
+        try:
+            price = parse_amount(str(per_channel).strip(), whole_digits=7)
+        except InvalidRateCard:
+            raise HTTPException(400, detail='Write the price per channel as an amount, such as 387.48.') from None
+        if not price:
+            raise HTTPException(400, detail='Write the price per channel as an amount, such as 387.48.')
     store = _store(request)
     values = _values(request)
-    return await _call(lambda: view(store.engine, values))
+    return await _call(lambda: view(store.engine, values, per_channel=price))
 
 
 class RenewalIn(BaseModel):

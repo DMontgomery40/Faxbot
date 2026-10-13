@@ -11,6 +11,7 @@ import type { ChargesView, Invoice, InvoiceDetail, InvoiceInput, InvoicesView, S
 import type { Capabilities } from './capabilityTypes';
 import type { CourtFax, CourtProfile } from './courtTypes';
 import type { AdmissionSettings, PartnerAdmission } from './admissionTypes';
+import type { OutboundNowReply } from './outboundTypes';
 import type {
   DigitalAccountInput, DigitalAccountPatch, DigitalAccountsState, DigitalAddressInput, DigitalMessage, DigitalRecipient,
 } from './digitalTypes';
@@ -335,6 +336,13 @@ function retryAfterMs(res: Response): number {
   const header = res.headers.get('Retry-After')?.trim() ?? '';
   const seconds = /^\d+$/.test(header) ? Number(header) : 1;
   return Math.min(seconds, 5) * 1000;
+}
+// Retry-After as seconds or an HTTP date, in milliseconds from now; null when the server named no time.
+function retryAfterHeaderMs(res: Response, now = Date.now()): number | null {
+  const header = res.headers.get('Retry-After')?.trim() ?? '';
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  const date = header ? Date.parse(header) : NaN;
+  return Number.isNaN(date) ? null : Math.max(0, date - now);
 }
 type PolicyResult = { policy_version: number };
 
@@ -1128,6 +1136,15 @@ class AdminAPIClient {
     };
   }
 
+  // The live outbound board (GET /outbound/now), polled by one hook per tab (hooks/useOutboundNow.ts). A busy
+  // server (429 or 503) is not a signed-out session: the reply says how long it asked to wait, and the hook backs off.
+  async outboundNow(): Promise<OutboundNowReply> {
+    const res = await this.send('/outbound/now');
+    if (res.status === 429 || res.status === 503) return { kind: 'busy', retryAfterMs: retryAfterHeaderMs(res) };
+    if (!res.ok) throw new AdminAPIError(res.status, res.statusText, await readDetail(res));
+    return { kind: 'ready', board: await res.json() };
+  }
+
   // One request from the provider-rules table (components/ProviderRulesApi.ts): rules, approvals and accounts.
   // An empty answer (204 after discarding a draft) reads as undefined.
   async call<T>(request: { method: string; path: string; body?: unknown }): Promise<T> {
@@ -1916,6 +1933,18 @@ class AdminAPIClient {
   async lookUpTollFree(number: string, search: { npi?: string; name?: string; city?: string; state?: string })
     : Promise<TollFreeSuggestions> {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
+  }
+
+  // The provider account list (Delivery setup → Providers & accounts); its generation guards each change.
+  async getProviderAccounts(): Promise<{ generation: number }> {
+    return this.json('/admin/providers/accounts');
+  }
+
+  // Create a Fax Application in the account's Telnyx account and save its ID on the account.
+  async createTelnyxFaxApplication(key: string, expectedGeneration: number)
+    : Promise<{ generation: number; created?: { key?: string; connection_id?: string; sentence?: string } }> {
+    return this.json(`/admin/providers/accounts/${id(key)}/telnyx-fax-application`, { method: 'POST',
+      body: JSON.stringify({ expected_generation: expectedGeneration }) });
   }
 
   // Direct messages and FHIR (Delivery setup → Providers & accounts): the HISP account and FHIR clients; secrets are write-only.

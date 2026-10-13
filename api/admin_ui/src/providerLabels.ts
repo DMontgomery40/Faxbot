@@ -12,6 +12,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   sinch: 'Sinch',
   signalwire: 'SignalWire',
   documo: 'Documo',
+  telnyx_fax: 'Telnyx Fax API',
   humblefax: 'HumbleFax',
   efax: 'eFax',
   sip: 'Carrier trunk',
@@ -19,7 +20,8 @@ export const PROVIDER_LABELS: Record<string, string> = {
 };
 
 // Built-in providers in menu order.
-export const BUILTIN_PROVIDERS = ['phaxio', 'sinch', 'signalwire', 'documo', 'humblefax', 'efax', 'sip', 'freeswitch'];
+export const BUILTIN_PROVIDERS = ['phaxio', 'sinch', 'signalwire', 'documo', 'telnyx_fax', 'humblefax', 'efax', 'sip',
+  'freeswitch'];
 
 // Built-in providers that can receive faxes; the others only send.
 export const RECEIVING_PROVIDERS = new Set(['phaxio', 'sinch', 'efax', 'humblefax', 'sip']);
