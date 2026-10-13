@@ -103,14 +103,29 @@ class FaxResources:
             raise FaxAccessError('reset_required')
         self.store.require_lock_on(connection)
         resource, parent, tree, valid = self.control._resource_query()
+        # Containers hang off the installation (``_container_shape``); the parent index finds them without reading
+        # every fax.
         containers = frozenset(connection.execute(sa.select(resource.c.id).select_from(tree).where(
-            valid, resource.c.kind.in_(['personal', 'legacy']),
+            resource.c.parent_id == 'installation', resource.c.kind.in_(['personal', 'legacy']), valid,
             self.control._authority_predicate(actor, source, 'fax:read', resource, parent))).scalars())
-        visible = self.control.visible_resource_ids_on(connection, actor, 'fax:read', 'outbound', now=now)
+        # A fax outside those containers is readable only through a grant (or a key's limit) on that fax itself:
+        # one on its container or the installation would have covered the container. visible_outbound_ids_on's own
+        # predicate is asked of those faxes alone, so the lock is held for the faxes shared one by one, not for
+        # every fax ever sent.
+        assignments, ceilings = self.tables['access_assignments'], self.tables['access_key_grants']
         resources = self.tables['access_resources']
-        outside = sa.select(resources.c.id).where(resources.c.id.in_(visible))
+        granted = sa.select(resources.c.id).where(
+            resources.c.id.in_(sa.union(sa.select(assignments.c.resource_id), sa.select(ceilings.c.resource_id))),
+            resources.c.kind == 'outbound')
         if containers:
-            outside = outside.where(resources.c.parent_id.not_in(sorted(containers)))
+            granted = granted.where(resources.c.parent_id.not_in(sorted(containers)))
+        granted = sorted(connection.execute(granted).scalars())
+        if not granted:
+            return containers, frozenset()
+        resource, parent, tree, valid = self.control._resource_query()
+        outside = sa.select(resource.c.id).select_from(tree).where(
+            resource.c.id.in_(granted), valid, self.control._applicability('fax:read', resource, actor),
+            self.control._authority_predicate(actor, source, 'fax:read', resource, parent))
         return containers, frozenset(connection.execute(outside).scalars())
 
     def require_outbound_on(self, connection, actor, job_id, permission, *, now):

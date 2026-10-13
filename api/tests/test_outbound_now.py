@@ -327,6 +327,15 @@ def test_the_engine_shows_only_while_faxbot_switched_new_calls_to_audio(trunk, t
     assert engine['sentence'] == ('Your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot '
                                   'sends audio fax until the network is fixed.')
     assert engine['fix'].startswith('Faxbot switches back by itself')
+    # A T.38 call that got no fax data back: Faxbot switches back by itself only after its network check saw this
+    # network blocked; otherwise "Try T.38 again" is the way back.
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK, NOW, network='open')
+    engine = trunk.board._engine(values)
+    assert engine['sentence'].startswith('A T.38 fax got no fax data back on this network')
+    assert engine['fix'] == ('Once your network lets fax over IP (T.38) data come back, open Carrier trunk and choose '
+                             '"Try T.38 again".')
+    sip_fax_mode.write(values, 'audio', sip_fax_mode.NO_DATA_BACK, NOW, network='blocked')
+    assert trunk.board._engine(values)['fix'].startswith('Faxbot switches back by itself once its network check')
     # A person's own choice of audio fax is theirs: nothing on the board.
     sip_fax_mode.write(values, 'audio', sip_fax_mode.CHOSEN, NOW)
     assert trunk.board._engine(values) is None
@@ -553,3 +562,19 @@ def test_a_section_that_fails_over_http_still_answers_200(client, monkeypatch):
     response = client.get('/outbound/now', headers=ADMIN)
     assert response.status_code == 200, response.text
     assert response.json()['not_checked'] == ['engine'] and response.json()['engine'] is None
+
+
+def test_a_sender_created_after_a_viewer_looked_shows_at_the_next_aggregate(client):
+    """A new sender's personal container is an access change: the administrator's kept scope is read again."""
+    from app import outbound_now as served
+    from app.routing.background import installation_engine
+    assert client.get('/outbound/now', headers=ADMIN).status_code == 200
+    board = served.for_engine(installation_engine(client.app)[0])
+    reads = board.scope_reads
+    created = client.post('/admin/api-keys', headers=ADMIN, json={'name': 'new sender', 'scopes': ['fax:send']})
+    assert created.status_code == 200, created.text
+    job = _send(client, {'X-API-Key': created.json()['token']}, NUMBER)
+    board._last = None                        # the next aggregate, with the administrator's scope still kept
+    seen = client.get('/outbound/now', headers=ADMIN).json()
+    assert job in items(seen, 'needs_you')
+    assert board.scope_reads == reads + 1

@@ -517,8 +517,14 @@ class Board:
             return None
         said = said.removeprefix('Off: ')
         at = found.get('at')
+        fix = ENGINE_FIXES.get(found['reason'])
+        record = sip_fax_mode.read(values) or {}
+        if found['reason'] == sip_fax_mode.NO_DATA_BACK and record.get('network') == 'blocked':
+            # The network check turns T.38 on again by itself only after it saw this network blocked
+            # (sip_fax_mode.network_decision).
+            fix = ENGINE_FIXES['no_data_back_blocked']
         return {'audio': True, 'since': (at if not at or at.endswith('Z') else at + 'Z'),
-                'sentence': said[:1].upper() + said[1:], 'fix': ENGINE_FIXES.get(found['reason'])}
+                'sentence': said[:1].upper() + said[1:], 'fix': fix}
 
     def sentence(self, fax, found):
         """The claim's own sentence for one waiting fax shown (``Capacity.waiting_sentence``): asked once for its
@@ -575,8 +581,9 @@ ENGINE_FIXES = {
     'network': ('Faxbot switches back by itself once your network lets fax over IP (T.38) data come back. Carrier '
                 'trunk shows the network check.'),
     'no_data_back': ('Once your network lets fax over IP (T.38) data come back, open Carrier trunk and choose '
-                     '"Try T.38 again". Faxbot also switches back by itself when its network check finds the network '
-                     'fixed.'),
+                     '"Try T.38 again".'),
+    'no_data_back_blocked': ('Faxbot switches back by itself once its network check finds the network fixed. You can '
+                             'also open Carrier trunk and choose "Try T.38 again" when you have fixed it.'),
     'carrier': 'Nothing to do: your carrier carries fax as audio inside its own network.',
     'encrypted': 'Faxbot switches back by itself when calls over this trunk no longer need encryption.',
 }
