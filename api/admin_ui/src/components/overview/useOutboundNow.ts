@@ -1,12 +1,21 @@
 // The one poll of the live outbound board (GET /outbound/now) per tab, shared by Overview and Sent.
 // It asks only while the tab is visible, never starts a request before the last one ended, and backs off when the
 // server is busy (429 or 503, honouring Retry-After) without treating that as a signed-out session (#83, D3).
+// Every request signs in, which writes the session's last use, so it asks every 5 seconds only while faxes are
+// sending or waiting and every 15 seconds otherwise; after a decision on a held fax it asks at once.
 import { useSyncExternalStore } from 'react';
 import AdminAPIClient, { AdminAPIError } from '../../api/client';
 import type { OutboundNow, OutboundNowReply } from '../../api/outboundTypes';
 
-// How often the board looks again, and the longest it waits after a busy or failed answer.
-export const OUTBOUND_POLL = { intervalMs: 5000, maxBackoffMs: 60 * 1000, maxRetryAfterMs: 5 * 60 * 1000 };
+// How often the board looks again (while faxes are sending or waiting, and otherwise), and the longest it waits
+// after a busy or failed answer.
+export const OUTBOUND_POLL = { activeMs: 5000, quietMs: 15 * 1000, maxBackoffMs: 60 * 1000, maxRetryAfterMs: 5 * 60 * 1000 };
+
+// Faxes are moving (or the server could not say whether they are): look again soon.
+export function pollDelay(board: OutboundNow): number {
+  const unread = board.not_checked.includes('sending') || board.not_checked.includes('waiting');
+  return unread || board.sending.count > 0 || board.waiting.count > 0 ? OUTBOUND_POLL.activeMs : OUTBOUND_POLL.quietMs;
+}
 
 // What the last poll found: a reading, a busy server, no answer, or a board this account may not or cannot read.
 export type OutboundPollState = 'loading' | 'ok' | 'busy' | 'failed' | 'denied' | 'unavailable';
@@ -58,7 +67,8 @@ export class OutboundPoller {
     };
   };
 
-  // Look again now, as after a decision or Refresh; during a poll, once more as soon as it ends.
+  // Look again now, as after a decision on a held fax or Refresh; during a poll, once more as soon as it ends. A busy
+  // server's back-off still holds.
   refresh = (): void => {
     if (this.stopped || this.listeners.size === 0) return;
     if (this.inFlight) {
@@ -109,22 +119,23 @@ export class OutboundPoller {
   }
 
   private backoff(): number {
-    return Math.min(OUTBOUND_POLL.intervalMs * 2 ** this.failures, OUTBOUND_POLL.maxBackoffMs);
+    return Math.min(OUTBOUND_POLL.activeMs * 2 ** this.failures, OUTBOUND_POLL.maxBackoffMs);
   }
 
   private async poll() {
     if (this.inFlight || this.stopped || this.listeners.size === 0 || !this.deps.visible()) return;
     this.inFlight = true;
-    let wait = OUTBOUND_POLL.intervalMs;
+    let wait = OUTBOUND_POLL.activeMs;
     try {
       const reply = await this.deps.fetch();
       if (reply.kind === 'ready') {
         this.failures = 0;
+        wait = pollDelay(reply.board);
         this.set({ board: reply.board, at: this.deps.now(), state: 'ok' });
       } else {
         this.failures += 1;
         wait = reply.retryAfterMs === null ? this.backoff()
-          : Math.min(Math.max(reply.retryAfterMs, OUTBOUND_POLL.intervalMs), OUTBOUND_POLL.maxRetryAfterMs);
+          : Math.min(Math.max(reply.retryAfterMs, OUTBOUND_POLL.activeMs), OUTBOUND_POLL.maxRetryAfterMs);
         this.set({ ...this.view, state: 'busy' });
       }
     } catch (error) {

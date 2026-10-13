@@ -17,8 +17,8 @@ import { RefuseDialog, SendAnywayDialog } from '../ProviderRulesHeld';
 import { DeliveryError, Notice } from '../delivery/shared';
 import {
   ACTION_LABEL, BOARD_TEXT, busyText, checkedText, decisionNotice, deliveredOfText, failedText, faxName, goesOutText,
-  inUseText, LEGEND, lineFull, needsYouLine, notChecked, onTheLineText, pagesText, routeText, sendingLine, shownOfText,
-  sinceText, todayLine, untilText, waitingLine, waitingMoreText,
+  inUseText, LEGEND, lineFull, needsYouLine, needsYouSentence, notChecked, onTheLineText, pagesText, routeText,
+  sendingLine, shownOfText, sinceText, todayLine, untilText, waitingLine, waitingMoreText, waitingSentence,
 } from './outboundText';
 import { useOutboundNow, type OutboundNowView } from './useOutboundNow';
 
@@ -266,7 +266,7 @@ function WaitingList({ board, now }: { board: OutboundNow; now: number }) {
               </Typography>
             )}
           </Box>
-          <Typography variant="body2" color="text.secondary">{fax.sentence}</Typography>
+          <Typography variant="body2" color="text.secondary">{waitingSentence(board, fax)}</Typography>
         </Row>
       ))}
       {waiting.count > waiting.items.length && (
@@ -281,7 +281,7 @@ function heldFax(item: NeedsYouItem): Hold {
   return {
     id: item.hold!.id, job_id: item.id, kind: item.kind === 'approval' || item.kind === 'no_route' ? item.kind : 'window',
     to_number: faxName(item), pages: item.pages, sender_name: null, requested_at: item.since, until: item.until ?? null,
-    reason: item.sentence, can_decide: true, version: item.hold!.version,
+    reason: needsYouSentence(item), can_decide: true, version: item.hold!.version,
   };
 }
 
@@ -359,7 +359,7 @@ function NeedsYouList({ client, board, now, onOpenSentFax, onChanged }: {
               <Typography variant="body2" fontWeight={600}>{faxName(item)}</Typography>
               <Typography variant="caption" color="text.secondary">{sinceText(item.since, now)}</Typography>
             </Box>
-            <Typography variant="body2" color="text.secondary">{item.sentence}</Typography>
+            <Typography variant="body2" color="text.secondary">{needsYouSentence(item)}</Typography>
             {item.kind === 'window' && goesOutText(item.until, now) && (
               <Typography variant="caption" color="text.secondary" display="block">{goesOutText(item.until, now)}</Typography>
             )}

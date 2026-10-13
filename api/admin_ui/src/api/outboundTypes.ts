@@ -29,7 +29,8 @@ export interface WaitingItem {
   recipient: string | null;
   pages: number | null;
   reason: string;
-  sentence: string;
+  // The fax's own sentence; the console falls back to its reason's when there is none.
+  sentence: string | null;
   since: string;
   until: string | null;
 }
@@ -45,7 +46,8 @@ export interface NeedsYouItem {
   since: string;
   // A window hold's go-out time.
   until?: string | null;
-  sentence: string;
+  // The console falls back to the kind's own sentence when there is none.
+  sentence: string | null;
   // What POST /routing/holds/{id}/approve|refuse|check-again need, for a fax a rule holds.
   hold: { id: string; version: number } | null;
   // Worked out by the server for this viewer: approval → approve, refuse; no route → send by another account,

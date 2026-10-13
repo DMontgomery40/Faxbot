@@ -17,9 +17,9 @@ import { emptyOutboundNow, server } from '../test/server';
 
 const keyClient = (onUnauthorized?: () => void) => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' }, { onUnauthorized });
 
-const INTERVAL = OUTBOUND_POLL.intervalMs;
+const CADENCE = { ...OUTBOUND_POLL };
 afterEach(() => {
-  OUTBOUND_POLL.intervalMs = INTERVAL;
+  Object.assign(OUTBOUND_POLL, CADENCE);
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
 });
 
@@ -98,7 +98,8 @@ describe('the outbound board on Overview', () => {
     expect(tile('needs_you').getAttribute('data-urgent')).toBe('true');
     expect(count('today')).toBe('231');
     expect(tile('today').textContent).toContain('delivered');
-    expect(line('today')).toBe('12 failed, of 260 sent today.');
+    // 231 delivered and 12 failed of 260: 17 are still on their way.
+    expect(line('today')).toBe('12 failed, 17 still on their way, of 260 faxes today');
 
     const meter = screen.getByTestId('outbound-line');
     expect(meter.getAttribute('data-full')).toBe('true');
@@ -106,7 +107,7 @@ describe('the outbound board on Overview', () => {
     expect(within(meter).getByText('Full')).toBeTruthy();
     expect(within(meter).getByText('2 of 2 calls in use (1 incoming). Your carrier allows 2 at once.')).toBeTruthy();
     expect([...meter.querySelectorAll('[data-slot]')].map((slot) => slot.getAttribute('data-slot'))).toEqual(['out', 'in']);
-    expect(screen.getByTestId('outbound-checked').textContent).toMatch(/^Checked /);
+    expect(screen.getByTestId('outbound-checked').textContent).toMatch(/^Updated \d{1,2}:\d{2}:\d{2}\b[^.]*$/);
     expect(screen.queryByTestId('outbound-engine')).toBeNull();
   });
 
@@ -251,6 +252,21 @@ describe('Needs you decisions use the existing holds API', () => {
     ]);
   });
 
+  it('looks again at once after a decision, not at the next tick', async () => {
+    Object.assign(OUTBOUND_POLL, { activeMs: 60 * 1000, quietMs: 60 * 1000 });
+    const seen: Seen[] = [];
+    holdsApi(seen);
+    let asked = 0;
+    server.use(http.get('/outbound/now', () => { asked += 1; return HttpResponse.json(busyBoard()); }));
+    render(<OutboundBoard client={keyClient()} />);
+    await waitFor(() => expect(screen.getByTestId('outbound-board').getAttribute('data-state')).toBe('ok'));
+    expect(asked).toBe(1);
+    fireEvent.click(tile('needs_you'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve: the fax to Front Range Labs' }));
+    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(asked).toBe(2));
+  });
+
   it('asks for a reason before refusing, as the held-fax control does', async () => {
     const seen: Seen[] = [];
     holdsApi(seen);
@@ -305,6 +321,30 @@ describe('Needs you decisions use the existing holds API', () => {
   });
 });
 
+describe('a fax the server sent without its own sentence', () => {
+  it('says its reason or the kind of decision it waits for, never nothing', async () => {
+    const board = busyBoard();
+    board.waiting.items = [
+      { ...board.waiting.items[0], sentence: null },
+      { ...board.waiting.items[1], reason: 'unknown_later', sentence: null },
+    ];
+    board.needs_you.items = board.needs_you.items.map((item) => ({ ...item, sentence: null }));
+    await renderBoard(board);
+    fireEvent.click(tile('waiting'));
+    const waiting = within(await screen.findByTestId('outbound-list-waiting')).getAllByTestId('waiting-item');
+    expect(waiting[0].textContent).toContain("Waiting for a free line: 2 of 2 calls in use, your carrier's limit at once.");
+    expect(waiting[1].textContent).toContain('Waiting to go.');
+    fireEvent.click(tile('needs_you'));
+    const needs = within(await screen.findByTestId('outbound-list-needs_you')).getAllByTestId('needs-you-item');
+    expect(needs.map((node) => node.querySelectorAll('p')[1]?.textContent ?? node.textContent)).toEqual([
+      'Waiting for approval.', 'No route your rules allow.', 'The result is unknown.', 'Needs a look in Sent.',
+    ]);
+    // The refuse dialog keeps working with the kind's sentence.
+    fireEvent.click(screen.getByRole('button', { name: 'Refuse: the fax to Front Range Labs' }));
+    expect(await screen.findByRole('dialog', { name: 'Refuse the fax to Front Range Labs?' })).toBeTruthy();
+  });
+});
+
 describe("the tiles' lines", () => {
   it('reads past the 20 listed faxes, full lines, a day of late deliveries and long calls plainly', () => {
     const board = busyBoard();
@@ -317,6 +357,12 @@ describe("the tiles' lines", () => {
     expect(waitingLine({ ...board, lines: [{ ...board.lines[0], limit: null }] }))
       .toBe("Waiting for a free line: 2 of 2 calls in use, your carrier's limit at once.");
     expect(todayLine({ ...board, today: { ...board.today, accepted: 0, delivered: 3, failed: 0 } })).toBe('None failed today.');
+    expect(todayLine({ ...board, today: { ...board.today, accepted: 20, delivered: 20, failed: 0 } })).toBe('None failed, of 20 faxes today');
+    expect(todayLine({ ...board, today: { ...board.today, accepted: 20, delivered: 18, failed: 0 } }))
+      .toBe('None failed, 2 still on their way, of 20 faxes today');
+    // One fax needing you is said in its own sentence.
+    expect(needsYouLine({ ...board, needs_you: { count: 1, items: [board.needs_you.items[1]] } }))
+      .toBe('No sending rule allows a route for this fax.');
     const one = (pages: number | null, page: number | null) => sendingLine({ ...board, sending: { count: 1,
       items: [{ ...board.sending.items[0], pages, page }] } });
     expect(one(4, 2)).toBe('Riverside Clinic, page 2 of 4');
@@ -431,6 +477,26 @@ describe('the one outbound poll', () => {
     expect(run.timers()).toEqual([]);
   });
 
+  it('asks every 5 seconds while faxes are sending or waiting, every 15 seconds otherwise', async () => {
+    const quiet = { ...emptyOutboundNow(), as_of: earlier(1) } as OutboundNow;
+    const sendingOnly = { ...quiet, sending: busyBoard().sending };
+    const waitingOnly = { ...quiet, waiting: busyBoard().waiting };
+    const unread = { ...quiet, not_checked: ['waiting'] };
+    const run = harness([quiet, sendingOnly, quiet, waitingOnly, unread, quiet]
+      .map((board) => ({ kind: 'ready', board }) as OutboundNowReply));
+    run.poller.subscribe(() => undefined);
+    const waits: number[] = [];
+    for (let poll = 0; poll < 6; poll += 1) {
+      await run.fire();
+      waits.push(...run.timers());
+    }
+    // Nothing moving: 15 s. Sending, waiting, or a count the server could not read: 5 s.
+    expect(waits).toEqual([15000, 5000, 15000, 5000, 5000, 15000]);
+    // A decision on a held fax: at once, whatever the cadence.
+    run.poller.refresh();
+    expect(run.timers()).toEqual([0]);
+  });
+
   it('pauses while the tab is hidden and looks again when it is shown', async () => {
     const run = harness([ready(), ready()]);
     run.poller.subscribe(() => undefined);
@@ -482,7 +548,7 @@ describe('the one outbound poll', () => {
   });
 
   it('runs one poll with Overview and Sent both open, never two requests at once', async () => {
-    OUTBOUND_POLL.intervalMs = 10;
+    Object.assign(OUTBOUND_POLL, { activeMs: 10, quietMs: 10 });
     let asked = 0;
     let out = 0;
     let most = 0;
@@ -505,7 +571,7 @@ describe('the one outbound poll', () => {
   });
 
   it('shows a busy server as busy, waits as asked, and keeps the session', async () => {
-    OUTBOUND_POLL.intervalMs = 10;
+    Object.assign(OUTBOUND_POLL, { activeMs: 10, quietMs: 10 });
     const signedOut = vi.fn();
     let asked = 0;
     let probed = 0;

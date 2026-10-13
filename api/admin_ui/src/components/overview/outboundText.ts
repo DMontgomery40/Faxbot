@@ -1,8 +1,8 @@
 // The words and readings of the live outbound board (OutboundBoard.tsx): one place for every string it adds, and the
 // pure helpers that pick a tile's number and line. Sentences from the server are shown as they are.
-import { parseServerTime } from '../../api/time';
+import { formatServerClock, parseServerTime } from '../../api/time';
 import type {
-  NeedsYouItem, NeedsYouKind, OutboundLine, OutboundNow, SendingItem, WaitingReason,
+  NeedsYouItem, NeedsYouKind, OutboundLine, OutboundNow, SendingItem, WaitingItem, WaitingReason,
 } from '../../api/outboundTypes';
 
 export const BOARD_TEXT = {
@@ -23,6 +23,7 @@ export const BOARD_TEXT = {
   waitingEmpty: 'Nothing is waiting.',
   needsYouEmpty: 'Nothing needs you.',
   todayEmpty: 'No faxes sent yet today.',
+  waitingToGo: 'Waiting to go.',
   failuresEmpty: 'Nothing failed today.',
   failuresTitle: "Why faxes didn't go through",
   linesTitle: 'Lines',
@@ -58,7 +59,28 @@ const KIND_WORDS: Record<NeedsYouKind, string> = {
   other: 'to look at',
 };
 
+// A held or unsettled fax's state in one sentence, for an item the server sent without its own.
+const KIND_SENTENCE: Record<NeedsYouKind, string> = {
+  no_route: 'No route your rules allow.',
+  approval: 'Waiting for approval.',
+  window: 'Waiting for a time window.',
+  dialing: 'Held by your dialing settings.',
+  uncertain: 'The result is unknown.',
+  other: 'Needs a look in Sent.',
+};
+
 const plural = (count: number, one: string, many: string) => (count === 1 ? one : many);
+
+// A waiting fax's own sentence; else its reason's, else that it waits to go.
+export function waitingSentence(board: OutboundNow, fax: WaitingItem): string {
+  return fax.sentence || board.waiting.reasons.find((reason) => reason.key === fax.reason)?.sentence
+    || BOARD_TEXT.waitingToGo;
+}
+
+// A needs-you fax's own sentence; else what kind of decision it waits for.
+export function needsYouSentence(item: NeedsYouItem): string {
+  return item.sentence || KIND_SENTENCE[item.kind] || KIND_SENTENCE.other;
+}
 
 // A board section the server could not read this time.
 export function notChecked(board: OutboundNow, section: string): boolean {
@@ -95,25 +117,25 @@ export function onTheLineText(startedAt: string | null, now: number): string | n
   return start ? `${durationText(now - start.getTime())} on the line` : null;
 }
 
-// A local time, "14:30"; with the weekday when it is not today ("Wed 08:00").
+// A local time, "2:30 PM"; with the weekday when it is not today ("Wed 8:00 AM").
 export function whenText(value: string | null | undefined, now: number): string {
   const date = parseServerTime(value);
   if (!date) return '';
-  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   return date.toDateString() === new Date(now).toDateString()
     ? time : `${date.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
 }
 
 export function checkedText(at: number): string {
-  return `Checked ${new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.`;
+  return `Updated ${formatServerClock(at)}`;
 }
 
 export function busyText(at: number): string {
-  return `Faxbot is busy, so this is what it read at ${new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. It checks again by itself.`;
+  return `Faxbot is busy, so this is what it read at ${formatServerClock(at)}. It checks again by itself.`;
 }
 
 export function failedText(at: number): string {
-  return `Couldn't check just now, so this is what Faxbot read at ${new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. It tries again by itself.`;
+  return `Couldn't check just now, so this is what Faxbot read at ${formatServerClock(at)}. It tries again by itself.`;
 }
 
 // A line at its limit (a limit is known and every call in use).
@@ -154,6 +176,7 @@ export function needsYouLine(board: OutboundNow): string {
   if (count === 0) return BOARD_TEXT.needsYouEmpty;
   const kinds = new Map<NeedsYouKind, number>();
   items.forEach((item) => kinds.set(item.kind, (kinds.get(item.kind) ?? 0) + 1));
+  if (count === 1 && items.length === 1) return needsYouSentence(items[0]);
   const top = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
   if (top.length === 0) return `${count} ${plural(count, 'fax needs', 'faxes need')} a decision`;
   const rest = count - top.reduce((sum, [, n]) => sum + n, 0);
@@ -161,12 +184,16 @@ export function needsYouLine(board: OutboundNow): string {
   return rest > 0 ? `${parts.join(', ')}, and ${rest} more` : parts.join(', ');
 }
 
+// "12 failed, 17 still on their way, of 260 faxes today": what is neither delivered nor failed is on its way.
 export function todayLine(board: OutboundNow): string {
   const { accepted, delivered, failed } = board.today;
   if (accepted === 0 && failed === 0 && delivered === 0) return BOARD_TEXT.todayEmpty;
   const failedPart = failed === 0 ? 'None failed' : `${failed} failed`;
   // Faxes accepted before midnight can still be delivered or fail today.
-  return accepted === 0 ? `${failedPart} today.` : `${failedPart}, of ${accepted} sent today.`;
+  if (accepted === 0) return `${failedPart} today.`;
+  const onTheirWay = accepted - delivered - failed;
+  return onTheirWay > 0 ? `${failedPart}, ${onTheirWay} still on their way, of ${accepted} faxes today`
+    : `${failedPart}, of ${accepted} faxes today`;
 }
 
 // -- lists -----------------------------------------------------------------------------------------------
