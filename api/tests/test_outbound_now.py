@@ -421,8 +421,12 @@ def _count_immediate(engine):
     seen = []
 
     def count(connection, cursor, statement, parameters, context, executemany):
-        if statement.strip().upper().startswith('BEGIN IMMEDIATE') or 'UPDATE ACCESS_STATE' in statement.upper():
-            seen.append(statement)
+        # The access lock: SQLite's lock_on writes access_state (and a standalone transaction begins IMMEDIATE);
+        # PostgreSQL's lock_on reads access_state FOR UPDATE.
+        text = ' '.join(statement.upper().split())
+        if (text.startswith('BEGIN IMMEDIATE') or 'UPDATE ACCESS_STATE' in text
+                or ('FROM ACCESS_STATE' in text and 'FOR UPDATE' in text)):
+            seen.append(text)
     sa.event.listen(engine, 'before_cursor_execute', count)
     return seen, lambda: sa.event.remove(engine, 'before_cursor_execute', count)
 
@@ -452,9 +456,10 @@ def test_a_poll_takes_no_write_lock_and_two_viewers_share_one_aggregate(desk):
         desk.read(desk.olive)
     finally:
         stop()
-    assert len([statement for statement in seen if 'BEGIN' in statement.upper()]) == (
+    assert len([statement for statement in seen if statement.startswith('BEGIN')]) == (
         1 if desk.engine.dialect.name == 'sqlite' else 0)
-    assert len([statement for statement in seen if 'UPDATE' in statement.upper()]) == 1
+    # One access lock in each database's own form: SQLite's UPDATE, or PostgreSQL's SELECT ... FOR UPDATE.
+    assert len([statement for statement in seen if not statement.startswith('BEGIN')]) == 1
 
 
 def test_lists_hold_twenty_and_more_counts_faxes_beyond_the_reasoned_ones(desk, monkeypatch):
