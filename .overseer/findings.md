@@ -281,7 +281,19 @@ No overreach, no test failures, no unsourced claims. All clean.
 
 ---
 
-*Campaign window closing 5:30 PM MT.*
+---
+
+## Heartbeat 7: Oct 13, 7:42 PM UTC (1:42 PM MT, ~3h 48min to campaign close)
+
+### What Changed
+
+**Nothing.** PRs 107 & 108 still open, CI stable. No merges, no new branches, no lead communication.
+
+**Conclusion:** M3a wave appears to have stabilized with 3 shipped features (RightFax sidecar, outbound board, Telnyx). PRs 107 & 108 are CI-green but not merged—likely deferred post-campaign for deliberate review rather than rushed merge.
+
+**No big misses, no overreach, no unsourced claims.** Work is clean and on track.
+
+*Campaign window closing 5:30 PM MT (~3h 48min).*
 
 ---
 
