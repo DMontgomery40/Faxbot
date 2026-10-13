@@ -30,6 +30,23 @@ def _layout_rule(engine, job_id):
     return {'as_receiver_allows': 'allow', 'one_per_sheet': 'never'}.get(layout)
 
 
+TELNYX_CALLBACK_PATH = '/telnyx-fax-callback'
+
+
+def telnyx_callback_url(values, configuration, claim):
+    """Where Telnyx posts this attempt's results, or None: only with the account's public key, which is what
+    proves a notification came from Telnyx. Without one, or without a usable public address, Faxbot checks with
+    Telnyx until the fax is done; the fax is never held back for it."""
+    if not configuration.settings.get('public_key'):
+        return None
+    from .callback_locator import callback_url_with_locators
+    try:
+        return callback_url_with_locators(values.public_api_url.rstrip('/') + TELNYX_CALLBACK_PATH,
+                                          claim.job_id, claim.attempt_id)
+    except ValueError:
+        return None
+
+
 def normalize_status(value):
     if not isinstance(value, str):
         raise ValueError('Unusable provider status.')
@@ -108,6 +125,15 @@ class PreparedSubmission:
                 # Sinch provably did not take the fax: a definite failure another route may send.
                 return SubmissionReceipt(None, 'failed', error=refused.sentence)
             return _receipt(result, sinch=True)
+        if pid == 'telnyx_fax':
+            from .telnyx_fax_service import TelnyxFaxRefused
+            try:
+                # The pages this attempt chose go to Telnyx's media storage first; the fax names them.
+                result = await self.service.send_fax_file(to, self.pdf_path, reference=self.claim.attempt_id)
+            except TelnyxFaxRefused as refused:
+                # Telnyx provably did not take the fax: a definite failure another route may send.
+                return SubmissionReceipt(None, 'failed', error=refused.sentence)
+            return _receipt(result)
         if pid == 'documo':
             return _receipt(await self.service.send_fax_file(to, self.pdf_path))
         if pid == 'humblefax':
@@ -194,6 +220,8 @@ class CapturedTransport:
                     service.status_callback_url = callback_base_url(revision, profile)
                     # Validate now, before the durable marker authorizes I/O.
                     callback_url_with_locators(service.status_callback_url, claim.job_id, claim.attempt_id)
+                if manifest is None and pid == 'telnyx_fax':
+                    service.status_callback_url = telnyx_callback_url(values, configuration, claim)
             except ProviderExecutionError:
                 raise PreparationFailure('provider_unavailable') from None
             except ValueError:

@@ -14,6 +14,9 @@ PLUGIN_FIELDS = {
                    'webhook_signing_key': 'signalwire_webhook_signing_key',
                    'status_poll_seconds': 'signalwire_status_poll_seconds'},
     'documo': {'api_key': 'documo_api_key', 'base_url': 'documo_base_url', 'sandbox': 'documo_use_sandbox'},
+    # The Telnyx Fax API shares the Telnyx API key with a Telnyx trunk.
+    'telnyx_fax': {'api_key': 'telnyx_api_key', 'connection_id': 'telnyx_fax_connection_id',
+                   'from_number': 'telnyx_fax_from_number', 'public_key': 'telnyx_fax_public_key'},
     'humblefax': {'access_key': 'humblefax_access_key', 'secret_key': 'humblefax_secret_key',
                   'from_number': 'humblefax_from_number', 'receive': 'humblefax_receive_enabled',
                   'poll_seconds': 'humblefax_poll_seconds'},

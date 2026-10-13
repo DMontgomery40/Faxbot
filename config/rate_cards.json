@@ -626,6 +626,27 @@
       "number_rental_monthly": null
     },
     {
+      "provider_id": "telnyx_fax",
+      "label": "Telnyx Fax API, US, sending",
+      "direction": "outbound",
+      "currency": "USD",
+      "per_minute": "0.005",
+      "per_page": "0.007",
+      "per_call": "0",
+      "billing_increment_seconds": 60,
+      "minimum_seconds": 60,
+      "rounding": "whole_minute",
+      "source_url": "https://telnyx.com/pricing/fax",
+      "sources": [
+        "https://telnyx.com/pricing/fax",
+        "https://telnyx.com/pricing/elastic-sip",
+        "https://support.telnyx.com/en/articles/1130659-billing-increments"
+      ],
+      "advertised_on": "2026-10-13",
+      "notes": "Telnyx's fax pricing page, read October 13, 2026, gives \"$0.007 per page + SIP Trunking usage for transmission\" for sending in the US, pay as you go, before volume tiers; carrier passthrough and taxes vary by destination. It names no fax-specific minute rate, so the minutes use Telnyx's published US local outbound SIP rate ($0.005 a minute, billed by the whole minute with a one-minute minimum, read October 3, 2026). Numbers are $1.00 a month. Telnyx does not say whether a failed fax is charged.",
+      "number_rental_monthly": "1.00"
+    },
+    {
       "provider_id": "signalwire",
       "label": "SignalWire Fax, sending",
       "direction": "outbound",

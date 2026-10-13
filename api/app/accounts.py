@@ -79,6 +79,17 @@ FIELDS = {
     'documo': (
         ('api_key', 'documo_api_key', 'API key', True, None),
     ),
+    'telnyx_fax': (
+        ('api_key', 'telnyx_api_key', 'Telnyx API key', True,
+         'From Telnyx under Keys & Credentials. A Telnyx trunk uses the same key.'),
+        ('connection_id', 'telnyx_fax_connection_id', 'Fax Application ID', True,
+         'Leave it empty and Faxbot can create a Fax Application in your Telnyx account for you.'),
+        ('from_number', 'telnyx_fax_from_number', 'Fax number', True,
+         'A number in your Telnyx account, such as +13035550100. Faxes come from it.'),
+        ('public_key', 'telnyx_fax_public_key', 'Telnyx public key', False,
+         "From Telnyx under Keys & Credentials, Public Key. With it, Faxbot hears each fax's result at once; "
+         'without it, Faxbot checks with Telnyx until the fax is done.'),
+    ),
     'sip': (
         ('preset', 'sip_trunk_preset', 'Carrier', False, None),
         ('host', 'sip_trunk_host', 'Server', True, None),
@@ -109,10 +120,14 @@ FIELDS = {
     ),
 }
 # The order primary accounts are listed in after the default and listed routes.
-PROVIDER_ORDER = ('sip', 'humblefax', 'sinch', 'phaxio', 'efax', 'signalwire', 'documo', 'freeswitch')
+PROVIDER_ORDER = ('sip', 'humblefax', 'sinch', 'phaxio', 'telnyx_fax', 'efax', 'signalwire', 'documo',
+                  'freeswitch')
 # Paths where each provider's received-fax notifications arrive; an extra account's is this plus /<key>.
 WEBHOOK_PATHS = {'sinch': '/sinch-inbound', 'phaxio': '/phaxio-inbound', 'efax': '/efax-inbound'}
 POLLING = ('humblefax', 'efax')
+# Required settings Faxbot can fill in itself after the account is added: a Telnyx Fax API account's Fax Application,
+# which `POST /admin/providers/accounts/{key}/telnyx-fax-application` creates in the account's Telnyx account.
+FAXBOT_CREATES = frozenset({('telnyx_fax', 'connection_id')})
 HEALTH_STATES = ('ready', 'not_set_up', 'off', 'waiting', 'failing', 'spending_limit')
 # Failing: at least this many of the last attempts, and most of them, failed.
 FAILING_WINDOW, FAILING_MINIMUM = 10, 3
@@ -1057,6 +1072,6 @@ def provider_kinds(values, provider_ids):
         kinds.append({'id': provider, 'label': provider_name(provider, values) if provider != 'sip' else 'Carrier trunk',
                       'supports_inbound': supports_inbound(provider),
                       'fields': [{'name': name, 'label': label, 'secret': is_secret(value_field), 'required': required,
-                                  'help': help_text}
+                                  'help': help_text, 'faxbot_creates': (provider, name) in FAXBOT_CREATES}
                                  for name, value_field, label, required, help_text in FIELDS[provider]]})
     return kinds

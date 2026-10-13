@@ -205,7 +205,8 @@ def test_the_renewal_page_reads_amount_channels_parallel_run_and_what_is_left(da
     assert found['renewal']['state'] == 'review' and found['renewal']['days_left'] == 82
     assert found['sentences'][0] == 'RightFax 22.2 renews on 31 May 2027 for $26,756.71: 82 days left to decide.'
     assert found['channels']['never_used'] == 5 and found['channels']['per_channel'] == '$3,344.59'
-    assert found['sentences'][1].endswith('those 5 channels are $16,722.94 of it, if it is priced by channel.')
+    assert found['sentences'][1].endswith('those 5 channels are $16,722.94 of it, if it is priced by channel. '
+                                                   'Enter the price per channel from the quote to value them by line item.')
     assert (found['parallel']['received'], found['parallel']['received_ok']) == (2, 1)
     # Sent faxes are the whole installation's: the sentence says so.
     assert found['sentences'][2].endswith('(1 complete). Faxbot sent 0 faxes in all since 1 February 2027 '
@@ -220,7 +221,8 @@ def test_the_renewal_page_reads_amount_channels_parallel_run_and_what_is_left(da
     assert renewal.view(database, _values(), now=now)['channels']['systems'][0]['report']['licensed'] == 8
     assert found['left']['count'] == 2 and found['left']['users'] == 1
     assert found['sentences'][3] == '2 of its 3 numbers are not on Faxbot yet, for 1 user.'
-    assert {item['id'] for item in found['reference']} == {'cuyahoga-rightfax', 'rightfax-support', 'sr140-cdw'}
+    assert {item['id'] for item in found['reference']} == {'cuyahoga-rightfax', 'rightfax-support', 'sr140-cdw',
+                                                           'txdmv-rightfax'}
     early = renewal.page(database, _values(), 'RightFax at HQ', now=datetime(2026, 10, 10))
     assert early['renewal']['state'] == 'early' and 'This page is for 2 March 2027' in early['sentences'][0]
     renewal.remove_renewal(database, 'RightFax at HQ')

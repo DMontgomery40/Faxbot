@@ -362,6 +362,46 @@ def tagged_number(message, mailbox_address, country):
     return next(iter(found), None)
 
 
+# RightFax's SMTP gateway addressing: ``/fax=555-1212/name=JaneDoe@faxgate.company.com`` in the address, or
+# ``"/name=Jane/fax=5551212/" <faxgate@company.com>`` in the display name (OpenText RightFax Administrator Guide,
+# SMTP gateway, pp. 287-288; research/rightfax-sidecar-2026-10-13/REPORT.md). Codes are /key=value/ pairs in any order.
+_RIGHTFAX_FAX = re.compile(r'(?:^|/)fax=([^/@]*)', re.IGNORECASE)
+
+
+def rightfax_number(message, mailbox_address, country):
+    """The number in RightFax addressing on a recipient of the organization's own mail domain, or None.
+
+    Senders who used RightFax's SMTP gateway keep writing ``/fax=NUMBER/`` in the address or its display name. Only a
+    recipient at the connector's own domain (or a subdomain, such as faxgate.example.com) counts, so a copy to another
+    company never chooses the number. Two different numbers raise ``ValueError('two numbers')``.
+    """
+    if not mailbox_address or '@' not in mailbox_address:
+        return None
+    domain = mailbox_address.casefold().rsplit('@', 1)[1]
+    values = []
+    for name in ('To', 'Cc', 'Delivered-To', 'X-Original-To'):
+        values.extend(str(value) for value in (message.parsed.get_all(name) or []))
+    found = set()
+    for display, address in getaddresses(values):
+        if address.count('@') != 1:
+            continue
+        local, their_domain = address.rsplit('@', 1)
+        their_domain = their_domain.casefold()
+        if their_domain != domain and not their_domain.endswith('.' + domain):
+            continue
+        for text in (local, display or ''):
+            for match in _RIGHTFAX_FAX.finditer(text):
+                number = match.group(1).strip()
+                if not number:
+                    continue
+                if sum(character.isdigit() for character in number) == 0:
+                    raise InvalidNumber(number)
+                found.add(_tag_number(''.join(c for c in number if c.isdigit() or c == '+'), country))
+    if len(found) > 1:
+        raise ValueError('two numbers')
+    return next(iter(found), None)
+
+
 def _tag_number(tag, country):
     """A tag is read as dialed in the installation's country, else as a full number with its country code."""
     attempts = [tag] if tag.startswith('+') else [tag, '+' + tag]

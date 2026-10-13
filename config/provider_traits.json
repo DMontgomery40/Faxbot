@@ -98,6 +98,28 @@
       "note": "Plans include pages and charge per page after that; Documo does not document what it does with a page longer than letter or A4."
     }
   },
+  "telnyx_fax": {
+    "id": "telnyx_fax",
+    "kind": "cloud",
+    "traits": {
+      "requires_ghostscript": true,
+      "requires_ami": false,
+      "requires_tiff": false,
+      "supports_inbound": false,
+      "inbound_verification": "none",
+      "needs_storage": false,
+      "outbound_status_only": false
+    },
+    "pages": {
+      "billing": "per_page",
+      "how_sent": "pdf_upload",
+      "long_pages": "not_documented",
+      "page_cap": 350,
+      "source": "https://developers.telnyx.com/api-reference/programmable-fax-commands/send-a-fax",
+      "read_on": "2026-10-13",
+      "note": "Faxbot uploads the PDF each attempt chose to Telnyx's media storage and sends it by name. Telnyx bills $0.007 a page plus the call's minutes, takes at most 350 pages a fax, and does not document what it does with a page longer than letter or A4."
+    }
+  },
   "humblefax": {
     "id": "humblefax",
     "kind": "cloud",

@@ -168,6 +168,27 @@ def test_fax_number_from_an_address_tag_or_the_subject():
     assert mail.example_address('fax@example.com') == 'fax+13035550100@example.com'
 
 
+def test_rightfax_addressing_in_the_address_or_its_display_name():
+    def read(to, mailbox='faxgate@example.com', **kwargs):
+        return mail.rightfax_number(mail.parse(message(headers=[('Cc', to)], subject='Referral', **kwargs)),
+                                    mailbox, 'US')
+    # RightFax's SMTP gateway forms, as its administrator guide writes them.
+    assert read('/fax=303-555-0199/name=JaneDoe@faxgate.example.com') == '+13035550199'
+    assert read('"/name=Jane Doe/fax=(303) 555-0199/" <faxgate@example.com>') == '+13035550199'
+    assert read('"/FAX=+44 20 7123 4567/" <faxgate@example.com>') == '+442071234567'
+    # Only the organization's own domain counts; plain recipients and other companies choose nothing.
+    assert read('/fax=3035550199/@partner.example.org') is None
+    assert read('"/fax=3035550199/" <someone@partner.example.org>') is None
+    assert read('Jane Doe <jane@example.com>') is None
+    assert read('/fax=3035550199/@example.com', mailbox='') is None
+    with pytest.raises(ValueError, match='two numbers'):
+        read('/fax=3035550199/@example.com, "/fax=3035550111/" <faxgate@example.com>')
+    with pytest.raises(ValueError):
+        read('"/fax=reception/" <faxgate@example.com>')
+    # The same fax number written twice is one number.
+    assert read('/fax=3035550199/@example.com, "/fax=+1 303 555 0199/" <faxgate@example.com>') == '+13035550199'
+
+
 # -- loops and automatic mail ---------------------------------------------------------------
 
 def test_faxbot_own_mail_and_automatic_mail_are_recognized():

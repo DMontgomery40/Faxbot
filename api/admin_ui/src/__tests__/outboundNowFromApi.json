@@ -1,0 +1,191 @@
+{
+  "as_of": "2026-10-03T12:00:00Z",
+  "engine": {
+    "audio": true,
+    "fix": "Faxbot switches back by itself once your network lets fax over IP (T.38) data come back. Carrier trunk shows the network check.",
+    "sentence": "Your network changes port numbers, so fax over IP (T.38) cannot work; Faxbot sends audio fax until the network is fixed.",
+    "since": "2026-10-03T12:00:00Z"
+  },
+  "groups": [
+    {
+      "delivered": 1,
+      "failed": 1,
+      "needs_you": 0,
+      "sending": 2,
+      "total": 8,
+      "waiting": 4,
+      "who": "olive"
+    }
+  ],
+  "lines": [
+    {
+      "in_use": 2,
+      "incoming": 0,
+      "key": "sip",
+      "label": "Telnyx",
+      "limit": 2,
+      "sentence": "2 of 2 calls in use. Your carrier allows 2 at once."
+    }
+  ],
+  "needs_you": {
+    "count": 1,
+    "items": [
+      {
+        "actions": [
+          "send_by_account",
+          "check_again",
+          "refuse"
+        ],
+        "hold": {
+          "id": "21a5d35dfce74ec6ba011c66771d655b",
+          "version": 1
+        },
+        "id": "05e9246e4deb4336904856e8fd6d960b",
+        "kind": "no_route",
+        "pages": 1,
+        "recipient": null,
+        "sentence": "No account is allowed for this fax.",
+        "since": "2026-10-03T12:00:00Z",
+        "to": "****0125",
+        "until": null
+      }
+    ]
+  },
+  "not_checked": [],
+  "sending": {
+    "count": 2,
+    "items": [
+      {
+        "engine": null,
+        "id": "0897a97867744286ba1e1d4d4eb820ff",
+        "page": null,
+        "pages": 3,
+        "recipient": null,
+        "route": "Telnyx",
+        "started_at": "2026-10-03T12:00:00Z",
+        "to": "****0123"
+      },
+      {
+        "engine": null,
+        "id": "efa5c017a64c4e1d946d1a1424881b53",
+        "page": null,
+        "pages": 1,
+        "recipient": null,
+        "route": "Telnyx",
+        "started_at": "2026-10-03T12:00:00Z",
+        "to": "****0124"
+      }
+    ]
+  },
+  "today": {
+    "accepted": 9,
+    "delivered": 1,
+    "failed": 1,
+    "failures": [
+      {
+        "count": 1,
+        "key": "other",
+        "label": "Another problem (see Sent)"
+      }
+    ],
+    "since": "2026-10-03T00:00:00Z"
+  },
+  "waiting": {
+    "count": 4,
+    "items": [
+      {
+        "id": "2202b20c525a477394f1f851d234951a",
+        "pages": 2,
+        "reason": "lines_busy",
+        "recipient": null,
+        "sentence": "Waiting for a free line: all 2 lines are in use.",
+        "since": "2026-10-03T11:30:03Z",
+        "to": "****0400",
+        "until": null
+      },
+      {
+        "id": "f47f0d41c34743bbb55414602cb1b39c",
+        "pages": 2,
+        "reason": "lines_busy",
+        "recipient": null,
+        "sentence": "Waiting for a free line: all 2 lines are in use.",
+        "since": "2026-10-03T11:30:04Z",
+        "to": "****0401",
+        "until": null
+      },
+      {
+        "id": "1336ed1345d14116a723f5da87e58a53",
+        "pages": 2,
+        "reason": "lines_busy",
+        "recipient": null,
+        "sentence": "Waiting for a free line: all 2 lines are in use.",
+        "since": "2026-10-03T11:30:05Z",
+        "to": "****0402",
+        "until": null
+      },
+      {
+        "id": "0b959a0e823f4c40b4d5bec9b24412d2",
+        "pages": 2,
+        "reason": "lines_busy",
+        "recipient": null,
+        "sentence": "Waiting for a free line: all 2 lines are in use.",
+        "since": "2026-10-03T11:30:06Z",
+        "to": "****0403",
+        "until": null
+      }
+    ],
+    "more": 0,
+    "reasons": [
+      {
+        "count": 4,
+        "key": "lines_busy",
+        "sentence": "Waiting for a free line: all 2 lines are in use."
+      },
+      {
+        "count": 0,
+        "key": "number_busy",
+        "sentence": "Waiting: another fax is calling the same number."
+      },
+      {
+        "count": 0,
+        "key": "unknown_result",
+        "sentence": "Waiting: an earlier fax to the same number has an unknown result."
+      },
+      {
+        "count": 0,
+        "key": "recipient_hours",
+        "sentence": "Waiting for the recipient's fax hours."
+      },
+      {
+        "count": 0,
+        "key": "recipient_busy",
+        "sentence": "Waiting for a time the recipient's line is usually free."
+      },
+      {
+        "count": 0,
+        "key": "sending_together",
+        "sentence": "Held briefly to go in one call with other faxes to the same number."
+      },
+      {
+        "count": 0,
+        "key": "send_later",
+        "sentence": "Scheduled to go later."
+      },
+      {
+        "count": 0,
+        "key": "retry",
+        "sentence": "Waiting to try again after an attempt that didn't get through."
+      },
+      {
+        "count": 0,
+        "key": "preparing",
+        "sentence": "Being prepared."
+      },
+      {
+        "count": 0,
+        "key": "next",
+        "sentence": "Next to go."
+      }
+    ]
+  }
+}

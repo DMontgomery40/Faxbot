@@ -145,6 +145,13 @@ FAILED_TRIES = {
     'signalwire': FailedTries('unknown', 'unknown', 'unknown',
                               'SignalWire charges fax by the minute and does not say whether a failed try is '
                               'charged.', ('https://signalwire.com/pricing/fax',), '2026-10-07'),
+    # Telnyx's Fax API: "$0.007 per page + SIP Trunking usage for transmission"; no statement on failed faxes.
+    'telnyx_fax': FailedTries('unknown', 'unknown', 'bills',
+                              'Telnyx charges its fax API by the page plus the call\'s minutes, so a call answered '
+                              'without a fax machine is charged for its minutes; it does not say whether a busy or '
+                              'unanswered call is.',
+                              ('https://telnyx.com/pricing/fax',
+                               'https://support.telnyx.com/en/articles/4967498-fax-api-error-list'), '2026-10-13'),
     # The trunk, by carrier preset. Telnyx: "$0.005/min outbound" for US local; no statement on unanswered calls.
     'sip-telnyx': FailedTries('unknown', 'unknown', 'bills',
                               'Telnyx bills a trunk call by the connected minute, so a call answered without a fax '

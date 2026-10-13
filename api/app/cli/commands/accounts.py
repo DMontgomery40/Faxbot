@@ -200,10 +200,13 @@ def accounts_add(provider: str = typer.Option(..., '--provider', help='The provi
     kind = provider_kind(current, provider)
     settings = plain_settings(kind, setting)
     missing = [field['label'] for field in kind.get('fields') or []
-               if field.get('required') and not field.get('secret') and field['name'] not in settings]
+               if field.get('required') and not field.get('secret') and field['name'] not in settings
+               and not field.get('faxbot_creates')]
     if missing:
         raise CliError(f"{kind['label']} needs these settings too: {', '.join(missing)}. Give each with --setting "
                        'NAME=VALUE.')
+    created_later = [field['label'] for field in kind.get('fields') or []
+                     if field.get('faxbot_creates') and field['name'] not in settings]
     if receives and not kind.get('supports_inbound'):
         raise CliError(f"{kind['label']} cannot receive faxes, so leave out --receives.")
     body = {
@@ -218,6 +221,9 @@ def accounts_add(provider: str = typer.Option(..., '--provider', help='The provi
 
     def human(out):
         out.line(f"Account {body['label']} added.")
+        if created_later:
+            out.line(f"To create its {', '.join(created_later)}, run faxbot delivery providers accounts "
+                     f"fax-application {key}.")
         if added and added.get('webhook_address'):
             out.line(f"Give {kind['label']} this address for received faxes: {added['webhook_address']}")
     state.out().result(result, human)
@@ -316,6 +322,31 @@ def accounts_default_receiving(key: str = typer.Argument(..., metavar='KEY', hel
     if not account.get('receives'):
         raise CliError(f"{account['label']} does not receive faxes. Turn receiving on first with --receives.")
     _patch(api, current, account, {'default_receiving': True}, f"{account['label']} is the default receiving account.")
+
+
+@accounts.command('fax-application')
+def accounts_fax_application(key: str = typer.Argument('telnyx_fax', metavar='KEY',
+                                                       help="The Telnyx Fax API account's key or name; the first "
+                                                            'one when left out.'),
+                             name: str = typer.Option(None, '--name', help='Its name in Telnyx, such as "Faxbot".')):
+    """Create the Fax Application a Telnyx Fax API account sends with, in your Telnyx account, and save its ID."""
+    api = state.api()
+    current = load(api)
+    try:
+        account = find(current, key)
+    except CliError:
+        if key != 'telnyx_fax':
+            raise
+        account = {'key': key, 'label': 'Telnyx Fax API'}  # listed once it is set up
+    body = {'expected_generation': current['generation'], **({'name': name} if name else {})}
+    result = api.post('/admin/providers/accounts/' + segment(account['key']) + '/telnyx-fax-application', json=body)
+
+    def human(out):
+        created = result.get('created') or {}
+        out.line(created.get('sentence') or 'Done.')
+        if created.get('connection_id'):
+            out.line(f"Its Fax Application ID is {created['connection_id']}.")
+    state.out().result(result, human)
 
 
 @accounts.command('health')

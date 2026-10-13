@@ -27,7 +27,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `send`: Send a fax.
-* `status`: Show where a sent fax is now.
+* `status`: Show what is sending now, what waits and...
 * `overview`: Show the Overview: what Faxbot is doing...
 * `savings`: What Faxbot can do to save money here and...
 * `faxes`: Faxes received, sent and expected, forms...
@@ -74,20 +74,21 @@ $ faxbot send [OPTIONS] {to} {file}
 
 ## `faxbot status`
 
-Show where a sent fax is now.
+Show what is sending now, what waits and why, what needs you, and how today went; or where one sent fax is.
 
 **Usage**:
 
 ```console
-$ faxbot status [OPTIONS] {fax_id}
+$ faxbot status [OPTIONS] [FAX_ID]
 ```
 
 **Arguments**:
 
-* `fax_id`: Fax ID shown when the fax was sent.  [required]
+* `[FAX_ID]`: A sent fax: show where that fax is now. Leave it out to see every fax that is sending or waiting.
 
 **Options**:
 
+* `--watch`: Show the board again every 5 seconds until you press Ctrl-C.
 * `--help`: Show this message and exit.
 
 ## `faxbot overview`
@@ -656,6 +657,7 @@ $ faxbot savings opportunities renewal [OPTIONS]
 * `--parallel NUMBERS`: The numbers Faxbot runs beside it (comma-separated).
 * `--parallel-since DATE`: When the parallel run began.
 * `--remove`: Withdraw the system&#x27;s renewal.
+* `--per-channel AMOUNT`: The price of one channel on the quote, such as 387.48: the channels the peak never needed are valued at it instead of the renewal&#x27;s average. Used for this page only.
 * `--help`: Show this message and exit.
 
 #### `faxbot savings opportunities import-routing`
@@ -5119,6 +5121,7 @@ $ faxbot delivery providers accounts [OPTIONS] COMMAND [ARGS]...
 * `disable`: Switch an account off.
 * `default-sending`: Choose the account Faxbot sends by when no...
 * `default-receiving`: Choose the account whose notifications...
+* `fax-application`: Create the Fax Application a Telnyx Fax...
 * `health`: Whether each account is ready, and what to...
 * `country-rules`: Countries whose regulator licenses calls...
 
@@ -5280,6 +5283,25 @@ $ faxbot delivery providers accounts default-receiving [OPTIONS] {KEY}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers accounts fax-application`
+
+Create the Fax Application a Telnyx Fax API account sends with, in your Telnyx account, and save its ID.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers accounts fax-application [OPTIONS] [KEY]
+```
+
+**Arguments**:
+
+* `KEY`: The Telnyx Fax API account&#x27;s key or name; the first one when left out.  [default: telnyx_fax]
+
+**Options**:
+
+* `--name <str>`: Its name in Telnyx, such as &quot;Faxbot&quot;.
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers accounts health`

@@ -38,6 +38,7 @@ HOLE = '\x00'
 NOT_OPERATOR = {
     ('POST', '/phaxio-callback'): 'webhook: Phaxio status callback',
     ('POST', '/signalwire-callback'): 'webhook: SignalWire status callback',
+    ('POST', '/telnyx-fax-callback'): 'webhook: Telnyx Fax status notice that starts a status read',
     ('POST', '/phaxio-inbound'): 'webhook: Phaxio received fax',
     ('POST', '/sinch-inbound'): 'webhook: Sinch received fax',
     ('POST', '/efax-inbound'): 'webhook: eFax notification that starts a check',
@@ -139,7 +140,8 @@ CLI_ONLY = {
 }
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
-AWAITING_CONSOLE: dict = {}
+AWAITING_CONSOLE: dict = {
+}
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.
 AWAITING_CLI: dict = {

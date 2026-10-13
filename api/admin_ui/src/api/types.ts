@@ -295,6 +295,16 @@ export interface Settings {
     sandbox?: boolean;
     configured: boolean;
   };
+  // The Telnyx Fax API; its API key is the one a Telnyx trunk uses (sip.telnyx_api_key).
+  telnyx_fax?: {
+    api_key: string;
+    connection_id: string;
+    from_number: string;
+    public_key: string;
+    // Where Telnyx posts each fax's result.
+    results_url?: string;
+    configured: boolean;
+  };
   humblefax?: {
     access_key: string;
     secret_key: string;
