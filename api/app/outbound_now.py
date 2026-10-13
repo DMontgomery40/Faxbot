@@ -44,9 +44,14 @@ REASONED = 200
 # One aggregate serves every viewer for this long.
 AGGREGATE_SECONDS = 2.0
 # A person's visible faxes are read again after this long even when the access policy did not change.
-SCOPE_SECONDS = 60.0
+SCOPE_SECONDS = 30.0
 # A submitter with at least this many faxes accepted today gets a progress line.
 GROUP_MIN = 5
+# Faxes read one by one for a list: at most this many sending, needing a person or shared on their own, and the
+# latest this many failed today (older ones are counted under "other"). Counts come from SQL (``Board._counts``).
+ROWS_READ = 500
+FAILED_READ = 500
+FAX_SECTIONS = ('sending', 'waiting', 'needs_you', 'today', 'groups')
 
 SENDING = ('submitting', 'in_progress')
 QUEUED = ('ready', 'preparing')
@@ -140,12 +145,30 @@ class Fax:
     row: dict = field(default_factory=dict, repr=False)
 
 
+@dataclass(frozen=True)
+class Count:
+    """How many faxes share one place on the board: their container, whether a key sent them, where they are now
+    (``Board._category``), and whether they were accepted today and changed today."""
+    parent: str | None
+    enabled: bool
+    via_key: bool
+    category: str
+    today: bool
+    finished: bool
+    count: int
+
+
+class DatabaseBusy(RuntimeError):
+    """The database was too busy to read any fax: ask again in a moment."""
+
+
 @dataclass
 class Aggregate:
     at: datetime
     since: datetime
     faxes: list
     not_checked: set
+    counts: list = field(default_factory=list)
     lines: list | None = None
     engine: dict | None = None
     lines_sentence: str | None = None
@@ -182,9 +205,10 @@ class Board:
         # the claim's own sentence for each waiting fax shown, kept as long.
         self._decided, self._sentences = {}, {}
         self._scope_lock = threading.Lock()
-        # How many aggregates and scopes were read (tests count them instead of timing).
+        # How many aggregates and scopes were read, and rows the aggregates loaded (tests count them, not time).
         self.reads = 0
         self.scope_reads = 0
+        self.rows_read = 0
 
     # Reading --------------------------------------------------------------------------------------------------
 
@@ -221,30 +245,36 @@ class Board:
         zone_name = getattr(values, 'time_zone', None)
         since = local_midnight(now, installation_zone_name() if zone_name is None else zone_name)
         found = Aggregate(now, since, [], set(), values=values)
+        busy = []
         with self.engine.connect() as connection:
             def section(names, read):
                 try:
                     return read()
-                except Exception:
+                except Exception as error:
+                    from .database_busy import busy_cause
+                    busy.append(busy_cause(error))
                     logging.getLogger(__name__).warning('The outbound board could not read %s.', ', '.join(names),
                                                         exc_info=True)
                     found.not_checked.update(names)
                     connection.rollback()
                     return None
 
-            faxes = section(('sending', 'waiting', 'needs_you', 'today', 'groups'),
-                            lambda: self._faxes(connection, since))
+            faxes = None
+            counts = section(FAX_SECTIONS, lambda: self._counts(connection, since, now))
+            if counts is not None:
+                found.counts = counts
+                faxes = section(FAX_SECTIONS, lambda: self._faxes(connection, since, now))
+            if faxes is None and busy and all(busy):
+                # Nothing about any fax could be read because the database was busy: the caller says so and asks
+                # again (Retry-After), rather than showing an empty board.
+                raise DatabaseBusy(busy[0])
             if faxes is not None:
                 found.faxes = faxes
-                if section(('needs_you', 'waiting'), lambda: self._needs_you(connection, faxes, now)) is None:
-                    for fax in faxes:
-                        if fax.section in ('needs_you', 'waiting'):
-                            fax.section = 'unknown'
+                section(('needs_you',), lambda: self._needs_you(connection, faxes, now))
                 section(('sending',), lambda: self._sending(connection, values, faxes))
-                if 'waiting' not in found.not_checked:
-                    section(('waiting',), lambda: self._waiting(connection, values, faxes, now, found))
+                section(('waiting',), lambda: self._waiting(connection, values, faxes, now, found))
                 section(('today',), lambda: self._today(connection, faxes, since))
-                section(('groups',), lambda: self._groups(connection, faxes, since, found))
+                section(('groups',), lambda: self._groups(connection, counts, found))
             section(('lines',), lambda: self._lines(connection, values, now, found))
         try:
             found.engine = self._engine(values)
@@ -253,77 +283,144 @@ class Board:
             found.not_checked.add('engine')
         return found
 
-    def _faxes(self, connection, since):
-        """Every fax in a section now, or accepted or finished today, oldest first."""
+    def _fetch(self, connection, query):
+        """Every row of ``query`` as mappings, counted in ``rows_read`` (tests bound what reaches Python)."""
+        rows = connection.execute(query).mappings().all()
+        self.rows_read += len(rows)
+        return rows
+
+    def _category(self, connection, now):
+        """Each delivery's place on the board, as SQL: sending, needs_you, waiting, delivered, failed or other.
+
+        A ready fax with an open sending-rule hold the claim respects (``routing.holds.blocking``) needs a person.
+        """
+        t = self._tables(connection)
+        d, holds = t['outbound_deliveries'], t.get('outbound_holds')
+        state = d.c.state
+        held = sa.false()
+        if holds is not None:
+            held = sa.and_(state == 'ready', d.c.id.in_(sa.select(holds.c.job_id).where(
+                holds.c.state == 'open', sa.or_(holds.c.kind != 'window', holds.c.release_at.is_(None),
+                                                holds.c.release_at > now))))
+        return sa.case((state.in_(SENDING), 'sending'), (state.in_(('reconciliation_required', 'held')), 'needs_you'),
+                       (held, 'needs_you'), (state.in_(QUEUED), 'waiting'), (state == 'success', 'delivered'),
+                       (state == 'failed', 'failed'), else_='other')
+
+    def _window(self, connection, since):
+        d = self._tables(connection)['outbound_deliveries']
+        return sa.or_(d.c.state.in_(ACTIVE), d.c.created_at >= since, d.c.updated_at >= since)
+
+    def _counts(self, connection, since, now):
+        """How many faxes there are in each place, by container, submitter, accepted today and finished today, counted
+        in SQL: each viewer's counts are the sum over the containers they see (``view``)."""
+        t = self._tables(connection)
+        d, r = t['outbound_deliveries'], t['access_resources']
+        category = self._category(connection, now).label('category')
+        via_key = sa.case((d.c.principal_scope.like('key:%'), 1), else_=0).label('via_key')
+        today = sa.case((d.c.created_at >= since, 1), else_=0).label('today')
+        finished = sa.case((d.c.updated_at >= since, 1), else_=0).label('finished')
+        rows = self._fetch(connection, sa.select(
+            r.c.parent_id.label('parent'), r.c.enabled, via_key, category, today, finished,
+            sa.func.count().label('count'))
+            .select_from(d.outerjoin(r, sa.and_(r.c.fax_job_id == d.c.id, r.c.kind == 'outbound')))
+            .where(self._window(connection, since))
+            .group_by(r.c.parent_id, r.c.enabled, via_key, category, today, finished))
+        return [Count(row['parent'], row['enabled'] == 1, bool(row['via_key']), row['category'], bool(row['today']),
+                      bool(row['finished']), int(row['count'])) for row in rows]
+
+    def _faxes(self, connection, since, now):
+        """The faxes the board lists, each read once: sending, needing a person, the first ``REASONED`` waiting in
+        queue order, the latest ``FAILED_READ`` failed today, and any fax shared with someone on its own (a grant on
+        that fax, so each viewer's counts can add it).
+
+        Lists come from these rows only. A viewer who sees few of the faxes near the front of the queue gets correct
+        counts (``_counts``) and a shorter list of waiting faxes; their faxes further back are counted in ``more``.
+        """
         t = self._tables(connection)
         d, j, a = t['outbound_deliveries'], t['fax_jobs'], t['outbound_attempts']
         r, dest = t['access_resources'], t['delivery_destinations']
         binding, profile = t['fax_job_bindings'], t['provider_profiles']
+        category = self._category(connection, now)
         columns = [d.c.id, d.c.state, d.c.dispatch_mode, d.c.version, d.c.attempt_id, d.c.created_at, d.c.updated_at,
                    d.c.principal_scope, j.c.to_number, j.c.pages, j.c.backend, j.c.error,
                    r.c.id.label('resource'), r.c.parent_id.label('parent'), r.c.enabled,
                    dest.c.display_name.label('recipient'), a.c.submitted_at, a.c.phase, a.c.error_category,
-                   profile.c.provider_id.label('route_provider')]
-        columns += [j.c.urgent] if 'urgent' in j.c else []
+                   profile.c.provider_id.label('route_provider'), category.label('category')]
+        urgent = j.c.urgent if 'urgent' in j.c else sa.literal(0)
+        columns.append(urgent.label('urgent'))
         source = (d.join(j, j.c.id == d.c.id)
                   .outerjoin(r, sa.and_(r.c.fax_job_id == d.c.id, r.c.kind == 'outbound'))
                   .outerjoin(dest, dest.c.phone_number == j.c.to_number)
                   .outerjoin(a, a.c.id == d.c.attempt_id)
                   .outerjoin(binding, binding.c.id == d.c.id)
                   .outerjoin(profile, profile.c.id == sa.func.coalesce(a.c.profile_id, binding.c.profile_id)))
-        rows = connection.execute(sa.select(*columns).select_from(source).where(sa.or_(
-            d.c.state.in_(ACTIVE), d.c.created_at >= since, d.c.updated_at >= since))
-            .order_by(d.c.created_at, d.c.id)).mappings().all()
-        faxes = []
-        for row in rows:
-            fax = Fax(row['id'], row['state'], row['resource'], row['parent'], row['enabled'] == 1, row['to_number'],
-                      row['recipient'], row['pages'], row['created_at'], row['updated_at'], row['route_provider'],
-                      row['backend'], via_key=str(row['principal_scope'] or '').startswith('key:'), row=dict(row))
-            if fax.state in SENDING:
-                fax.section = 'sending'
-            elif fax.state in QUEUED:
-                fax.section = 'waiting'
-            elif fax.state == 'reconciliation_required':
-                fax.section, fax.kind, fax.since = 'needs_you', 'uncertain', fax.updated_at
-                from .access.queries import delivery_fields
-                fax.sentence = delivery_fields({**fax.row, 'delivery_state': fax.state,
-                                                'delivery_version': row['version']})['reconciliation_reason']
-            elif fax.state == 'held':
-                fax.section, fax.kind, fax.since, fax.sentence = 'needs_you', 'other', fax.updated_at, HELD_TEST_FAX
-            faxes.append(fax)
-        # Queue order: urgent faxes first, then oldest first (``capacity.Capacity.next_ready`` decides the rest).
-        waiting = sorted((fax for fax in faxes if fax.section == 'waiting'),
+        base = sa.select(*columns).select_from(source)
+        reads = [
+            base.where(category == 'sending').order_by(d.c.updated_at, d.c.id).limit(ROWS_READ),
+            base.where(category == 'needs_you').order_by(d.c.updated_at, d.c.id).limit(ROWS_READ),
+            # Queue order: urgent faxes first, then oldest first (``capacity.Capacity.next_ready`` decides the rest).
+            base.where(category == 'waiting').order_by(sa.func.coalesce(urgent, 0).desc(), d.c.created_at, d.c.id)
+            .limit(REASONED),
+            base.where(category == 'failed', d.c.updated_at >= since).order_by(d.c.updated_at.desc(), d.c.id)
+            .limit(FAILED_READ),
+        ]
+        grants, ceilings = t.get('access_assignments'), t.get('access_key_grants')
+        if grants is not None and ceilings is not None:
+            shared = sa.union(sa.select(grants.c.resource_id), sa.select(ceilings.c.resource_id))
+            reads.append(base.where(r.c.id.in_(shared), self._window(connection, since)).limit(ROWS_READ))
+        faxes = {}
+        for query in reads:
+            for row in self._fetch(connection, query):
+                if row['id'] not in faxes:
+                    faxes[row['id']] = self._fax(row)
+        waiting = sorted((fax for fax in faxes.values() if fax.section == 'waiting'),
                          key=lambda fax: (-int(fax.row.get('urgent') or 0), fax.created_at, fax.id))
         for position, fax in enumerate(waiting):
             fax.position = position
-        return faxes
+        return list(faxes.values())
+
+    @staticmethod
+    def _fax(row):
+        fax = Fax(row['id'], row['state'], row['resource'], row['parent'], row['enabled'] == 1, row['to_number'],
+                  row['recipient'], row['pages'], row['created_at'], row['updated_at'], row['route_provider'],
+                  row['backend'], section=row['category'],
+                  via_key=str(row['principal_scope'] or '').startswith('key:'), row=dict(row))
+        if fax.state == 'reconciliation_required':
+            from .access.queries import delivery_fields
+            fax.kind, fax.since = 'uncertain', fax.updated_at
+            fax.sentence = delivery_fields({**fax.row, 'delivery_state': fax.state,
+                                            'delivery_version': row['version']})['reconciliation_reason']
+        elif fax.state == 'held':
+            fax.kind, fax.since, fax.sentence = 'other', fax.updated_at, HELD_TEST_FAX
+        return fax
 
     def _needs_you(self, connection, faxes, now):
-        """Waiting faxes a sending rule holds for a person (``routing/holds.blocking``): one hold each."""
+        """The sending-rule hold of each ready fax that needs a person (``routing/holds.blocking``): one hold each."""
+        from .rules.text import WAITS
         t = self._tables(connection)
         holds, guard = t.get('outbound_holds'), t.get('dialing_guard_holds')
-        if holds is None:
+        held = {fax.id: fax for fax in faxes if fax.section == 'needs_you' and fax.state == 'ready'}
+        for fax in held.values():
+            fax.kind, fax.since, fax.sentence = 'other', fax.updated_at, WAITS
+        if holds is None or not held:
             return True
-        waiting = {fax.id: fax for fax in faxes if fax.section == 'waiting' and fax.state == 'ready'}
         columns = [holds.c.id, holds.c.job_id, holds.c.kind, holds.c.version, holds.c.reason, holds.c.release_at,
                    holds.c.requested_at, holds.c.separate_approver, holds.c.requested_by_principal_id]
         source = holds
         if guard is not None:
             columns.append(guard.c.id.label('guard'))
             source = holds.outerjoin(guard, guard.c.id == holds.c.id)
-        rows = connection.execute(sa.select(*columns).select_from(source).where(
-            holds.c.state == 'open', sa.or_(holds.c.kind != 'window', holds.c.release_at.is_(None),
-                                            holds.c.release_at > now))
-            .order_by(holds.c.requested_at, holds.c.id)).mappings().all()
-        from .rules.text import WAITS
+        rows = self._fetch(connection, sa.select(*columns).select_from(source).where(
+            holds.c.job_id.in_(sorted(held)), holds.c.state == 'open',
+            sa.or_(holds.c.kind != 'window', holds.c.release_at.is_(None), holds.c.release_at > now))
+            .order_by(holds.c.requested_at, holds.c.id))
         first = {'no_route': 0, 'approval': 1, 'window': 2}
         for row in sorted(rows, key=lambda row: first.get(row['kind'], 3)):
-            fax = waiting.get(row['job_id'])
-            if fax is None or fax.section == 'needs_you':
+            fax = held[row['job_id']]
+            if fax.hold is not None:
                 continue
-            kind = 'dialing' if row.get('guard') else row['kind'] if row['kind'] in first else 'other'
-            fax.section, fax.kind, fax.since = 'needs_you', kind, row['requested_at']
-            fax.sentence = row['reason'] or WAITS
+            fax.kind = 'dialing' if row.get('guard') else row['kind'] if row['kind'] in first else 'other'
+            fax.since, fax.sentence = row['requested_at'], row['reason'] or WAITS
             fax.until = row['release_at'] if row['kind'] == 'window' else None
             fax.hold = {'id': row['id'], 'version': row['version'], 'separate_approver': row['separate_approver'],
                         'requested_by_principal_id': row['requested_by_principal_id']}
@@ -463,10 +560,10 @@ class Board:
                                       cause=call.get('error_cause'))
         return True
 
-    def _groups(self, connection, faxes, since, found):
+    def _groups(self, connection, counts, found):
         """The names of the submitters (their personal containers) of the faxes accepted today."""
         t = self._tables(connection)
-        parents = sorted({fax.parent for fax in faxes if fax.parent and fax.created_at >= since})
+        parents = sorted({count.parent for count in counts if count.parent and count.today})
         if not parents:
             return True
         r, p = t['access_resources'], t['access_principals']
@@ -664,11 +761,32 @@ def _counted(pairs, order):
     return sorted(pairs, key=lambda item: (-item['count'], index[item['key']]))
 
 
+def visible_counts(found, scope):
+    """This person's ``Count`` rows: the containers they see, plus each fax shared with them on its own (read one by
+    one in the aggregate, as no container of theirs counts it)."""
+    mine = [count for count in found.counts if count.enabled and count.parent in scope.containers]
+    for fax in found.faxes:
+        if fax.resource in scope.faxes and fax.enabled and fax.parent not in scope.containers:
+            mine.append(Count(fax.parent, True, fax.via_key, fax.section, fax.created_at >= found.since,
+                              fax.updated_at >= found.since, 1))
+    return mine
+
+
 def view(found, scope, *, mask, sentence_for=None):
-    """The board for one person: only the faxes ``scope`` sees, counted and listed (contract 106)."""
+    """The board for one person: only the faxes ``scope`` sees, counted and listed (contract 106).
+
+    Counts come from SQL (``visible_counts``); lists from the faxes the aggregate read one by one, so a list may be
+    shorter than its count. Every sentence is filled: the claim's own words for a fax, else its reason's sentence.
+    """
     from .routing.holds import HoldStore
+    from .rules.text import WAITS
     mine = [fax for fax in found.faxes if scope.sees(fax)]
+    counts = visible_counts(found, scope)
     not_checked = set(found.not_checked)
+
+    def total(category=None, *, today=None, finished=None):
+        return sum(count.count for count in counts if (category is None or count.category == category)
+                   and (today is None or count.today == today) and (finished is None or count.finished == finished))
 
     def base(fax):
         return {'id': fax.id, 'to': mask(fax.to_number), 'recipient': fax.recipient or None,
@@ -676,22 +794,22 @@ def view(found, scope, *, mask, sentence_for=None):
 
     sending = [fax for fax in mine if fax.section == 'sending']
     sending.sort(key=lambda fax: (fax.started_at is None, fax.started_at or fax.created_at, fax.id))
-    waiting = sorted((fax for fax in mine if fax.section == 'waiting'), key=lambda fax: fax.position)
+    # Only faxes whose reason was worked out are listed (all of them, unless that part could not be read).
+    waiting = sorted((fax for fax in mine if fax.section == 'waiting' and fax.reason),
+                     key=lambda fax: fax.position)
     needs = sorted((fax for fax in mine if fax.section == 'needs_you'), key=lambda fax: (fax.since or fax.created_at,
                                                                                         fax.id))
     reasons = {key: 0 for key, _ in REASONS}
     for fax in waiting:
-        if fax.reason:
-            reasons[fax.reason] += 1
+        reasons[fax.reason] += 1
     lines_sentence = found.lines_sentence or REASON_SENTENCES['lines_busy']
 
+    def reason_sentence(key):
+        return lines_sentence if key == 'lines_busy' else REASON_SENTENCES[key]
+
     def waiting_item(fax):
-        own = None
-        if fax.reason in OWN_SENTENCE and sentence_for is not None:
-            own = sentence_for(fax)
-        return {**base(fax), 'reason': fax.reason,
-                'sentence': own or (lines_sentence if fax.reason == 'lines_busy' else
-                                    REASON_SENTENCES.get(fax.reason) if fax.reason else None),
+        own = sentence_for(fax) if fax.reason in OWN_SENTENCE and sentence_for is not None else None
+        return {**base(fax), 'reason': fax.reason, 'sentence': own or reason_sentence(fax.reason),
                 'since': iso(fax.since or fax.created_at), 'until': iso(fax.until)}
 
     def actions(fax):
@@ -712,52 +830,53 @@ def view(found, scope, *, mask, sentence_for=None):
         return ['refuse'] if decide else []
 
     def need_item(fax):
-        return {**base(fax), 'kind': fax.kind, 'since': iso(fax.since or fax.created_at), 'sentence': fax.sentence,
+        return {**base(fax), 'kind': fax.kind or 'other', 'since': iso(fax.since or fax.created_at),
+                'sentence': fax.sentence or WAITS,
                 'hold': {'id': fax.hold['id'], 'version': fax.hold['version']} if fax.hold else None,
                 'actions': actions(fax), 'until': iso(fax.until)}
 
-    today = [fax for fax in mine if fax.created_at >= found.since]
-    failed = [fax for fax in mine if fax.state == 'failed' and fax.updated_at >= found.since]
+    # How today's failures ended: the latest FAILED_READ were read one by one; any older ones are "other".
+    failed_today = total('failed', finished=True)
     failures = {key: 0 for key, _ in FAILURES}
-    for fax in failed:
-        failures[fax.failure or 'other'] += 1
+    for fax in mine:
+        if fax.state == 'failed' and fax.updated_at >= found.since:
+            failures[fax.failure or 'other'] += 1
+    failures['other'] += max(failed_today - sum(failures.values()), 0)
     labels = dict(FAILURES)
 
     groups = {}
-    for fax in today:
-        if fax.parent:
-            groups.setdefault((fax.parent, fax.via_key), []).append(fax)
+    for count in counts:
+        if count.today and count.parent:
+            groups.setdefault((count.parent, count.via_key), []).append(count)
     group_items = []
     for (parent, via_key), members in groups.items():
-        if len(members) < GROUP_MIN:
+        size = sum(count.count for count in members)
+        if size < GROUP_MIN:
             continue
         name = found.names.get(parent) or 'Someone no longer listed'
+
+        def part(category):
+            return sum(count.count for count in members if count.category == category)
         group_items.append({
-            'who': f'{name} (API key)' if via_key and name != 'Installation key' else name,
-            'total': len(members),
-            'delivered': sum(fax.state == 'success' for fax in members),
-            'sending': sum(fax.section == 'sending' for fax in members),
-            'waiting': sum(fax.section == 'waiting' for fax in members),
-            'needs_you': sum(fax.section == 'needs_you' for fax in members),
-            'failed': sum(fax.state == 'failed' for fax in members)})
+            'who': f'{name} (API key)' if via_key and name != 'Installation key' else name, 'total': size,
+            'delivered': part('delivered'), 'sending': part('sending'), 'waiting': part('waiting'),
+            'needs_you': part('needs_you'), 'failed': part('failed')})
     group_items.sort(key=lambda item: (-item['total'], item['who']))
 
-    unexplained = sum(1 for fax in waiting if not fax.reason)
-    board = {
+    waiting_count = total('waiting')
+    return {
         'as_of': iso(found.at),
         'not_checked': [name for name in SECTIONS if name in not_checked],
-        'sending': {'count': len(sending), 'items': [
+        'sending': {'count': total('sending'), 'items': [
             {**base(fax), 'page': None, 'route': fax.route, 'engine': fax.engine, 'started_at': iso(fax.started_at)}
             for fax in sending[:LIST_LIMIT]]},
-        'waiting': {'count': len(waiting), 'more': unexplained,
-                    'reasons': _counted([{'key': key, 'count': reasons[key],
-                                          'sentence': lines_sentence if key == 'lines_busy' else sentence}
-                                         for key, sentence in REASONS], [key for key, _ in REASONS]),
+        'waiting': {'count': waiting_count, 'more': max(waiting_count - len(waiting), 0),
+                    'reasons': _counted([{'key': key, 'count': reasons[key], 'sentence': reason_sentence(key)}
+                                         for key, _ in REASONS], [key for key, _ in REASONS]),
                     'items': [waiting_item(fax) for fax in waiting[:LIST_LIMIT]]},
-        'needs_you': {'count': len(needs), 'items': [need_item(fax) for fax in needs[:LIST_LIMIT]]},
-        'today': {'since': iso(found.since), 'accepted': len(today),
-                  'delivered': sum(fax.state == 'success' and fax.updated_at >= found.since for fax in mine),
-                  'failed': len(failed),
+        'needs_you': {'count': total('needs_you'), 'items': [need_item(fax) for fax in needs[:LIST_LIMIT]]},
+        'today': {'since': iso(found.since), 'accepted': total(today=True),
+                  'delivered': total('delivered', finished=True), 'failed': failed_today,
                   'failures': _counted([{'key': key, 'label': labels[key], 'count': count}
                                         for key, count in failures.items() if count],
                                        [key for key, _ in FAILURES])},
@@ -765,7 +884,6 @@ def view(found, scope, *, mask, sentence_for=None):
         'engine': found.engine,
         'groups': group_items,
     }
-    return board
 
 
 # One board per database ---------------------------------------------------------------------------------------------

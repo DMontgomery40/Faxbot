@@ -578,3 +578,97 @@ def test_a_sender_created_after_a_viewer_looked_shows_at_the_next_aggregate(clie
     seen = client.get('/outbound/now', headers=ADMIN).json()
     assert job in items(seen, 'needs_you')
     assert board.scope_reads == reads + 1
+
+
+# -- bounded loads, filled sentences, Retry-After ---------------------------------------------------------------------
+
+def sentences_filled(board):
+    """Every sentence the console shows is product text, never null."""
+    for item in board['waiting']['reasons'] + board['waiting']['items'] + board['needs_you']['items']:
+        assert isinstance(item['sentence'], str) and item['sentence'], item
+
+
+def _bulk(desk, owner, count, *, state, at, number=lambda index: '+12025550123'):
+    """``count`` faxes of ``owner``'s in one transaction, as acceptance leaves them (fax, delivery, Sent resource)."""
+    t = desk.world.tables
+    deliveries = sa.Table('outbound_deliveries', sa.MetaData(), autoload_with=desk.engine)
+    jobs, deliveries_rows, resources = [], [], []
+    for index in range(count):
+        job = uuid4().hex
+        jobs.append({'id': job, 'to_number': number(index), 'file_name': 'synthetic.pdf', 'tiff_path': '',
+                     'status': 'queued', 'backend': 'phaxio', 'pages': 1, 'created_at': at, 'updated_at': at})
+        deliveries_rows.append({'id': job, 'dispatch_mode': 'normal', 'state': state, 'version': 1,
+                                'created_at': at + timedelta(seconds=index), 'updated_at': at})
+        resources.append({'id': uuid4().hex, 'kind': 'outbound', 'parent_id': 'personal-' + owner,
+                          'parent_kind': 'personal', 'principal_id': None, 'mailbox_id': None, 'fax_job_id': job,
+                          'inbound_fax_id': None, 'enabled': 1, 'version': 1, 'created_at': at, 'updated_at': at})
+    with desk.engine.begin() as connection:
+        connection.execute(t['fax_jobs'].insert(), jobs)
+        connection.execute(deliveries.insert(), deliveries_rows)
+        connection.execute(t['access_resources'].insert(), resources)
+
+
+def test_a_big_day_loads_a_bounded_number_of_rows_and_counts_stay_right(desk):
+    """5,000 delivered today and 2,000 waiting: counts come from SQL, and about the first 200 waiting are read."""
+    at = NOW - timedelta(hours=2)
+    _bulk(desk, 'alice', 3000, state='success', at=at)
+    _bulk(desk, 'bob', 2000, state='success', at=at)
+    _bulk(desk, 'alice', 1200, state='ready', at=at, number=lambda index: f'+1303555{index:04d}')
+    _bulk(desk, 'bob', 800, state='ready', at=at + timedelta(hours=1), number=lambda index: f'+1404555{index:04d}')
+    _bulk(desk, 'bob', 30, state='failed', at=at)
+    everyone = desk.look(desk.olive)
+    assert desk.board.rows_read <= 1000, desk.board.rows_read
+    assert everyone['today'] == {'since': '2026-10-03T00:00:00Z', 'accepted': 7030, 'delivered': 5000, 'failed': 30,
+                                 'failures': [{'key': 'other', 'label': 'Another problem (see Sent)', 'count': 30}]}
+    assert everyone['waiting']['count'] == 2000 and everyone['waiting']['more'] == 1800
+    assert sum(reason['count'] for reason in everyone['waiting']['reasons']) == 200
+    assert len(everyone['waiting']['items']) == 20
+    sentences_filled(everyone)
+    groups = {group['who']: group for group in everyone['groups']}
+    assert groups['alice'] == {'who': 'alice', 'total': 4200, 'delivered': 3000, 'sending': 0, 'waiting': 1200,
+                               'needs_you': 0, 'failed': 0}
+    assert groups['bob']['total'] == 2830 and groups['bob']['failed'] == 30
+    alice, bob = desk.read(desk.alice), desk.read(desk.bob)
+    assert desk.board.reads == 1               # the same aggregate serves all three
+    assert (alice['today']['accepted'], alice['today']['delivered'], alice['waiting']['count']) == (4200, 3000, 1200)
+    assert (bob['today']['accepted'], bob['today']['delivered'], bob['waiting']['count']) == (2830, 2000, 800)
+    assert bob['today']['failed'] == 30 and alice['today']['failed'] == 0
+    # The first 200 in the queue are alice's (accepted first), so bob's list is shorter than his count.
+    assert alice['waiting']['more'] == 1000 and bob['waiting']['items'] == [] and bob['waiting']['more'] == 800
+
+
+def test_a_waiting_part_that_cannot_be_read_still_counts_and_lists_no_fax_without_a_sentence(desk, monkeypatch):
+    desk.accept()
+    desk.accept(to=OTHER)
+
+    def broken(self, *args, **kwargs):
+        raise RuntimeError('synthetic waiting failure')
+    monkeypatch.setattr(outbound_now.Board, '_waiting', broken)
+    board = desk.look()
+    assert board['not_checked'] == ['waiting'] and board['waiting']['count'] == 2
+    assert board['waiting']['items'] == [] and board['waiting']['more'] == 2
+    sentences_filled(board)
+
+
+def test_a_busy_database_answers_503_with_retry_after(client, monkeypatch):
+    import sqlite3
+    from app import outbound_now as served
+    from app.access.types import AccessUnavailableError
+
+    def locked(self, *args, **kwargs):
+        raise sa.exc.OperationalError('SELECT 1', {}, sqlite3.OperationalError('database is locked'))
+    monkeypatch.setattr(served.Board, '_counts', locked)
+    busy = client.get('/outbound/now', headers=ADMIN)
+    assert busy.status_code == 503 and busy.headers['Retry-After'] == '2'
+    assert busy.json()['detail'] == ('The database is busy right now, so the board could not be read. Try again in '
+                                     'a moment.')
+    # Another cause still answers 200 with what it could read.
+    monkeypatch.setattr(served.Board, '_counts', lambda self, *args, **kwargs: (_ for _ in ()).throw(KeyError('x')))
+    partial = client.get('/outbound/now', headers=ADMIN)
+    assert partial.status_code == 200 and 'sending' in partial.json()['not_checked']
+
+    def unavailable(self, *args, **kwargs):
+        raise AccessUnavailableError()
+    monkeypatch.setattr(served.Board, 'scope', unavailable)
+    access_busy = client.get('/outbound/now', headers=ADMIN)
+    assert access_busy.status_code == 503 and access_busy.headers['Retry-After'] == '1'

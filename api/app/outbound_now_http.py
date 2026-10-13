@@ -11,6 +11,9 @@ from .config_runtime import run_lifecycle_step
 
 router = APIRouter(tags=['Faxes'])
 UNAVAILABLE = 'The outbound board is unavailable right now. Try again in a moment.'
+BUSY = 'The database is busy right now, so the board could not be read. Try again in a moment.'
+# Seconds the console waits before asking again after a 503 (its poll backs off on 503 and 429).
+RETRY_SECONDS = 2
 
 
 @router.get('/outbound/now')
@@ -21,7 +24,17 @@ async def outbound_board(request: Request, identity=Depends(require_identity)):
     engine, _ = installation_engine(request.app)
     access = getattr(request.app.state, 'access_runtime', None)
     if engine is None or access is None:
-        raise HTTPException(503, detail=UNAVAILABLE)
+        raise HTTPException(503, detail=UNAVAILABLE, headers={'Retry-After': str(RETRY_SECONDS)})
     values = request.scope['faxbot.configuration'].active.values
-    return await run_lifecycle_step(private_operation(
-        lambda: outbound_now.board_for(engine, access, identity.actor, values, mask=mask_phone)))
+
+    def read():
+        try:
+            return outbound_now.board_for(engine, access, identity.actor, values, mask=mask_phone)
+        except outbound_now.DatabaseBusy:
+            return None
+    # A busy access check answers 503 with Retry-After through the access error handler, and a throttled sign-in
+    # 429 with Retry-After; a database too busy to read any fax answers the same way here.
+    board = await run_lifecycle_step(private_operation(read))
+    if board is None:
+        raise HTTPException(503, detail=BUSY, headers={'Retry-After': str(RETRY_SECONDS)})
+    return board
