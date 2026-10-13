@@ -3,7 +3,7 @@
 Every account, number and fax here is synthetic. The provider doubles never
 contact a provider; they record which account each submission used.
 """
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -206,6 +206,132 @@ async def test_the_default_account_is_never_a_drop_back_outside_the_envelope(rul
     held = holds(ruled, job)
     assert [item['kind'] for item in held] == ['no_route'] and 'nothing was sent' in held[0]['reason']
     assert _claim(ruled) is None
+
+
+@contextmanager
+def _database_held(env):
+    """A real write lock on the installation's database, held by another connection: SQLite's reserved lock, or the
+    configuration lock PostgreSQL's writers take. Writers wait 0.2 s on SQLite before "database is locked"
+    (PostgreSQL waits out the configuration lock's own 10 s lock_timeout)."""
+    from api.app.config_store import _LOCK_ID
+
+    def short_wait(dbapi_connection, record, proxy):
+        dbapi_connection.execute('PRAGMA busy_timeout = 200')
+    sqlite = env.engine.dialect.name == 'sqlite'
+    if sqlite:
+        sa.event.listen(env.engine, 'checkout', short_wait)
+    holder = env.engine.connect()
+    try:
+        if sqlite:
+            holder.exec_driver_sql('BEGIN IMMEDIATE')
+        else:
+            holder.begin()
+            holder.execute(sa.text('SELECT pg_advisory_xact_lock(:key)'), {'key': _LOCK_ID})
+        yield
+    finally:
+        holder.rollback()
+        holder.close()
+        if sqlite:
+            sa.event.remove(env.engine, 'checkout', short_wait)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rules', [False, True], ids=['automatic', 'rule'])
+@pytest.mark.parametrize('step', ['_plan', '_assign'])
+async def test_a_busy_database_during_route_choice_gives_the_fax_back_and_never_changes_its_route(
+        database, tmp_path, monkeypatch, caplog, rules, step):  # noqa: F811
+    """Defect 37 (acceptance, WAL on): a locked database during route choice sent the fax by the default provider
+    ("Route choice is unavailable; using the outbound provider"), or held it in Sent under rules. Now the fax is
+    given back, nothing sent, and once the lock clears it is sent once, by the route its rules or the automatic
+    choice pick (SignalWire here; Phaxio is the default provider)."""
+    env = installation(database, tmp_path, UNLISTED if rules else LISTED)
+    if rules:
+        publish(env, {'format': 1, 'routes': [rule('r-sw', {'use': 'signalwire'})]})
+    job = accept(env)
+    inner = Inner(env.delivery)
+    transport = RoutedTransport(inner, direct=None)
+    real, held = getattr(transport, step), []
+
+    def locked_once(*args, **kwargs):
+        if held:
+            return real(*args, **kwargs)
+        held.append(step)
+        with _database_held(env):
+            return real(*args, **kwargs)
+    monkeypatch.setattr(transport, step, locked_once)
+    worker = OutboundWorker(env.delivery, transport)
+    with caplog.at_level('WARNING'):
+        assert await worker.step() is False
+    assert held == [step] and inner.used == []
+    assert env.delivery.get(job)['state'] == 'ready' and holds(env, job) == []
+    messages = [record.getMessage() for record in caplog.records]
+    assert any('the database was busy while its route was chosen' in message for message in messages)
+    assert not any(message.startswith('Route choice is unavailable') for message in messages)
+    worker.paused.clear()
+    assert await worker.step() is True
+    assert inner.used == ['signalwire']
+    assert await worker.step() is False and inner.used == ['signalwire']
+
+
+@pytest.mark.asyncio
+async def test_a_lock_still_held_when_the_fax_is_given_back_leaves_it_to_its_lease_then_it_goes_once_by_its_route(
+        database, tmp_path):  # noqa: F811
+    """The lock outlasts route choice, so giving the claim back cannot take it either: that step fails (the
+    delivery worker's loop logs it and goes on, outbound_wake.idle_loop), nothing is sent, and the claim's lease
+    gives the fax back; it then goes once, by the route the automatic choice picks."""
+    from contextlib import ExitStack
+    from api.app.config_store import ConfigurationStoreError
+    env = installation(database, tmp_path, LISTED)
+    job = accept(env)
+    inner = Inner(env.delivery)
+    transport = RoutedTransport(inner, direct=None)
+    worker = OutboundWorker(env.delivery, transport)
+    real, held, calls = transport._plan, ExitStack(), []
+
+    def locked_from_here(*args, **kwargs):
+        if not calls:
+            calls.append(1)
+            held.enter_context(_database_held(env))
+        return real(*args, **kwargs)
+    transport._plan = locked_from_here
+    try:
+        with pytest.raises(ConfigurationStoreError):
+            await worker.step()
+    finally:
+        held.close()
+    assert inner.used == [] and env.delivery.get(job)['state'] == 'preparing' and holds(env, job) == []
+    env.delivery.recover_expired(now=datetime.utcnow() + timedelta(seconds=31))
+    assert env.delivery.get(job)['state'] == 'ready'
+    assert await worker.step() is True and inner.used == ['signalwire']
+    assert await worker.step() is False and inner.used == ['signalwire']
+
+
+def test_only_a_busy_database_counts_as_busy():
+    import sqlite3
+    from api.app.config_store import ConfigurationStoreError
+    from api.app.routing.database import DeliveryStoreError
+    from api.app.routing.transport import database_busy
+
+    def reworded(original, wrapper):
+        try:
+            try:
+                raise sa.exc.OperationalError('UPDATE fax_jobs', {}, original)
+            except sa.exc.SQLAlchemyError:
+                raise wrapper('Synthetic storage failure.') from None
+        except wrapper as error:
+            return error
+
+    locked = sqlite3.OperationalError('database is locked')
+    assert database_busy(reworded(locked, ConfigurationStoreError)) is locked
+    assert database_busy(reworded(locked, DeliveryStoreError)) is locked
+
+    class LockNotAvailable(Exception):
+        pgcode = '55P03'
+    timeout = LockNotAvailable('canceling statement due to lock timeout')
+    assert database_busy(reworded(timeout, ConfigurationStoreError)) is timeout
+    for other in (sqlite3.OperationalError('no such table: fax_jobs'), type('Other', (Exception,), {'pgcode': '42P01'})()):
+        assert database_busy(reworded(other, ConfigurationStoreError)) is None
+    assert database_busy(RuntimeError('synthetic route storage failure')) is None
 
 
 @pytest.mark.asyncio

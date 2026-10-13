@@ -28,6 +28,12 @@ state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
 root=${FAXBOT_ENGINE_ROOT:-}
 status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
+# How often the running engine checks that its daemons and lines are whole. Each check asks the processes it
+# started whether they are alive (kill -0) and reads each line's state from its status file, starting no
+# process; pgrep and faxstat run only when that finds something wrong. On a busy machine the processes a
+# check starts compete with the modems and the T.38 gateway in a call (a receive failed that way, 10 October
+# 2026), so the check is cheap and not too often.
+liveness_seconds=${FAXBOT_ENGINE_LIVENESS_SECONDS:-25}
 # How long a line may stay not ready (it may be setting its modem up), and how long the start waits for all.
 unready_seconds=${FAXBOT_ENGINE_UNREADY_SECONDS:-30}
 ready_seconds=${FAXBOT_ENGINE_READY_SECONDS:-120}
@@ -281,6 +287,10 @@ EOF
     printf 'LocalIdentifier:\t"%s"\n' "$station_id"
     # Each job may send its own station ID (Faxbot's reply number, JPARM TSI); faxsend ignores it otherwise.
     printf 'UseJobTSI:\t\tyes\n'
+    # The header line on every sent page (the job's JPARM TAGLINE: date, header text, reply number, page). HylaFAX+
+    # has no tag line font by default and then prints no header line at all. lutRS18 images about 24 rows over the
+    # top of a fine page, inside the white rows packed pages keep for it (api/app/pages/packing.py TOP_ROWS).
+    printf 'TagLineFont:\t\tetc/lutRS18.pcf\n'
     printf 'ServerTracing:\t\t0x00201\nSessionTracing:\t\t%s\n' "$session_tracing"
     printf 'RecvFileMode:\t\t0600\nLogFileMode:\t\t0600\nDeviceMode:\t\t0600\n'
     printf 'RingsBeforeAnswer:\t1\nSpeakerVolume:\t\toff\nGettyArgs:\t\t"-h %%l dx_%%s"\n'
@@ -415,6 +425,46 @@ done
 write_status running ''
 log "running with $lines fax line(s); SSL Fax $sslfax${listener:+, listener $listener}"
 
+# The processes the checks below ask after: the daemons and, for each line, its modem and its faxgetty (the
+# oldest of each name: hfaxd starts a child for each status request, faxgetty one for each received fax).
+declare -A watched=()
+remember() {
+  local number
+  watched=([faxq]=$(pgrep -o -x faxq || true) [hfaxd]=$(pgrep -o -x hfaxd || true))
+  for ((number = 1; number <= lines; number++)); do
+    watched[iaxmodem$number]=$(pgrep -o -x -f "iaxmodem ttyIAX$number" || true)
+    watched[faxgetty$number]=$(pgrep -o -x -f "faxgetty -D ttyIAX$number" || true)
+  done
+}
+remember
+
+# A remembered process is alive: it answers kill -0 and has not ended (one that ended and is not reaped yet
+# answers kill -0 too; its /proc entry says Z).
+alive() {
+  local stat
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  { read -r stat < "/proc/$1/stat"; } 2>/dev/null || return 0
+  stat=${stat##*) }
+  [ "${stat%% *}" != Z ]
+}
+
+# Every daemon and line looks whole, found without starting a process: each process remembered above is
+# alive, each line has its device, and each line's faxgetty says (in the status file faxstat reads) that it
+# is ready for a call or in one. Fails at the first thing that looks wrong; the full checks then say what.
+looks_whole() {
+  local name number state
+  for name in "${!watched[@]}"; do
+    alive "${watched[$name]}" || return 1
+  done
+  for ((number = 1; number <= lines; number++)); do
+    [ -e "$root/dev/ttyIAX$number" ] || return 1
+    state=''
+    { read -r state < "$spool/status/ttyIAX$number"; } 2>/dev/null || true
+    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+  done
+  return 0
+}
+
 # A line whose registration Asterisk refused (Asterisk restarted underneath it)
 # stays down; once it has been down for a while and no call is up, start again.
 declare -A refused_since=()
@@ -434,43 +484,61 @@ registration_refused() {
 }
 
 line_down=''
+next_check=$((SECONDS + liveness_seconds))
+sessions_checked=$spool/etc/faxbot-sessions-checked
 while sleep "$check_seconds"; do
   # Received faxes and kept reports go to Faxbot (as uucp, like every other engine script).
   if compgen -G "$state/received/*.ticket" >/dev/null; then
     runuser -u uucp -- env FAXBOT_DATA="$data" FAXBOT_ENGINE_OUT="$out" FAXBOT_HYLAFAX_SPOOL="$spool" \
       FAXBOT_ENGINE_STATE="$state" /usr/local/lib/faxbot-engine/handover || true
   fi
-  # Received calls that left no fax get a report too (from the session logs).
-  runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
-    /usr/local/lib/faxbot-engine/sessions || true
+  # Received calls that left no fax get a report too (from the session logs): read when a session log was
+  # added since the last reading, and with each check of the lines (a session open then may have finished).
+  if [ "$spool/log" -nt "$sessions_checked" ] || (( SECONDS >= next_check )); then
+    : > "$sessions_checked"
+    runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
+      /usr/local/lib/faxbot-engine/sessions || true
+  fi
   if compgen -G "$state/results/*.report" >/dev/null; then
     runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
       /usr/local/lib/faxbot-engine/deliver || true
   fi
-  if registration_refused && idle; then
-    write_status restarting "Faxbot's fax engine is reconnecting to the phone connection."
-    log 'a fax line was refused by Asterisk; restarting to register again'
-    exit 1
-  fi
-  for daemon in faxq hfaxd iaxmodem faxgetty; do
-    if ! pgrep -x "$daemon" >/dev/null; then
-      write_status failed "Faxbot's fax engine stopped and is starting again."
-      log "$daemon stopped; restarting the engine"
+  # The daemons and lines, every $liveness_seconds; while a line is down, with the full checks each time.
+  if (( SECONDS >= next_check )); then
+    next_check=$((SECONDS + liveness_seconds))
+    if registration_refused && idle; then
+      write_status restarting "Faxbot's fax engine is reconnecting to the phone connection."
+      log 'a fax line was refused by Asterisk; restarting to register again'
       exit 1
     fi
-  done
-  # A line that is not whole or not ready takes no calls: say so at once, and start again once no call is
-  # up; a line that comes back by itself is running again.
-  if check_lines; then
-    write_status restarting "$LINE_DOWN"
-    line_down=yes
-    if idle; then
-      log "$problem; restarting the engine"
-      exit 1
+    if looks_whole && [ -z "$line_down" ]; then
+      unready_since=()
+    else
+      for daemon in faxq hfaxd iaxmodem faxgetty; do
+        if ! pgrep -x "$daemon" >/dev/null; then
+          write_status failed "Faxbot's fax engine stopped and is starting again."
+          log "$daemon stopped; restarting the engine"
+          exit 1
+        fi
+      done
+      # A line that is not whole or not ready takes no calls: say so at once, and start again once no call is
+      # up; a line that comes back by itself is running again.
+      if check_lines; then
+        write_status restarting "$LINE_DOWN"
+        line_down=yes
+        if idle; then
+          log "$problem; restarting the engine"
+          exit 1
+        fi
+      else
+        if [ -n "$line_down" ]; then
+          write_status running ''
+          line_down=''
+        fi
+        # Whole again: the processes to ask after are the ones running now.
+        remember
+      fi
     fi
-  elif [ -n "$line_down" ]; then
-    write_status running ''
-    line_down=''
   fi
   if [ "$(request_sum)" != "$restart_seen" ] && idle; then
     write_status restarting "Faxbot's fax engine is starting again."

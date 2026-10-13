@@ -1,5 +1,6 @@
 // Measured fax codings: the Sent detail says which coding went and why, and Send a fax says when 9 in 10 such
-// calls finish. The server words every sentence; the console shows them as they come.
+// calls finish (from the number's own calls) or that the time is an estimate. The server words every sentence;
+// the console shows them as they come.
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
@@ -59,11 +60,26 @@ describe('Which fax coding a sent fax went with', () => {
 });
 
 describe('When such a call finishes', () => {
-  it('says when 9 in 10 such calls finish, under how the cost was worked out', async () => {
-    const finish = '9 in 10 such calls should finish within about 1 minute 6 seconds, from an assumed spread of '
-      + '15% either way until this number has 3 faxes of its own.';
-    const basis = 'Billed as 1 minute at $0.005 a minute, or more about 25% of the time, so about $0.00625 is '
-      + 'expected; about 59 seconds on the line, for typical pages at a typical fax speed.';
+  const basis = 'Billed as 1 minute at $0.005 a minute, or more if the call runs long, so about $0.00625 is '
+    + 'expected; about 59 seconds on the line, for typical pages at a typical fax speed.';
+
+  it('says the time is an estimate, never "9 in 10", while the number has too few calls of its own', async () => {
+    const note = 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.';
+    await priceOnePage({ finish_sentence: null, time_note: note });
+    expect(screen.getByTestId('send-cost-time-note').textContent).toBe(note);
+    expect(screen.queryByTestId('send-cost-finish')).toBeNull();
+    expect(screen.queryByText(/9 in 10/)).toBeNull();
+  });
+
+  it("says when 9 in 10 such calls finish once that comes from the number's own calls", async () => {
+    const finish = 'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 1 minute '
+      + '6 seconds.';
+    await priceOnePage({ finish_sentence: finish, time_note: null });
+    expect(screen.getByTestId('send-cost-finish').textContent).toBe(finish);
+    expect(screen.queryByTestId('send-cost-time-note')).toBeNull();
+  });
+
+  async function priceOnePage(time: { finish_sentence: string | null; time_note: string | null }) {
     server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
       display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
       estimated_cost_30_days: [], direct_partner: null, available_routes: [],
@@ -74,7 +90,7 @@ describe('When such a call finishes', () => {
     http.get('/routing/predict', () => HttpResponse.json({ to: '+12025550123', number_class: 'local',
       number_class_text: 'a local number', pages: 1, layout: 'normal', resolution: 'fine', sentence: '', note: '',
       routes: [{ route: 'sip', label: 'Telnyx', billed_pages: 0, seconds: 59, billed_seconds: 60,
-        seconds_to_next_step: 1, expected_billed_seconds: 75, p90_seconds: 66.2, finish_sentence: finish,
+        seconds_to_next_step: 1, expected_billed_seconds: 75, p90_seconds: 66.2, ...time,
         cost: { currency: 'USD', amount: '0.00625' }, cost_text: '$0.00625', marginal: false,
         headline: 'About $0.00625 for this 1-page fax.', basis }] })));
     render(<SendFax client={client()} config={{ fax_disabled: false, max_file_size_mb: 10 }} configLoading={false}
@@ -84,6 +100,5 @@ describe('When such a call finishes', () => {
       'one.pdf', { type: 'application/pdf' });
     fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [page] } });
     await waitFor(() => expect(screen.getByTestId('send-cost-basis').textContent).toBe(basis), { timeout: 2000 });
-    expect(screen.getByTestId('send-cost-finish').textContent).toBe(finish);
-  });
+  }
 });

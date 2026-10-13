@@ -363,13 +363,23 @@ def test_requeue_cap_and_partner_refusal_rules(multi):
     ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'humblefax'}, False),
     ({'FAX_BACKEND': 'sip'}, True),
     ({'FAX_BACKEND': 'phaxio', 'FAX_INBOUND_BACKEND': 'sip'}, True),
+    # Sending off (#69): connected all the same when Asterisk shares Faxbot's data folder (it writes its start
+    # marker there), so the trunk can be checked first; never when no Asterisk is beside it, as in test runs.
     ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip', 'FAX_DISABLED': 'true'}, False),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_OUTBOUND_ROUTES': 'sip', 'FAX_DISABLED': 'true', 'marker': True}, True),
+    ({'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'true', 'marker': True}, True),
+    ({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'true', 'marker': True}, False),
     ({}, False),
 ])
-def test_asterisk_connects_for_sip_as_provider_or_as_an_extra_route(environment, expected):
+def test_asterisk_connects_for_sip_as_provider_or_as_an_extra_route(environment, expected, tmp_path):
     from api.app import main
     from api.app.config import use_configuration
-    values = ConfigurationValues.from_environment({'FAX_DISABLED': 'false', **environment})
+    environment = dict(environment)
+    if environment.pop('marker', False):
+        (tmp_path / 'asterisk').mkdir()
+        (tmp_path / 'asterisk' / 'engine-started').write_text('1791180000\n')
+    values = ConfigurationValues.from_environment({'FAX_DISABLED': 'false', 'FAX_DATA_DIR': str(tmp_path),
+                                                   **environment})
     with use_configuration(values):
         assert main._ami_required() is expected
 

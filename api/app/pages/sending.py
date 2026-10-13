@@ -251,7 +251,7 @@ def permission_for(engine, values, account, job, *, rule=None):
     codec_ok = setting_for(engine, number, chosen) is not None
     # The codings this call may use, measured on each candidate's pages (pages/coding.py): Faxbot's own engines on
     # the trunk only, since a fax service codes the pages itself.
-    usable = _usable_codings(engine, values, route, mode, number, cap)
+    usable = _usable_codings(engine, values, route, mode, number, cap, requested=job.get('engine_request'))
     return Permission(number, chosen, cap, packing_ok, trim_ok, match_ok, codec_ok, lighten, why, whiten, usable)
 
 
@@ -526,7 +526,8 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
                                       dense_allowed=packing_ok, codec=codec if codec_ok else None,
                                       card=account.card, boundary_seconds=cap.boundary_seconds,
                                       predict=account.predict(), describe_dense=describe_dense, usable=usable,
-                                      measure_cache=_coding_cache(root, job_id) if usable is not None else None,
+                                      measure_cache=_coding_cache(root, job_id, values) if usable is not None
+                                      else None,
                                       renderings=renderings, faster=faster, receiving=receiving, memo=cache.codec)
     options = tuple(_option(account, item) for item in choice.get('candidates') or ())
     layout = None if choice['layout'] == 'normal' else choice['layout']
@@ -743,9 +744,10 @@ def _write_sheets(out_tiff, frames, limit):
     temporary.replace(path)
 
 
-def _usable_codings(engine, values, route, mode, number, cap):
+def _usable_codings(engine, values, route, mode, number, cap, *, requested=None):
     """The codings a call to ``number`` may request (``pages.coding.usable_for``), or None when Faxbot's own engines
-    do not place it or the records it reads cannot be read (logged; the engines then code as they always did)."""
+    do not place it or the records it reads cannot be read (logged; the engines then code as they always did).
+    ``requested``: the engine the fax's sender chose (``outbound_store.requested_engine_on``)."""
     if route != 'sip' or mode != 'image':
         return None
     import sqlalchemy as sa
@@ -754,19 +756,22 @@ def _usable_codings(engine, values, route, mode, number, cap):
     from . import coding
     try:
         recipient = hylafax_engine.recipient_limits(engine, number)
-        return coding.usable_for(engine, values, number, recipient=recipient, capability=cap)
+        return coding.usable_for(engine, values, number, recipient=recipient, capability=cap, requested=requested)
     except (sa.exc.SQLAlchemyError, DeliveryStoreError):
         logging.getLogger(__name__).warning('The fax codings this number takes could not be read; the call codes its '
                                             'pages as usual.', exc_info=True)
         return None
 
 
-def _coding_cache(root, job_id):
+def _coding_cache(root, job_id, values=None):
     """The codings measured on this fax's pages, kept for every attempt and account of the fax
     (``packed-<fax>-measured.coding.json``): its entries are keyed by the pages' pixels and the tuning, so a later
-    attempt measures nothing it measured before. The retention cleanup removes it with the fax's other files."""
-    from .coding import cache_path
-    return cache_path(Path(root) / f'{PREFIX}{job_id}-measured.tiff')
+    attempt measures nothing it measured before. The retention cleanup removes it with the fax's other files. With
+    ``values``, also the shared cache in the data folder (``coding.shared_cache``), so pages a dry run already
+    measured (``POST /routing/predict``) are not measured again."""
+    from .coding import MeasureCache, cache_path, shared_cache
+    return MeasureCache(path=cache_path(Path(root) / f'{PREFIX}{job_id}-measured.tiff'),
+                        shared=shared_cache(values) if values is not None else None)
 
 
 def _record_coding(engine, job_id, attempt_id, number, route, choice, usable, now):

@@ -160,3 +160,67 @@ def test_the_receipt_query_and_a_fax_sent_again_go_through_the_sending_rules(cli
     assert decisions(new_fax) == ['held']
     holds = {hold['job_id']: hold for hold in client.get('/routing/holds', headers=ADMIN).json()['holds']}
     assert holds[new_fax]['kind'] == 'approval'
+
+
+class _Runtime:
+    """Just enough of the configuration runtime for the partner-question step."""
+
+    def __init__(self, direct):
+        values = type('Values', (), {'direct_delivery_enabled': direct})()
+        active = type('Active', (), {'values': values})()
+        store = type('Store', (), {'read': lambda self: type('Read', (), {'active': active})()})()
+        self.manager = type('Manager', (), {'store': store})()
+
+
+def _app(direct):
+    return type('App', (), {'state': type('State', (), {'configuration_runtime': _Runtime(direct)})()})()
+
+
+@pytest.mark.asyncio
+async def test_partner_questions_build_the_direct_service_once_and_never_on_the_event_loop(monkeypatch):
+    """Building the direct service reflects its tables; on a busy installation that held the event loop for
+    seconds on every step. It is built once, in a worker thread, and only while direct delivery is on."""
+    import threading
+    from app.work import certainty_http
+    built, asked = [], []
+    loop_thread = threading.get_ident()
+
+    def build():
+        built.append(threading.get_ident())
+        return object()
+
+    class Question:
+        def __init__(self, store, service):
+            self.service = service
+
+        async def step(self):
+            asked.append(self.service)
+            return False
+    monkeypatch.setattr(certainty_http, 'PartnerQuestion', Question)
+
+    off = certainty_http.partner_questions(_app(False), store=None, build=build)
+    assert await off() is False and built == []
+
+    on = certainty_http.partner_questions(_app(True), store=None, build=build)
+    for _ in range(3):
+        assert await on() is False
+    assert len(built) == 1 and built[0] != loop_thread
+    assert len(asked) == 3 and asked[0] is asked[1] is asked[2]
+
+
+@pytest.mark.asyncio
+async def test_partner_questions_log_why_the_direct_service_could_not_be_built_and_try_again(caplog):
+    from app.routing.database import DeliveryStoreError
+    from app.work import certainty_http
+    tries = []
+
+    def build():
+        tries.append(1)
+        raise DeliveryStoreError('Delivery storage is unavailable.')
+    step = certainty_http.partner_questions(_app(True), store=None, build=build)
+    with caplog.at_level('WARNING'):
+        assert await step() is False
+        assert await step() is False
+    assert len(tries) == 2
+    assert 'partners are asked about uncertain faxes later' in caplog.text
+    assert 'DeliveryStoreError' in caplog.text  # the cause is logged, not swallowed

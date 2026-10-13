@@ -110,7 +110,7 @@ import type {
 import type {
   ImportManifest, ImportResult, WorkAssignee, WorkCounts, WorkEvent, WorkItem, WorkSettings, WorkView,
 } from './types';
-import type { EfaxStatus, ForwardedTrust, HumbleFaxStatus } from './types';
+import type { EfaxStatus, FaxEngineRequest, ForwardedTrust, HumbleFaxStatus } from './types';
 import type { ReceivingOptions } from '../components/ProviderRulesApi';
 import type { BlockedSender, BlockedSendersView, FaxMachineView, IafServer, ReplyNumberView } from './numbersTypes';
 import type {
@@ -160,6 +160,8 @@ const safeReconciliationDetails = new Map<string, string>([
     'The provider account that sent this fax is no longer set up; check the fax in that account.',
     'This fax already has a provider fax ID; use Refresh to update its status.',
     'This provider cannot look up fax status; check the fax in your provider account.',
+    'This fax went over your own trunk, so there is no provider fax ID to attach; check with the recipient before '
+      + 'sending it again.',
   ].map((detail): [string, string] => [detail, detail]),
 ]);
 
@@ -204,6 +206,12 @@ export function plainRefusal(error: unknown): string | null {
 
 // The server refused a fax before accepting it, so nothing was sent.
 export class FaxRefusedError extends Error {}
+// The fax may or may not have been accepted: Send keeps the number and document and links Sent.
+export class FaxUnconfirmedError extends Error {}
+// A retry whose send key already belongs to a different fax (the server's 409): nothing new was sent, and the fax
+// sent before may be in Sent. Send links Sent and does not offer the same retry again.
+export const RETRY_MISMATCH = "This retry doesn't match the fax you sent before; check Faxes → Sent before sending it again.";
+export class FaxRetryMismatchError extends Error {}
 
 // The server's fixed refusal for plugin routes while provider plugins are turned off.
 const PLUGINS_TURNED_OFF = 'v3 plugins feature disabled';
@@ -320,7 +328,14 @@ export interface ClientOptions {
 }
 
 type RequestOptions = { method?: string; body?: string | FormData; headers?: Record<string, string> };
-type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean };
+// retryBusy: a 503 is asked once more after its Retry-After (1 second when it names none, at most 5).
+type RequestExtras = { manifestValidation?: boolean; quiet401?: boolean; retryBusy?: boolean };
+
+function retryAfterMs(res: Response): number {
+  const header = res.headers.get('Retry-After')?.trim() ?? '';
+  const seconds = /^\d+$/.test(header) ? Number(header) : 1;
+  return Math.min(seconds, 5) * 1000;
+}
 type PolicyResult = { policy_version: number };
 
 export type EngineView = 'registrations' | 'contacts' | 'calls' | 'faxes';
@@ -363,6 +378,11 @@ class AdminAPIClient {
       headers: { ...this.authHeaders(method), ...init.headers },
     });
     let res = await attempt();
+    if (res.status === 503 && extras.retryBusy) {
+      // A busy moment (a database lock, a restart) is not a signed-out session: ask once more.
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs(res)));
+      res = await attempt();
+    }
     if (res.status === 403 && this.credential.kind === 'session' && !SAFE_METHODS.has(method)) {
       const detail = await readDetail(res);
       if (detail?.startsWith(CSRF_FAILURE) && await this.refreshCsrf()) res = await attempt();
@@ -463,7 +483,7 @@ class AdminAPIClient {
   }
 
   async me(extras: { quiet401?: boolean } = {}): Promise<AuthMe> {
-    const me = await this.json<AuthMe>('/auth/me', {}, extras);
+    const me = await this.json<AuthMe>('/auth/me', {}, { ...extras, retryBusy: true });
     if (this.credential.kind === 'session') {
       this.credential = { kind: 'session', csrf: typeof me.csrf_token === 'string' ? me.csrf_token : null };
     }
@@ -486,7 +506,7 @@ class AdminAPIClient {
   }
 
   async context(): Promise<ConsoleContext> {
-    return this.json('/auth/context');
+    return this.json('/auth/context', {}, { retryBusy: true });
   }
 
   async logout(): Promise<void> {
@@ -963,7 +983,7 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient; coverInHeader?: boolean; court?: string } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean; court?: string; engine?: FaxEngineRequest } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
@@ -984,6 +1004,8 @@ class AdminAPIClient {
     if (options.coverInHeader) formData.append('cover_in_header', 'true');
     // The California court profile: the case details as one JSON object (court/cover.py); never a payment card.
     if (options.court) formData.append('court', options.court);
+    // The fax engine for a call over the SIP trunk; left out, Faxbot chooses.
+    if (options.engine && options.engine !== 'auto') formData.append('engine', options.engine);
     // The patient, only for a recipient's health record system (FHIR); document content, never kept in the browser.
     for (const [name, value] of Object.entries(patientForm(options.patient))) formData.append(name, value);
 
@@ -999,8 +1021,10 @@ class AdminAPIClient {
         if (detail === 'Queue-only request refused because outbound sending is now enabled. Refresh Send before submitting again.') {
           throw new Error('Queue-only submission was refused because active settings changed. Leave and reopen Send to review the current delivery mode before trying again.');
         }
-        if (detail === 'Idempotency-Key already belongs to a different fax request.'
-            || detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
+        if (detail === 'Idempotency-Key already belongs to a different fax request.') {
+          throw new FaxRetryMismatchError(RETRY_MISMATCH);
+        }
+        if (detail === 'Accepted fax record is unavailable; reconcile before submitting another request.') {
           throw new Error(detail);
         }
       }
@@ -1011,12 +1035,12 @@ class AdminAPIClient {
       if (res.status === 503 && typeof detail === 'string') {
         // Refused before acceptance because the fax engine is not connected; nothing was sent.
         if (FAX_ENGINE_SENTENCES.has(detail)) throw new FaxRefusedError(detail);
-        const uncertain = /^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.exec(detail);
-        if (uncertain) {
-          throw new Error(`Acceptance is uncertain. Check job ${uncertain[1]} in Jobs before starting another request.`);
+        if (/^Fax acceptance is uncertain\. Retain job ([a-f0-9]{32}) for reconciliation\.$/.test(detail)) {
+          throw new FaxUnconfirmedError("Faxbot isn't sure it accepted the fax; it may already be in Faxes → Sent.");
         }
       }
-      throw new Error(`Fax acceptance was not confirmed (HTTP ${res.status}). Check Jobs before starting another request.`);
+      // No status code: the sentence says what happened and where to look (Send links Sent).
+      throw new FaxUnconfirmedError("Faxbot didn't confirm it accepted the fax; it may already be in Faxes → Sent.");
     }
 
     return res.json();
@@ -1194,10 +1218,12 @@ class AdminAPIClient {
 
   // The same for the document itself: its pages drawn and each coding measured on them; nothing is sent or kept.
   // Only the number and the file go: never a patient's details.
-  async predictDocument(to: string, file: File): Promise<DocumentPrediction> {
+  async predictDocument(to: string, file: File, engine: FaxEngineRequest = 'auto'): Promise<DocumentPrediction> {
     const form = new FormData();
     form.append('to', normalizeFaxDestination(to));
     form.append('file', file);
+    // The fax engine the sender would choose (as on Send): a trunk call is measured as that engine sends it.
+    if (engine !== 'auto') form.append('engine', engine);
     return this.json('/routing/predict', { method: 'POST', body: form });
   }
 

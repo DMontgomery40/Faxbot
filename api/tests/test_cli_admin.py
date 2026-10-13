@@ -4,10 +4,13 @@ Each test creates a real installation by starting the application once, stops
 it, then runs the local commands against its database and files. A server
 lifespan is started again to prove the result works through the API.
 """
+from datetime import datetime
 import json
 import os
 from pathlib import Path
+import sqlite3
 import stat
+import threading
 import time
 import uuid
 
@@ -380,3 +383,98 @@ def test_backup_and_restore_leave_the_fax_engines_out_folder_alone(installation,
     assert not any(name.startswith('data/hylafax-out/') for name in manifest['files'])
     installation.admin_json('restore', folder, '--force')
     assert (out / 'engine-0123456789abcdef-7-1.tiff').read_bytes() == b'II*\x00synthetic'
+
+
+# -- Backups of a database in write-ahead-log mode ----------------------------------------------------------------
+
+def _journal(path):
+    connection = sqlite3.connect(path)
+    try:
+        return connection.execute('PRAGMA journal_mode').fetchone()[0]
+    finally:
+        connection.close()
+
+
+def test_backup_while_another_connection_writes_then_restore_next_to_a_stale_log(installation, tmp_path):
+    """The live database runs in write-ahead-log mode; a backup taken while another connection keeps accepting
+    faxes is one consistent copy, and restoring it next to the old database's leftover -wal and -shm files
+    never replays that stale log into it."""
+    from app.config_store import ConfigurationStore
+    database = installation.root / 'installation.db'
+    assert _journal(database) == 'wal'  # the API's own connections turned it on
+    engine = create_database_engine(f'sqlite:///{database}')
+    configuration = ConfigurationStore(engine, installation.root / 'installation.key')
+    active = configuration.read().active
+    written, stop, started = [], threading.Event(), threading.Event()
+
+    def accept():
+        while not stop.is_set():
+            identity, now = uuid.uuid4().hex, datetime.utcnow()
+            configuration.accept_outbound(active, {
+                'id': identity, 'to_number': '+15551230001', 'file_name': 'synthetic.txt', 'tiff_path': '',
+                'status': 'queued', 'pages': 1, 'created_at': now, 'updated_at': now})
+            written.append(identity)
+            if len(written) >= 5:
+                started.set()
+    writer = threading.Thread(target=accept, daemon=True)
+    writer.start()
+    folder = tmp_path / 'backups' / 'busy'
+    try:
+        assert started.wait(30)
+        before = len(written)
+        made = installation.admin_json('backup', folder)
+        after = len(written)
+    finally:
+        stop.set()
+        writer.join(30)
+        engine.dispose()
+    assert made['schema_revision'] == HEAD
+    copy = folder / 'database' / 'faxbot.sqlite3'
+    # One self-contained file in the backup: opening it leaves no -wal or -shm beside it.
+    assert _journal(copy) == 'delete'
+    assert sorted(path.name for path in copy.parent.iterdir()) == ['faxbot.sqlite3']
+    with sqlite3.connect(copy) as check:
+        assert check.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+        kept = {row[0] for row in check.execute('SELECT id FROM fax_jobs')}
+    # A consistent snapshot: exactly the faxes accepted before some moment during the backup.
+    assert before <= len(kept) <= after and kept == set(written[:len(kept)])
+
+    # The old database is lost, but its -wal and -shm are left behind (a crash), holding a write it never kept.
+    lost = tmp_path / 'lost'
+    lost.mkdir()
+    stale = sqlite3.connect(database, isolation_level=None)
+    stale.execute('PRAGMA wal_autocheckpoint=0')
+    stale.execute("UPDATE fax_jobs SET status = 'stale-log' WHERE 1 = 1")
+    for suffix in ('-wal', '-shm'):
+        (lost / f'stale{suffix}').write_bytes(Path(f'{database}{suffix}').read_bytes())
+    stale.close()
+    data_dir = Path(installation.environment['FAX_DATA_DIR'])
+    for path in (database, data_dir, installation.root / 'installation.key', installation.root / 'direct.key'):
+        if path.exists():
+            path.rename(lost / path.name)
+    for suffix in ('-wal', '-shm'):
+        Path(f'{database}{suffix}').write_bytes((lost / f'stale{suffix}').read_bytes())
+    installation.admin_json('restore', folder)
+    assert not Path(f'{database}-wal').exists() and not Path(f'{database}-shm').exists()
+    with sqlite3.connect(database) as check:
+        assert check.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+        assert {row[0] for row in check.execute('SELECT id FROM fax_jobs')} == kept
+        assert check.execute("SELECT count(*) FROM fax_jobs WHERE status = 'stale-log'").fetchone() == (0,)
+    # The restored installation starts, and its first connection turns write-ahead logging back on.
+    with installation.serve() as client:
+        assert client.get('/health').status_code == 200
+    assert _journal(database) == 'wal'
+
+
+def test_a_database_log_left_in_a_backup_after_it_was_made_is_refused_by_name(installation, tmp_path):
+    folder = tmp_path / 'backup'
+    installation.admin_json('backup', folder)
+    (folder / 'database' / 'faxbot.sqlite3-wal').write_bytes(b'synthetic leftover log')
+    empty = tmp_path / 'elsewhere'
+    refused = installation.runner.invoke(cli_app, ['--url', NOBODY, 'system', 'restore', str(folder),
+                                                   '--data-dir', str(empty / 'data'),
+                                                   '--database-url', f"sqlite:///{empty / 'db.sqlite'}",
+                                                   '--key-file', str(empty / 'key')])
+    assert refused.exit_code == 1
+    assert 'files were added or removed (database/faxbot.sqlite3-wal)' in refused.stderr
+    assert not (empty / 'db.sqlite').exists()

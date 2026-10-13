@@ -1,3 +1,4 @@
+import hashlib
 import io
 import subprocess
 import shutil
@@ -246,8 +247,35 @@ def _pdf_dimensions(page) -> tuple[float, float]:
     return (height, width) if rotation % 180 else (width, height)
 
 
+# Documents already inspected, by their bytes' SHA-256 and whether the raster limits were checked: the same PDF is
+# inspected again and again while one fax or dry run is prepared (defect 71: six times for one dry run).
+_INSPECTED = {}
+_INSPECTED_LOCK = threading.Lock()
+_INSPECTED_KEPT = 64
+
+
 def _inspect_pdf(pdf_path: str, *, raster: bool = False) -> int:
     _check_file_size(pdf_path, limit=MAX_OUTPUT_BYTES)
+    try:
+        with open(pdf_path, "rb") as source:
+            # The limits are part of the key: a document inspected under other limits is inspected again.
+            key = (hashlib.sha256(source.read()).hexdigest(), raster, MAX_OUTPUT_BYTES, MAX_PDF_STREAM_BYTES,
+                   MAX_TOTAL_PDF_STREAM_BYTES, MAX_DOCUMENT_PAGES, MAX_RASTER_PAGE_PIXELS, MAX_RASTER_TOTAL_PIXELS)
+    except OSError:
+        key = None
+    with _INSPECTED_LOCK:
+        if key is not None and key in _INSPECTED:
+            return _INSPECTED[key]
+    pages = _inspect_pdf_once(pdf_path, raster=raster)
+    if key is not None:
+        with _INSPECTED_LOCK:
+            if len(_INSPECTED) >= _INSPECTED_KEPT:
+                _INSPECTED.pop(next(iter(_INSPECTED)))
+            _INSPECTED[key] = pages
+    return pages
+
+
+def _inspect_pdf_once(pdf_path: str, *, raster: bool = False) -> int:
     try:
         with apply_configuration(
             maximum_declared_stream_length=MAX_OUTPUT_BYTES,
@@ -781,7 +809,27 @@ LAYOUTS = ("normal", "dense", "codec")
 
 def frame_bits(frames) -> Tuple[int, ...]:
     """Compressed bits of each mode "1" page as the engines send it (Group 4, Faxbot's own fax image format)."""
-    return tuple(8 * len(_g4_data(frame) or b"") for frame in frames)
+    return tuple(_frame_bits(frame) for frame in frames)
+
+
+# Group 4 sizes of pages already coded, by the page's size and pixels: the same pages are priced for every account
+# compared and every layout (defect 71).
+_FRAME_BITS = {}
+_FRAME_BITS_LOCK = threading.Lock()
+_FRAME_BITS_KEPT = 4096
+
+
+def _frame_bits(frame):
+    key = (frame.size, hashlib.sha256(frame.tobytes()).hexdigest())
+    with _FRAME_BITS_LOCK:
+        if key in _FRAME_BITS:
+            return _FRAME_BITS[key]
+    bits = 8 * len(_g4_data(frame) or b"")
+    with _FRAME_BITS_LOCK:
+        if len(_FRAME_BITS) >= _FRAME_BITS_KEPT:
+            _FRAME_BITS.pop(next(iter(_FRAME_BITS)))
+        _FRAME_BITS[key] = bits
+    return bits
 
 
 def frames_resolution(frames) -> str:

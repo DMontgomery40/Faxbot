@@ -1279,6 +1279,35 @@ def test_costs_predict_prices_a_fax_on_every_route_before_sending(cli):
     assert '9 in 10 calls within' in human
 
 
+def test_savings_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_does(monkeypatch):
+    """faxbot savings predict: the trunk's time note and a learned finish sentence print as Send shows them; an
+    assumed spread prints no 9 in 10 figure (routing.predict_http.finish_sentence / time_note)."""
+    from app.cli import state as cli_state
+    note = 'The time on the line is an estimate until Faxbot has timed 3 faxes to this number.'
+    finish = 'From 4 earlier faxes to this number, 9 in 10 calls like this one finish within about 50 seconds.'
+
+    def route(key, label, **time):
+        return {'route': key, 'label': label, 'cost': {'amount': '0.01', 'currency': 'USD'}, 'marginal': False,
+                'seconds': 46.0, 'p90_seconds': 53.0, 'basis': f'{label} basis.', 'coding': None, **time}
+
+    class Canned:
+        url = 'https://faxbot.example'
+
+        def get(self, path, **_):
+            assert path == '/routing/predict'
+            return {'to': '+12025550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': 'Cheapest.',
+                    'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                    'routes': [route('sip', 'Telnyx', finish_sentence=None, time_note=note),
+                               route('sip-2', 'Page trunk', finish_sentence=finish, time_note=None)]}
+    monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+    result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                          '+12025550123'], env={'COLUMNS': '200'})
+    assert result.exit_code == 0, result.stdout
+    human = ' '.join(result.stdout.split())
+    assert f'Telnyx: {note}' in human and f'Page trunk: {finish}' in human
+    assert human.count('9 in 10 calls like this one') == 1
+
+
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
 def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
     letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')
@@ -1292,6 +1321,13 @@ def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tm
     assert result['measured_sentence'] in human and 'Phaxio: Billed as 1 page at $0.07 a page;' in human
     missing = cli('costs', 'predict', '--to', '+12025550123', '--file', tmp_path / 'nothing.pdf')
     assert missing.exit_code != 0
+    # The fax engine you would choose (as faxbot send --engine), measured with the document only.
+    chosen = cli.json('costs', 'predict', '--to', '+12025550123', '--file', letter, '--engine', 'builtin')
+    assert chosen['pages'] == 1
+    alone = cli('costs', 'predict', '--to', '+12025550123', '--engine', 'builtin')
+    assert alone.exit_code != 0 and 'Use --engine with --file' in alone.stdout + alone.stderr
+    wrong = cli('costs', 'predict', '--to', '+12025550123', '--file', letter, '--engine', 'fast')
+    assert wrong.exit_code != 0 and 'Choose --engine auto, builtin or hylafax.' in wrong.stdout + wrong.stderr
 
 
 def test_costs_recommendations_has_a_receiving_section_of_estimates(cli):
@@ -1685,6 +1721,22 @@ def test_a_recovered_fax_shows_when_it_arrived_and_that_it_was_brought_in_later(
         ['Delivered', 'Failed', 'In progress', 'Needs review', 'Held test fax']
     assert status_label({'delivery_state': 'ready', 'together': {'state': 'waiting'}}) == 'Waiting to go with other faxes'
     assert status_label({'status': 'SUCCESS'}) == 'Delivered'
+
+
+def test_an_uncertain_sent_fax_says_what_to_check_for_the_route_that_carried_it():
+    """As Sent says it (JobsList deliveryNotice, sentRoute.test.tsx): the server's route-aware sentence, else one
+    true for any route."""
+    from app.cli.commands.fax import delivery_notice
+    job = {'delivery_state': 'reconciliation_required', 'dispatch_mode': 'normal'}
+    own_call = ('The call ended before the receiving fax machine confirmed the pages; check with the recipient before '
+                'sending this fax again.')
+    assert delivery_notice({**job, 'reconciliation_reason': own_call}) == own_call
+    assert delivery_notice(job) == ("Delivery couldn't be confirmed; check with the recipient, or in your provider "
+                                    'account if a fax service sent it, before sending it again.')
+    assert delivery_notice({**job, 'dispatch_mode': 'legacy'}) == (
+        'Imported fax with no delivery record; check with the recipient, or in your provider account if a fax service '
+        'sent it.')
+    assert delivery_notice({'delivery_state': 'success'}) is None
 
 
 def test_route_and_spending_words_match_the_console(monkeypatch):

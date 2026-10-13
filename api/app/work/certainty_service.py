@@ -48,6 +48,7 @@ CATEGORY_TEXT = {
     'person_answered': 'A person answered at this number; check the fax number with the recipient.',
     'wrong_station': 'This number answered as another fax machine, so nothing was sent; confirm the fax number with '
                      'the recipient.',
+    'result_lost': "Faxbot lost this call's result; check whether it arrived before sending again.",
 }
 OWNER_SOURCE_TEXT = {
     'sender': 'the person who sent it',
@@ -309,9 +310,11 @@ class CertaintyService:
                     checks.number_check(row, organization=self._organization(),
                                         number=number or mask(row['to_number']), when_text=when, station=True),
                     *checks.npi_checks(self.store.engine, row)]
+        # The call's predicted length the background checks already worked out, while nothing it depends on changed.
+        facts = checks.call_record_facts(sources, connection, row)
         return [
             checks.partner_check(sources, connection, row, job, answer),
-            checks.call_record_check(sources, connection, row, job, now=now),
+            checks.call_record_reading(facts, job, now=now, predict=self.store.predictor(row, job, facts, now=now)),
             checks.receipt_query_check(row, query_job),
             checks.phone_check(row, job, organization=self._organization(), number=number or mask(row['to_number']),
                                when_text=when),
@@ -679,7 +682,17 @@ class CertaintyService:
                 details['continuation'] = pages_text(prepared.first_page, prepared.last_page)
                 self._continuations().record_on(connection, prepared, actor_id=actor.principal_id, actor_name=name,
                                                 item_id=item_id, reason=reason, now=now)
+            # Delivered or not delivered ends the fax's own delivery in this same transaction, so its number is no
+            # longer held for an unknown result (defect 45). Can't tell leaves it waiting for review.
+            from ..outbound_store import settle_uncertain_on
+            released = settle_uncertain_on(connection, self.store.deliveries, self.store.jobs,
+                                           self.store.delivery_events, row['job_id'], attempt_id=row['attempt_id'],
+                                           outcome=outcome, actor=actor.replay_scope, now=now)
             view = self._change(connection, actor, row, values, kind='settled', now=now, details=details)
+        if released:
+            # A fax waiting for this number may go now.
+            from ..outbound_wake import wake
+            wake.notify()
         return self._with_cost(actor, [view])[0]
 
     def _prepare_continuation(self, row, first_page, send):

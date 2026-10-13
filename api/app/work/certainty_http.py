@@ -5,6 +5,7 @@ each fax inside the service; settings routes also declare
 ``settings:read``/``settings:write``. The background tasks make items and
 record what the automatic checks find; they never send anything.
 """
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -28,10 +29,14 @@ def _background(app):
     engine, _ = installation_engine(app)
     if engine is None:
         return []
-    try:
-        store = CertaintyStore(engine)
-    except DeliveryStoreError:
-        return []
+    store = getattr(app.state, 'certainty_store', None)
+    if store is None or store.engine is not engine:
+        try:
+            store = CertaintyStore(engine)
+        except DeliveryStoreError:
+            return []
+        # One store for the background checks and the pages, so a detail page uses the predictions they keep.
+        app.state.certainty_store = store
 
     def control():
         access = getattr(app.state, 'access_runtime', None)
@@ -42,18 +47,43 @@ def _background(app):
     tasks = [('faxbot-certainty', repeat(worker.step, interval=15.0, initial_delay=5.0,
                                          warning='Uncertain sent faxes could not be updated.'))]
 
-    async def ask_partners():
-        from ..direct.http import service_for
-        try:
-            service = service_for(app)
-        except Exception:
-            return False
-        if not getattr(await run_lifecycle_step(service.values), 'direct_delivery_enabled', False):
-            return False
-        return await PartnerQuestion(store, service).step()
     tasks.append(('faxbot-certainty-partners', repeat_async(
-        ask_partners, interval=60.0, initial_delay=30.0, warning='A partner could not be asked about a fax yet.')))
+        partner_questions(app, store), interval=60.0, initial_delay=30.0,
+        warning='A partner could not be asked about a fax yet.')))
     return tasks
+
+
+def partner_questions(app, store, *, build=None):
+    """The step that asks enrolled partners about uncertain faxes.
+
+    The direct service is built once, in a worker thread, and kept: building it reflects its tables, which took
+    seconds of the event loop on a busy installation when it ran on every step. Nothing is built while direct
+    delivery is off.
+    """
+    if build is None:
+        from ..direct.http import service_for
+
+        def build():
+            return service_for(app)
+    service = None
+
+    async def ask_partners():
+        nonlocal service
+        runtime = getattr(app.state, 'configuration_runtime', None)
+        if runtime is None:
+            return False
+        values = await run_lifecycle_step(lambda: runtime.manager.store.read().active.values)
+        if not getattr(values, 'direct_delivery_enabled', False):
+            return False
+        if service is None:
+            try:
+                service = await run_lifecycle_step(build)
+            except (HTTPException, DeliveryStoreError):
+                logging.getLogger(__name__).warning('Direct delivery storage is unavailable, so partners are '
+                                                    'asked about uncertain faxes later.', exc_info=True)
+                return False
+        return await PartnerQuestion(store, service).step()
+    return ask_partners
 
 
 router = APIRouter(prefix='/certainty', tags=['Uncertain sent faxes'], lifespan=lifespan_tasks(_background))

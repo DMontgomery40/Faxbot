@@ -139,6 +139,68 @@ def test_revoked_actor_is_rejected_before_any_inbound_read(iw):
             operation()
 
 
+def test_a_list_of_received_faxes_is_checked_in_one_transaction_with_the_same_visibility(iw, monkeypatch):
+    iw.fax('front-old', '+15550100001', received=0)
+    iw.fax('billing-new', '+15550100002', received=10)
+    iw.fax('front-new', '+15550100001', received=20)
+    alice = iw.user('alice')
+    iw.assignment('alice', 'role_fax_viewer', 'mailbox-front')
+    # A refused id first, a missing one, a malformed one and a repeat around the two she may read.
+    ids = ['billing-new', 'front-new', 'missing', 'x' * 41, 'front-old', 'front-new', '']
+    one_by_one = []
+    for inbound_id in ids:
+        try:
+            iw.queries.item(alice, inbound_id)
+        except FaxAccessError:
+            continue
+        if inbound_id not in one_by_one:
+            one_by_one.append(inbound_id)
+    assert one_by_one == ['front-new', 'front-old']
+    opened, original = [], iw.queries.store.transaction
+
+    def counted():
+        opened.append(1)
+        return original()
+    monkeypatch.setattr(iw.queries.store, 'transaction', counted)
+    assert iw.queries.visible_items(alice, ids) == one_by_one
+    assert len(opened) == 1
+    # Checked a few faxes per transaction (LIST_CHUNK): the same faxes, in the same order, across the boundaries.
+    from api.app.access import inbound
+    monkeypatch.setattr(inbound, 'LIST_CHUNK', 2)
+    monkeypatch.setattr(inbound, 'LIST_SECONDS', 60.0)
+    assert iw.queries.visible_items(alice, ids) == one_by_one
+    assert len(opened) == 1 + 3  # six different ids, two to a transaction
+    # A slow check (acceptance: 250-500 ms each under load) ends the transaction before LIST_SECONDS, not LIST_CHUNK.
+    import time
+    monkeypatch.setattr(inbound, 'LIST_CHUNK', 20)
+    monkeypatch.setattr(inbound, 'LIST_SECONDS', 0.2)
+    real = iw.queries.resources.require_inbound_on
+
+    def slow(*args, **kwargs):
+        time.sleep(0.06)
+        return real(*args, **kwargs)
+    monkeypatch.setattr(iw.queries.resources, 'require_inbound_on', slow)
+    from contextlib import contextmanager
+    held = []
+
+    @contextmanager
+    def timed():
+        with original() as connection:
+            began = time.monotonic()
+            yield connection
+        held.append(time.monotonic() - began)
+    monkeypatch.setattr(iw.queries.store, 'transaction', timed)
+    assert iw.queries.visible_items(alice, ids) == one_by_one
+    assert len(held) >= 2 and max(held) < 0.25, held
+    # A temporary password refuses each fax, so nothing is shown; a revoked credential fails the whole list.
+    iw.update('access_users', 'alice', password_change_required=1)
+    assert iw.queries.visible_items(alice, ids) == []
+    iw.update('access_users', 'alice', password_change_required=0)
+    iw.update('access_principals', 'alice', enabled=0, security_version=2)
+    with pytest.raises(StaleCredentialError):
+        iw.queries.visible_items(alice, ids)
+
+
 def test_backfill_places_resource_less_rows_under_legacy_once(iw):
     with iw.engine.begin() as c:
         c.execute(iw.tables['inbound_faxes'].insert().values(id='orphan', status='received', backend='phaxio',

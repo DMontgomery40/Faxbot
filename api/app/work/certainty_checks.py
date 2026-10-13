@@ -282,14 +282,45 @@ def duration_reading(measured, predicted, pages, *, source):
                    'That fits a delivered fax, but it does not prove it.', strength=READING, automatic=True)
 
 
-def call_record_check(sources, connection, item, job, *, now=None):
+def call_record_facts(sources, connection, item):
+    """What the call record check reads from the database for ``item``, read on ``connection``.
+
+    ``{'route', 'direct', 'record', 'carrier_seconds', 'carrier', 'provider_seconds'}``: the route the attempt went
+    through, whether it went to a partner, the newest call record of the attempt, and how long the carrier's or the
+    fax service's own record says the call or fax lasted. ``call_record_reading`` turns them into the finding, with
+    no database, so the length the fax needs can be worked out after the connection is closed.
+    """
+    facts = {'route': provider_of(sources, connection, item), 'direct': False, 'record': None,
+             'carrier_seconds': None, 'carrier': None, 'provider_seconds': None}
+    if facts['route'] == 'direct' or _direct_delivery(sources, connection, item['attempt_id']) is not None:
+        return {**facts, 'direct': True}
+    record = _call_record(sources, connection, item['attempt_id'])
+    if record is not None:
+        facts['record'] = record
+        unfinished = record['ended_at'] is None and record['connected_seconds'] is None
+        if record['disposition'] == 'answered' and not unfinished:
+            facts['carrier_seconds'], facts['carrier'] = _carrier_seconds(sources, connection, record['id'])
+        return facts
+    facts['provider_seconds'] = _provider_seconds(sources, connection, item['attempt_id'])
+    return facts
+
+
+def call_record_reading(facts, job, *, now=None, predict=None):
+    """The call record finding from ``call_record_facts``.
+
+    ``predict(route)`` gives the seconds the whole fax needs on ``route`` (``predicted_seconds`` for ``job`` at
+    ``now`` when not given); it is asked only when the finding compares a measured length with it.
+    """
     from ..sip_calls import call_summary
     from ..routing.carriers import carrier_label
-    route = provider_of(sources, connection, item)
-    if route == 'direct' or _direct_delivery(sources, connection, item['attempt_id']) is not None:
+    if predict is None:
+        def predict(route):
+            return predicted_seconds(route, job.get('to_number'), job, now=now)
+    route = facts['route']
+    if facts['direct']:
         return finding('call_record', 'unavailable', 'This fax went to a partner over the internet, so there is no '
                                                      'phone call to read.', automatic=True)
-    record = _call_record(sources, connection, item['attempt_id'])
+    record = facts['record']
     pages = job.get('pages') if type(job.get('pages')) is int and job.get('pages') > 0 else None
     if record is not None:
         if record['disposition'] != 'answered':
@@ -299,7 +330,7 @@ def call_record_check(sources, connection, item, job, *, now=None):
         if record['ended_at'] is None and record['disposition'] == 'answered' and record['connected_seconds'] is None:
             return finding('call_record', 'unknown', 'The call record has no end yet; Faxbot reads it again.',
                            automatic=True)
-        seconds, carrier = _carrier_seconds(sources, connection, record['id'])
+        seconds, carrier = facts['carrier_seconds'], facts['carrier']
         source = f"{carrier_label(carrier)}'s record of the call" if seconds is not None else None
         if seconds is None and record['connected_seconds'] is not None:
             seconds, source = record['connected_seconds'], "Faxbot's own record of the call"
@@ -309,8 +340,7 @@ def call_record_check(sources, connection, item, job, *, now=None):
         if pages is None:
             return finding('call_record', 'unknown', 'Faxbot does not know how many pages this fax has, so the length '
                                                      'of the call does not say whether it arrived.', automatic=True)
-        reading = duration_reading(seconds, predicted_seconds('sip', job.get('to_number'), job, now=now), pages,
-                                   source=source[0].upper() + source[1:])
+        reading = duration_reading(seconds, predict('sip'), pages, source=source[0].upper() + source[1:])
         confirmed = record['pages']
         if type(confirmed) is int and confirmed > 0:
             reading['text'] += f' The receiving machine confirmed {confirmed} of {pages} pages.'
@@ -319,15 +349,19 @@ def call_record_check(sources, connection, item, job, *, now=None):
         if ending and not ending.startswith('Sent:'):
             reading['text'] += ' ' + ending
         return reading
-    seconds = _provider_seconds(sources, connection, item['attempt_id'])
+    seconds = facts['provider_seconds']
     if seconds is not None and pages is not None:
         from ..provider_labels import provider_label
         name = provider_label(route) if route else 'The fax service'
-        return duration_reading(seconds, predicted_seconds(route, job.get('to_number'), job, now=now), pages,
-                                source=f"{name}'s record of the fax")
+        return duration_reading(seconds, predict(route), pages, source=f"{name}'s record of the fax")
     if route in NO_DURATION:
         return finding('call_record', 'unavailable', NO_DURATION[route], automatic=True)
     return finding('call_record', 'unavailable', 'There is no record of how long this call lasted.', automatic=True)
+
+
+def call_record_check(sources, connection, item, job, *, now=None, predict=None):
+    """The call record finding for ``item``: ``call_record_facts`` read on ``connection``, then its reading."""
+    return call_record_reading(call_record_facts(sources, connection, item), job, now=now, predict=predict)
 
 
 # -- 3. the receipt query and 4. the phone call -------------------------------------------------------

@@ -233,6 +233,178 @@ async def test_engine_choice_says_why_the_built_in_engine_places_a_call(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_the_engine_a_sender_chose_for_one_fax_is_kept_or_said_why_not(tmp_path):
+    """POST /fax engine: builtin always gets the built-in engine; hylafax gets this engine when it is ready, else the
+    built-in engine as with no choice, with a sentence; auto chooses as before; sending together stays built-in."""
+    values = trunk_values(tmp_path)
+    choose, choice = hylafax_engine.choose, hylafax_engine.EngineChoice
+    # Not running: a hylafax choice goes on the built-in engine and says so; never waits, never fails.
+    assert await choose(values, ami=FakeAmi(), requested='hylafax') == choice('builtin',
+                                                                               hylafax_engine.CHOSE_ENGINE_NOT_READY)
+    assert await choose(values, ami=FakeAmi(), requested='builtin') == choice('builtin', hylafax_engine.CHOSE_BUILTIN)
+    running(tmp_path, values)
+    # Running: builtin still gets the built-in engine; hylafax and auto get this engine.
+    assert await choose(values, ami=FakeAmi(), requested='builtin') == choice('builtin', hylafax_engine.CHOSE_BUILTIN)
+    assert await choose(values, ami=FakeAmi(), requested='hylafax') == choice('hylafax')
+    assert await choose(values, ami=FakeAmi(), requested='auto') == choice('hylafax')
+    assert await choose(values, ami=FakeAmi(), requested=None) == choice('hylafax')
+    # Still starting: said as starting.
+    assert (await choose(values, ami=FakeAmi(ready=0), requested='hylafax')).reason == (
+        hylafax_engine.CHOSE_ENGINE_STARTING)
+    # Faxes sent together in one call go on the built-in engine whatever was chosen.
+    for requested in ('hylafax', 'builtin', 'auto'):
+        assert (await choose(values, members=True, ami=FakeAmi(), requested=requested)).reason == (
+            hylafax_engine.SENDING_TOGETHER)
+
+
+@pytest.fixture
+def chosen_store(tmp_path):
+    """A delivery store with one fax to the trunk whose sender chose an engine; ``accept(engine)`` adds one."""
+    from datetime import datetime
+    from uuid import uuid4
+    import sqlalchemy as sa  # noqa: F401
+    from api.app.config_profiles import ProviderConfiguration
+    from api.app.config_store import ConfigurationStore
+    from api.app.config_values import ConfigurationValues as StoreValues
+    from api.app.outbound_store import OutboundStore, engine_request_recorder
+    from api.app.schema import create_database_engine, upgrade_schema
+    database = create_database_engine('sqlite:///' + str(tmp_path / 'chosen.db'))
+    upgrade_schema(database)
+    configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    snapshot = configuration.initialize(StoreValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false'}),
+                                        actor='test', providers={'outbound': ProviderConfiguration(
+                                            'phaxio', credentials={'api_key': 'synthetic-key'})})
+
+    def accept(engine):
+        job_id, now = uuid4().hex, datetime.utcnow()
+        configuration.accept_outbound(snapshot.active, {'id': job_id, 'to_number': '+15551230009',
+                                                        'file_name': 'synthetic.pdf', 'tiff_path': '',
+                                                        'status': 'queued', 'pages': 1, 'created_at': now,
+                                                        'updated_at': now})
+        record = engine_request_recorder(job_id, engine)
+        if record is not None:
+            with database.begin() as connection:
+                record(connection, now)
+        return job_id
+    yield configuration, OutboundStore, accept
+    database.dispose()
+
+
+def test_the_engine_choice_survives_a_retry_and_a_claim_after_a_restart_and_the_call_honours_it(chosen_store,
+                                                                                               tmp_path):
+    """The choice is kept with the fax, so every attempt reads it (load_dispatch), including one claimed by a new
+    worker after a restart; the trunk call honours it: builtin while the engine runs, hylafax while it is down goes
+    built-in with its sentence, and faxes sent together go built-in."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from app import outbound_transport
+    configuration, OutboundStore, accept = chosen_store
+    job = accept('builtin')
+    first = OutboundStore(configuration)
+    claim = first.claim('worker-before-restart')
+    assert claim.job_id == job and first.load_dispatch(claim)[2]['engine_request'] == 'builtin'
+    # The worker stops (a restart); its lease runs out and a new worker claims the fax again.
+    after = OutboundStore(configuration)
+    after.recover_expired(now=datetime.utcnow() + timedelta(minutes=5))
+    again = after.claim('worker-after-restart')
+    assert again.job_id == job and again.attempt_id != claim.attempt_id
+    _, _, dispatched = after.load_dispatch(again)
+    assert dispatched['engine_request'] == 'builtin'
+    values = trunk_values(tmp_path)
+    running(tmp_path, values)
+    transport = SimpleNamespace(store=after, ami=FakeAmi())
+
+    def prepare(job_row, members=()):
+        call = SimpleNamespace(job_id=job, attempt_id=again.attempt_id, members=members)
+        return asyncio.run(outbound_transport.CapturedTransport._prepare_engine(
+            transport, values, call, job_row, str(tmp_path / 'synthetic.tiff')))
+    engine_job, choice, _, _ = prepare(dispatched)
+    assert engine_job is None and (choice.engine, choice.reason) == ('builtin', hylafax_engine.CHOSE_BUILTIN)
+    # Sending together always goes on the built-in engine.
+    _, choice, _, _ = prepare({**dispatched, 'engine_request': 'hylafax'}, members=(again, again))
+    assert (choice.engine, choice.reason) == ('builtin', hylafax_engine.SENDING_TOGETHER)
+    # The SSL Fax engine chosen while it is down: the built-in engine, and the sentence says why.
+    running(tmp_path, values, state='failed')
+    _, choice, _, _ = prepare({**dispatched, 'engine_request': 'hylafax'})
+    assert (choice.engine, choice.reason) == ('builtin', hylafax_engine.CHOSE_ENGINE_NOT_READY)
+    # Auto keeps nothing: the engine is chosen as before.
+    from api.app.outbound_store import requested_engine_on
+    automatic = accept('auto')
+    with configuration.engine.connect() as connection:
+        assert requested_engine_on(connection, automatic) is None
+        assert requested_engine_on(connection, job) == 'builtin'
+
+
+@pytest.fixture
+def engine_cli(monkeypatch, tmp_path):
+    from api.tests.test_cli import Cli, _serve
+    for client in _serve(monkeypatch, tmp_path):
+        yield Cli(client)
+
+
+def test_post_fax_and_faxbot_send_keep_the_engine_choice_with_the_fax(engine_cli, tmp_path):
+    """POST /fax engine and faxbot send --engine: kept with the fax at acceptance, said in Sent details and in
+    faxbot faxes sent show; auto (the default) keeps nothing; anything else is refused."""
+    from api.tests.test_cli import BOOTSTRAP
+    cli, admin = engine_cli, {'X-API-Key': BOOTSTRAP}
+
+    def post(**extra):
+        return cli.client.post('/fax', headers=admin, data={'to': '+15551230001', 'queue_only': 'true', **extra},
+                               files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    for value, sentence in (('builtin', hylafax_engine.CHOSE_BUILTIN), ('hylafax', hylafax_engine.CHOSE_ENGINE)):
+        accepted = post(engine=value)
+        assert accepted.status_code == 202, accepted.text
+        job = accepted.json()['id']
+        view = cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()
+        assert view['engine_choice'] == {'engine': value, 'sentence': sentence}
+        assert sentence in ' '.join(cli('sent', 'show', job).stdout.split())
+    for extra in ({'engine': 'auto'}, {}):
+        job = post(**extra).json()['id']
+        assert cli.client.get(f'/admin/fax-jobs/{job}', headers=admin).json()['engine_choice'] is None
+    refused = post(engine='fast')
+    assert refused.status_code == 422
+    # The same idempotency key with another engine is another request.
+    first = cli.client.post('/fax', headers={**admin, 'Idempotency-Key': 'engine-key'},
+                            data={'to': '+15551230001', 'queue_only': 'true', 'engine': 'builtin'},
+                            files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    other = cli.client.post('/fax', headers={**admin, 'Idempotency-Key': 'engine-key'},
+                            data={'to': '+15551230001', 'queue_only': 'true', 'engine': 'hylafax'},
+                            files={'file': ('note.txt', b'Synthetic page\n', 'text/plain')})
+    assert first.status_code == 202 and other.status_code == 409
+    # The command line.
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    sent = cli.json('send', '+15551230002', note, '--queue', '--engine', 'builtin')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert 'Fax engine' in shown and hylafax_engine.CHOSE_BUILTIN in shown
+    plain = cli.json('send', '+15551230002', note, '--queue')
+    assert 'Fax engine' not in cli('sent', 'show', plain['id']).stdout
+    wrong = cli('send', '+15551230002', note, '--queue', '--engine', 'fast')
+    assert wrong.exit_code != 0 and 'Choose --engine auto, builtin or hylafax.' in wrong.stderr + wrong.stdout
+    # D20: after the call, the built-in engine's reason is the choice itself: said once, not twice. A choice the
+    # engine could not keep is said with what happened.
+    import app.main as main_module
+    from app.hylafax_records import records_for
+    database = main_module.app.state.configuration_runtime.manager.store.engine
+    records_for(database).record_call(direction='outbound', call_key='a' * 32, engine='builtin', job_id=sent['id'],
+                                      reason=hylafax_engine.CHOSE_BUILTIN, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', sent['id']).stdout.split())
+    assert shown.count(hylafax_engine.CHOSE_BUILTIN) == 1
+    wanted = cli.json('send', '+15551230002', note, '--queue', '--engine', 'hylafax')
+    records_for(database).record_call(direction='outbound', call_key='b' * 32, engine='builtin', job_id=wanted['id'],
+                                      reason=hylafax_engine.CHOSE_ENGINE_NOT_READY, number='+15551230002')
+    shown = ' '.join(cli('sent', 'show', wanted['id']).stdout.split())
+    assert hylafax_engine.CHOSE_ENGINE in shown and hylafax_engine.CHOSE_ENGINE_NOT_READY in shown
+    # The same idempotency key for a different fax request: one plain sentence, never the server's own words.
+    first = cli('send', '+15551230002', note, '--queue', '--engine', 'builtin', '--idempotency-key', 'cli-engine')
+    assert first.exit_code == 0, first.stdout
+    other = cli('send', '+15551230002', note, '--queue', '--engine', 'hylafax', '--idempotency-key', 'cli-engine')
+    said = ' '.join((other.stdout + other.stderr).split())
+    assert other.exit_code != 0 and 'This idempotency key was already used for a different fax.' in said
+    assert 'Idempotency-Key already belongs' not in said
+
+
+@pytest.mark.asyncio
 async def test_a_call_the_engine_did_not_answer_restarts_it_and_the_trunk_page_says_why(tmp_path, monkeypatch):
     """Asterisk's FaxEngineMissed (a free line rang and did not answer): Faxbot asks the engine to start again
     (it reads the request once no call is up) and says what happened in one sentence for a day."""
@@ -528,6 +700,98 @@ def test_a_send_that_ended_before_any_fax_data_failed_for_certain(status, code, 
     assert hylafax_engine.result_outcome(payload) == ('failed', sentence, None)
 
 
+TRAINING = [('Failure to train modems {E105}', 'E105'),
+            ('Failure to train remote modem at 2400 bps or minimum speed {E137}', 'E137'),
+            ('Unspecified failure to train with receiver {E156}', 'E156')]
+
+
+@pytest.mark.parametrize('status, code', TRAINING)
+@pytest.mark.parametrize('with_code', [True, False], ids=['code', 'words'])
+def test_a_send_whose_training_never_succeeded_failed_for_certain_after_the_other_machine_named_itself(
+        status, code, with_code):
+    """#73, acceptance 10 October 2026: HP's test line sent its CSI, then HylaFAX gave up with "Unspecified failure
+    to train with receiver {E156}", 0 pages. No page data follows failed training, so another route may send it;
+    it waited for a person instead, with the number held for 30 minutes."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code if with_code else '',
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=45)
+    assert hylafax_engine.result_outcome(payload) == (
+        'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
+
+
+# HP's test line +18884732963, 11 October 2026 03:19Z, as the SSL Fax engine reported it (defect #49): the job
+# file (doneq/q19) said "errorcode:E156" and "status:Unspecified failure to train with receiver ; too many
+# attempts to dial" (HylaFAX+ 7.0.11 takes "{E156}" out of status), and bin/notify read a "statuscode" field
+# that does not exist, so the result carried no code. The other machine named itself (CSI "HPFAX"), none of
+# eight trainings was answered, and the session log was read (87 seconds, bin/negotiation's summary below).
+HP_NEGOTIATION = {'rate_first': None, 'rate_lowest': None, 'rate_last': None, 'trainings': 8, 'compression': None,
+                  'resolution': None, 'ecm': None, 'session': 87, 'page_length': 'unlimited', 'page_width': 'A3',
+                  'fine': 1, 'remote_ecm': 0, 'scan_ms': 0, 'remote_codings': 'MH,MR', 'boundary_ms': None,
+                  'boundaries': None}
+
+
+def hp_result(**changes):
+    return result('failed', **{
+        'state': 8, 'pages': 0, 'total_pages': 1, 'dials': 0, 'total_dials': 1, 'total_tries': 1,
+        'status_b64': b64('Unspecified failure to train with receiver ; too many attempts to dial'),
+        'status_code': '', 'remote_station_b64': b64('HPFAX'), 'signal_rate_b64': '', 'data_format_b64': '',
+        'sslfax': False, 'sslfax_offered': False, 'sslfax_refused': False, 'transfer_seconds': None,
+        'session_seconds': 87, 'negotiation_b64': b64(json.dumps(HP_NEGOTIATION)), **changes})
+
+
+@pytest.mark.parametrize('code', ['', 'E156'], ids=['as-reported', 'with-errorcode'])
+def test_hps_send_that_never_trained_failed_for_certain(code):
+    """#82's rule needed the code, which never arrived: HP's result waited for a person, its call record kept no
+    status, and engine learning never saw the failure. A call that never trained sent no page, whatever the code
+    says; with bin/notify reading errorcode it now arrives too."""
+    assert hylafax_engine.result_outcome(hp_result(status_code=code)) == (
+        'failed', 'The fax machines could not agree on a speed; no page was sent.', None)
+
+
+@pytest.mark.parametrize('changes', [
+    # A retrain after RTN: the call trained at 14,400 first and sent a page the other machine may have printed.
+    {'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR'), 'status_code': 'E156'},
+    {'data_format_b64': b64('2-D MR')},
+    # No session log: nothing shows the call never trained.
+    {'session_seconds': None, 'negotiation_b64': ''},
+    # Pages over SSL Fax train no modem.
+    {'sslfax': True, 'signal_rate_b64': b64('SSL Fax')},
+    # GotFreeFax, 11 October 03:22Z: trained at 14,400, then "No response to PPS repeated 3 times" after CTC.
+    {'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('1-D MH'), 'status_code': 'E147',
+     'status_b64': b64('No response to PPS repeated 3 times. ; too many attempts to dial'),
+     'remote_station_b64': b64('+1.888.293.3691'), 'session_seconds': 149},
+], ids=['retrain-after-rtn', 'coding-agreed', 'no-session-log', 'sslfax', 'after-ctc'])
+def test_a_send_that_trained_or_shows_no_session_log_stays_uncertain(changes):
+    assert hylafax_engine.result_outcome(hp_result(**changes)) == UNCONFIRMED
+
+
+@pytest.mark.parametrize('status, code', TRAINING)
+@pytest.mark.parametrize('trained, session', [
+    ({'signal_rate_b64': b64('14400 bit/s'), 'data_format_b64': b64('2-D MR')}, 60),
+    ({'data_format_b64': b64('2-D MR')}, 60),
+    ({}, None),
+], ids=['retrain-after-rtn', 'coding-agreed', 'no-session-log'])
+def test_a_training_failure_after_a_page_may_have_gone_out_stays_uncertain(status, code, trained, session):
+    """The same codes end a retrain after the other machine asked for one (RTN) on a page it may have printed: that
+    call trained first, so the engine reports what it agreed. Without the session log nothing shows the call never
+    trained. Either way the fax waits for a person and is never sent again by itself."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code,
+                     remote_station_b64=b64('HP TEST LINE'), session_seconds=session, **trained)
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
+
+
+@pytest.mark.parametrize('status, code', [
+    ('No response to EOP repeated 3 tries {E151}', 'E151'),
+    ('No response to MPS repeated 3 tries {E150}', 'E150'),
+    ('Unable to transmit page (giving up after RTN) {E130}', 'E130'),
+    ('Unable to transmit page (NAK at all possible signalling rates) {E132}', 'E132'),
+])
+def test_a_send_whose_page_may_have_gone_out_stays_uncertain_after_the_other_machine_named_itself(status, code):
+    """The guard beside #73: an ending after page data could have gone out keeps waiting for a person."""
+    payload = result('failed', dials=1, pages=0, status_b64=b64(status), status_code=code,
+                     remote_station_b64=b64('HP TEST LINE'))
+    assert hylafax_engine.result_outcome(payload) == UNCONFIRMED
+
+
 def test_no_response_to_means_the_pages_were_not_confirmed():
     assert hylafax_engine.failure_sentence('No response to EOP repeated 3 tries {E151}', 0) == \
         hylafax_engine.NOT_CONFIRMED
@@ -541,20 +805,124 @@ def test_every_engine_failure_sentence_fits_the_80_characters_a_fax_error_shows(
     assert all(len(sentence) <= 80 and sentence.endswith('.') for sentence in sentences), sentences
 
 
-@pytest.mark.parametrize('row, switched', [
-    ({'verdict': 'no_fax_signal', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, True),
-    ({'verdict': 'no_fax_signal', 't38': 'no', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    ({'verdict': 'remote_fax_failed', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    ({'verdict': 'sent', 't38': 'yes', 'ended_at': '2026-10-05T11:19:12Z'}, False),
-    (None, False),
+@pytest.mark.parametrize('verdict, t38, direction, change', [
+    ('no_fax_signal', 'yes', 'outbound', 'audio'), ('no_fax_signal', 'yes', 'inbound', 'audio'),
+    # On audio, every way a send heard no fax machine puts the engine back on T.38 (2026-10-11: Telnyx ended
+    # each audio call 3 s after its own T.38 request, which nothing answered).
+    ('no_fax_signal', 'no', 'outbound', 't38'), ('cleared_at_once', 'no', 'outbound', 't38'),
+    ('person_answered', 'no', 'outbound', 't38'), ('no_media_back', 'no', 'outbound', 't38'),
+    ('no_fax_answer', 'no', 'outbound', 't38'),
+    # A received call that left no fax may be a person or a nuisance call: nothing changes.
+    ('no_fax_signal', 'no', 'inbound', None), ('no_media_back', 'no', 'inbound', None),
+    # A fax machine answered, the call is not over, or nothing failed: nothing changes.
+    ('remote_fax_failed', 'no', 'outbound', None), ('wrong_station', 'no', 'outbound', None),
+    ('sent', 'no', 'outbound', None), ('no_fax_signal', 'unknown', 'outbound', None),
+    ('remote_fax_failed', 'yes', 'outbound', None), ('cleared_at_once', 'yes', 'outbound', None),
+    ('sent', 'yes', 'outbound', None), (None, None, None, None),
 ])
-def test_an_engine_t38_call_that_heard_no_fax_machine_moves_only_the_engine_to_audio(monkeypatch, row, switched):
+def test_an_engine_call_that_heard_no_fax_machine_moves_only_the_engine_between_t38_and_audio(
+        monkeypatch, verdict, t38, direction, change):
     from app import sip_calls, sip_fax_mode
-    installation, engine = [], []
+    installation, audio, back = [], [], []
     monkeypatch.setattr(sip_fax_mode, '_on_fax_event', installation.append)
-    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: audio.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
+    row = None if verdict is None else {'verdict': verdict, 't38': t38, 'direction': direction,
+                                        'ended_at': '2026-10-05T11:19:12Z'}
     sip_calls.engine_audio_check(row)
-    assert not installation and bool(engine) == switched
+    assert not installation
+    assert (audio, back) == {'audio': (['2026-10-05T11:19:12Z'], []), 't38': ([], [True]), None: ([], [])}[change]
+
+
+@pytest.mark.asyncio
+async def test_an_audio_call_that_heard_no_fax_machine_puts_the_engine_back_on_t38_only_from_audio(
+        tmp_path, monkeypatch):
+    from app import audit, config, sip_calls
+
+    class Connected(FakeAmi):
+        def __init__(self):
+            super().__init__()
+            self._connected = asyncio.Event()
+            self._connected.set()
+    values, ami_now, events = trunk_values(tmp_path), Connected(), []
+    monkeypatch.setattr(config, 'settings', values)
+    monkeypatch.setattr(ami, 'ami_client', ami_now)
+    monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: events.append((event, fields)))
+    audio_failed = {'verdict': sip_calls.NO_FAX_SIGNAL, 't38': 'no', 'direction': 'outbound',
+                    'ended_at': '2026-10-11T04:29:18Z'}
+    # On T.38 already: nothing to undo, nothing recorded, nothing sent to Asterisk.
+    assert hylafax_engine.engine_t38_restored() is False
+    sip_calls.engine_audio_check(audio_failed)
+    await asyncio.gather(*hylafax_engine._pending_tasks)
+    assert events == [] and ami_now.deletes == [] and hylafax_engine.engine_t38_off(values) is None
+    # On audio (one T.38 call heard no fax machine): the next audio failure puts it back, once.
+    hylafax_engine.note_t38_failure(values, '2026-10-11T03:56:56Z')
+    sip_calls.engine_audio_check(audio_failed)
+    sip_calls.engine_audio_check(audio_failed)  # the other half of the same call
+    await asyncio.gather(*hylafax_engine._pending_tasks)
+    assert hylafax_engine.engine_t38_off(values) is None
+    assert hylafax_engine.call_settings(values, PEER, engine=True).t38 is True
+    assert events == [('sslfax_engine_t38_restored', {'backend': 'sip', 'reason': 'no_fax_signal_on_audio'})]
+    assert ami_now.deletes == [('faxbot-engine', 't38')] and ami_now.puts == []
+
+
+@pytest.mark.asyncio
+async def test_the_engine_alternates_between_t38_and_audio_and_never_stays_on_a_mode_that_fails(
+        tmp_path, monkeypatch):
+    """T.38 fails, audio fails, T.38 fails again: each failure moves the engine's next call to the other mode,
+    and Asterisk's copy for received calls follows each move."""
+    from app import audit, config, sip_calls
+
+    class Connected(FakeAmi):
+        def __init__(self):
+            super().__init__()
+            self._connected = asyncio.Event()
+            self._connected.set()
+    values, ami_now = trunk_values(tmp_path), Connected()
+    monkeypatch.setattr(config, 'settings', values)
+    monkeypatch.setattr(ami, 'ami_client', ami_now)
+    monkeypatch.setattr(audit, 'audit_event', lambda event, **fields: None)
+    modes = []
+    for t38 in ('yes', 'no', 'yes', 'no'):
+        sip_calls.engine_audio_check({'verdict': sip_calls.NO_FAX_SIGNAL, 't38': t38, 'direction': 'outbound',
+                                      'ended_at': None})
+        await asyncio.gather(*hylafax_engine._pending_tasks)
+        modes.append(hylafax_engine.call_settings(values, PEER, engine=True).t38)
+    assert modes == [False, True, False, True]
+    assert ami_now.puts == [('faxbot-engine', 't38', 'audio')] * 2
+    assert ami_now.deletes == [('faxbot-engine', 't38')] * 2
+
+
+def test_an_audio_engine_call_never_asks_the_carrier_for_t38():
+    """The engine's dial handler adds T.38 negotiation and the RFC 6913 T.38 preference only on a gateway call."""
+    dialplan = (ROOT / 'asterisk' / 'etc' / 'asterisk' / 'extensions.conf').read_text()
+    lines = dialplan.split('[faxbot-engine-dial]\n', 1)[1].split('\n\n', 1)[0].splitlines()
+    steps = [line.split(',', 2)[2] if line.startswith('exten') else line.strip()[len('same => n'):].lstrip(',')
+             for line in lines]
+
+    def run(gateway, preference):
+        done, at, labels = [], 0, {}
+        for index, step in enumerate(steps):
+            if step.startswith('('):
+                labels[step[1:step.index(')')]] = index
+        while at < len(steps):
+            step = steps[at].split(')', 1)[1].lstrip(',') if steps[at].startswith('(') else steps[at]
+            if step.startswith('GotoIf('):
+                variable, wanted, label = (step.split('${')[1].split('}')[0], step.split('!= "')[1].split('"')[0],
+                                           step.split('?')[1].rstrip(')'))
+                value = {'FAXBOT_GATEWAY': gateway, 'FAXBOT_PREFERENCE': preference}[variable]
+                if value != wanted:
+                    at = labels[label]
+                    continue
+            elif step.startswith('Return('):
+                break
+            else:
+                done.append(step)
+            at += 1
+        return [step for step in done if 'FAXOPT' in step or 'Accept-Contact' in step]
+    asks = ['Set(FAXOPT(negotiate_both)=yes)', 'Set(PJSIP_HEADER(add,Accept-Contact)=*\\;+sip.fax="t38")']
+    assert run('yes', '1') == asks and run('yes', '0') == asks[:1]
+    assert run('no', '1') == run('no', '0') == []
 
 
 def test_the_engines_own_audio_choice_changes_only_its_calls_and_apply_clears_it(tmp_path, monkeypatch):
@@ -602,9 +970,11 @@ def test_compose_runs_the_engine_with_no_published_ports_and_the_override_publis
     services = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())['services']
     base = services['hylafax']
     # The engine parses fax and TLS data from strangers: only its own folders, its settings read-only,
-    # and never Faxbot's data folder (so never Asterisk's files there either).
+    # and never Faxbot's data folder (so never Asterisk's files there either). The one host path is /dev/null,
+    # mounted as the spool's dev/null for unprivileged containers (#70; test_sip_compose.py).
     assert 'ports' not in base and sorted(base['volumes']) == [
-        'hylafax-out:/faxdata/hylafax-out', 'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
+        '/dev/null:/var/spool/hylafax/dev/null', 'hylafax-out:/faxdata/hylafax-out',
+        'hylafax-settings:/faxdata/hylafax:ro', 'hylafax:/var/lib/faxbot-engine']
     assert not any(item.startswith('faxdata') for item in base['volumes'])
     assert 'hylafax-settings:/faxdata/hylafax' in services['api']['volumes']
     assert 'hylafax-out:/faxdata/hylafax-out:ro' in services['api']['volumes']
@@ -660,6 +1030,9 @@ def test_engine_scripts_keep_secrets_off_the_command_line_and_one_try_per_job():
     entry = (ROOT / 'hylafax' / 'entrypoint.sh').read_text()
     for line in ('MaxDials:\t\t1', 'MaxTries:\t\t1', 'MaxBatchJobs:\t\t1'):
         assert line in entry
+    # Each line loads a tag line font (HylaFAX+ has none by default, and then prints no header line), and the image
+    # build checks the font is there.
+    assert "printf 'TagLineFont:\\t\\tetc/lutRS18.pcf\\n'" in entry
     # A job a restart left in the send queue is moved aside, never sent again.
     assert 'mv -f "$spool"/sendq/q* "$moved"/' in entry
     # Session logs carry no HDLC frame dumps (they would hold the SSL Fax passcode).

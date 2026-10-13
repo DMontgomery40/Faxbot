@@ -1109,12 +1109,21 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                     file: Path = typer.Option(None, '--file', exists=True, dir_okay=False, readable=True,
                                               help='Price this document (PDF or plain text) instead: Faxbot measures '
                                                    'each fax coding on its own pages. --pages, --layout and '
-                                                   '--resolution then come from the document.')):
+                                                   '--resolution then come from the document.'),
+                    engine: str = typer.Option('auto', '--engine', metavar='ENGINE',
+                                               help='With --file: the fax engine you would choose for the fax (as '
+                                                    'faxbot send --engine): auto, builtin or hylafax. A call over '
+                                                    'your SIP trunk is then measured as that engine sends it.')):
     """Show what a fax to a number would take and cost on each of your sending routes, before sending it. All figures are estimates; nothing is sent."""
+    if engine not in ('auto', 'builtin', 'hylafax'):
+        raise CliError('Choose --engine auto, builtin or hylafax.')
+    if engine != 'auto' and file is None:
+        raise CliError('Use --engine with --file: the fax engine changes how the pages of a document are coded.')
     if file is not None:
         media = 'application/pdf' if file.suffix.lower() == '.pdf' else 'text/plain'
+        data = {'to': to, **({'engine': engine} if engine != 'auto' else {})}
         with file.open('rb') as handle:
-            result = state.api().post('/routing/predict', data={'to': to},
+            result = state.api().post('/routing/predict', data=data,
                                       files={'file': (file.name, handle.read(), media)})
     else:
         result = state.api().get('/routing/predict', params={'to': to, 'pages': pages, 'layout': layout,
@@ -1137,7 +1146,9 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                        for route in routes])
             for route in routes:
                 out.line(f"{route['label']}: {route['basis']}")
-                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence')):
+                # As Send says it: 9 in 10 only from the number's own calls, else how long the time is an estimate.
+                for sentence in ((route.get('coding') or {}).get('sentence'), route.get('finish_sentence'),
+                                 route.get('time_note')):
                     if sentence:
                         out.line(f"{route['label']}: {sentence}")
         out.line(result['sentence'])

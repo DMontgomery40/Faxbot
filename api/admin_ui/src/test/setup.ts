@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { fetch, Headers, Request, Response } from 'undici';
 import { setProviderNames } from '../providerLabels';
 
@@ -7,6 +7,10 @@ import { setProviderNames } from '../providerLabels';
 // built-in fetch rejects jsdom's FormData/File brands; Undici 6 accepts the
 // browser objects and still performs real multipart encoding and parsing.
 Object.assign(globalThis, { fetch, Headers, Request, Response });
+// findBy*/waitFor wait up to 5 s instead of testing-library's 1 s default. A screen that waits for several mocked
+// requests (Opportunities waits for every advice section) can need more than a second on a loaded CI runner; a test
+// that passes is unaffected, and a real failure is still reported, only later (#76).
+configure({ asyncUtilTimeout: 5000 });
 // MSW subclasses Response at import time, so initialize its fetch realm first.
 const { backend, server } = await import('./server');
 

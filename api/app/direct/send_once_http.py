@@ -26,9 +26,10 @@ def _background(app):
     if engine is None:
         return []
     service = service_for(app)
+    send_once = SendOnce(service)  # built once: its store reflects tables, which held the event loop per step
 
     async def tell():
-        return await SendOnce(service).tell_all()
+        return await send_once.tell_all()
     return [('faxbot-direct-send-once-tell', repeat_async(tell, interval=600.0, initial_delay=55.0,
                                                           warning='Partners are told about send-once agreements '
                                                                   'later.'))]

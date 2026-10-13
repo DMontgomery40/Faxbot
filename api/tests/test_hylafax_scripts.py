@@ -292,13 +292,15 @@ if [ $# -eq 1 ]; then controller; fi
 exit 0
 """,
     # faxgetty -D, faxq and hfaxd detach and keep running; faxgetty needs its modem's device, and (as
-    # HylaFAX's UUCPLock does with kill(pid, 0)) waits for good on a modem lock whose process ID is alive.
+    # HylaFAX's UUCPLock does with kill(pid, 0)) waits for good on a modem lock whose process ID is alive. It
+    # keeps its state in the spool's status/<device> file, which faxstat reads.
     'faxgetty': r"""[ -e "$root/dev/$2" ] || exit 1
 lock=$root/run/lock/LCK..$2
 state='Running and idle'
 if [ -f "$lock" ] && kill -0 "$(tr -cd '0-9' < "$lock")" 2>/dev/null; then state='Waiting for modem to come free'; fi
 [ -f "$root/force.$2" ] && state=$(cat "$root/force.$2")
-( printf '%s\n' "$state" > "$root/status.$2"; become "faxgetty $*" ) &
+mkdir -p "$FAXBOT_HYLAFAX_SPOOL/status"
+( printf '%s\n' "$state" > "$FAXBOT_HYLAFAX_SPOOL/status/$2"; become "faxgetty $*" ) &
 exit 0
 """,
     'faxq': r"""( become "faxq" ) &
@@ -308,18 +310,19 @@ exit 0
 exit 0
 """,
     # faxstat -s, with the CR LF line ends the real one prints.
-    'faxstat': r"""for file in "$root"/status.*; do
-  [ -f "$file" ] && printf 'Modem %s (15555550100): %s\r\n' "${file##*.}" "$(cat "$file")"
+    'faxstat': r"""for file in "$FAXBOT_HYLAFAX_SPOOL"/status/*; do
+  [ -f "$file" ] && printf 'Modem %s (15555550100): %s\r\n' "${file##*/}" "$(cat "$file")"
 done
 exit 0
 """,
-    # procps pgrep over the stand-ins' own list: -c count, -x whole match, -f whole command line, -a list.
-    'pgrep': r"""count=0 exact=0 full=0 list=0
+    # procps pgrep over the stand-ins' own list: -c count, -x whole match, -f whole command line, -a list,
+    # -o only the oldest (here the lowest process ID).
+    'pgrep': r"""count=0 exact=0 full=0 list=0 oldest=0
 while [ $# -gt 1 ]; do
-  case $1 in -c) count=1 ;; -x) exact=1 ;; -f) full=1 ;; -a) list=1 ;; esac
+  case $1 in -c) count=1 ;; -x) exact=1 ;; -f) full=1 ;; -a) list=1 ;; -o) oldest=1 ;; esac
   shift
 done
-n=0
+n=0 first=''
 for entry in "$root"/procs/*; do
   [ -f "$entry" ] || continue
   pid=${entry##*/}
@@ -329,8 +332,13 @@ for entry in "$root"/procs/*; do
   [ "$full" = 1 ] || subject=${cmd%% *}
   if [ "$exact" = 1 ]; then [ "$subject" = "$1" ] || continue; else case $subject in *"$1"*) ;; *) continue ;; esac; fi
   n=$((n + 1))
+  if [ "$oldest" = 1 ]; then
+    { [ -z "$first" ] || [ "$pid" -lt "$first" ]; } && first=$pid
+    continue
+  fi
   [ "$count" = 1 ] || { if [ "$list" = 1 ]; then echo "$pid $cmd"; else echo "$pid"; fi; }
 done
+[ "$oldest" = 1 ] && [ -n "$first" ] && echo "$first"
 [ "$count" = 1 ] && echo "$n"
 [ "$n" -gt 0 ]
 """,
@@ -375,14 +383,15 @@ def entrypoint(tmp_path):
         'report_secret': 'synthetic-report-secret-0123456789', **secrets}.items()))
     environment = {'PATH': f'{tools}:/usr/bin:/bin', 'FAXBOT_ENGINE_ROOT': str(root), 'FAXBOT_DATA': str(data),
                    'FAXBOT_HYLAFAX_SPOOL': str(spool), 'FAXBOT_ENGINE_STATE': str(state),
-                   'FAXBOT_ENGINE_CHECK_SECONDS': '1', 'FAXBOT_ENGINE_UNREADY_SECONDS': '1',
+                   'FAXBOT_ENGINE_CHECK_SECONDS': '1', 'FAXBOT_ENGINE_LIVENESS_SECONDS': '1',
+                   'FAXBOT_ENGINE_UNREADY_SECONDS': '1',
                    'FAXBOT_ENGINE_READY_SECONDS': '3', 'HOME': str(tmp_path)}
     started = []
 
-    def start():
+    def start(**extra):
         # The engine's own lines go to a file: the daemons it starts keep their output open after it exits.
         with open(tmp_path / 'engine.log', 'w') as log:
-            process = subprocess.Popen([bash, str(ROOT / 'hylafax' / 'entrypoint.sh')], env=environment,
+            process = subprocess.Popen([bash, str(ROOT / 'hylafax' / 'entrypoint.sh')], env={**environment, **extra},
                                        stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         started.append(process)
         return process
@@ -409,6 +418,11 @@ def _wait(probe, seconds=30):
             return True
         time.sleep(0.2)
     return False
+
+
+def _line(root, device):
+    """A line's state file, as its faxgetty keeps it in the spool (what faxstat shows)."""
+    return root / 'var' / 'spool' / 'hylafax' / 'status' / device
 
 
 def _running(root):
@@ -456,6 +470,62 @@ def test_a_line_that_loses_its_modem_is_reported_and_the_engine_starts_again(ent
     assert status['reason'] == "Faxbot's fax engine lost a fax line and is starting again."
 
 
+def _checks_started(root):
+    """How many times the engine has run pgrep or faxstat (each stand-in notes its calls)."""
+    calls = (root / 'calls').read_text().splitlines()
+    return sum(1 for call in calls if call.split(' ', 1)[0] in ('pgrep', 'faxstat'))
+
+
+def test_the_running_engine_checks_its_lines_without_pgrep_or_faxstat_while_they_are_whole(entrypoint):
+    """Live, 10 October 2026: on a busy machine a received call failed while the engine ran pgrep and faxstat
+    every few seconds. The running engine now asks the processes it started whether they are alive (kill -0)
+    and reads each line's state from its status file: while everything is whole, its checks start neither."""
+    start, root, data = entrypoint
+    process = start()
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    time.sleep(1.5)  # the start remembers its processes (with pgrep) just after it says running
+    before = _checks_started(root)
+    time.sleep(4.5)  # four rounds of the one-second check
+    assert process.poll() is None and _status(data)['state'] == 'running', _status(data)
+    assert _checks_started(root) == before
+
+
+@pytest.mark.parametrize('stopped, state, reason', [
+    ('faxgetty -D ttyIAX1', 'restarting', "Faxbot's fax engine lost a fax line and is starting again."),
+    ('faxq', 'failed', "Faxbot's fax engine stopped and is starting again."),
+    ('hfaxd -i 4559', 'failed', "Faxbot's fax engine stopped and is starting again."),
+])
+def test_a_daemon_that_stops_is_noticed_and_the_engine_starts_again(entrypoint, stopped, state, reason):
+    """A line's faxgetty, the scheduler or the submission server that stops: the cheap check notices its
+    process is gone, the full checks say what, and the engine exits to be started again."""
+    start, root, data = entrypoint
+    process = start()
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    (entry,) = [entry for entry in (root / 'procs').iterdir() if entry.read_text().strip() == stopped]
+    os.kill(int(entry.name), signal.SIGTERM)
+    assert _wait(lambda: process.poll() is not None)
+    assert process.returncode == 1
+    assert (_status(data)['state'], _status(data)['reason']) == (state, reason)
+
+
+def test_the_session_logs_are_read_when_one_is_added_and_with_each_check_of_the_lines(entrypoint):
+    """Each reading of the session logs starts a few programs, so the running engine reads them when a session
+    log was added and with each check of the lines, not every few seconds."""
+    start, root, data = entrypoint
+
+    def readings():
+        calls = (root / 'calls').read_text().splitlines()
+        return sum(1 for call in calls if call.startswith('runuser') and call.endswith('/sessions'))
+    process = start(FAXBOT_ENGINE_LIVENESS_SECONDS='30')
+    assert _wait(lambda: _status(data).get('state') == 'running')
+    time.sleep(2.5)  # the first round reads them once (nothing was read before)
+    before = readings()
+    time.sleep(3.5)
+    assert readings() == before and process.poll() is None
+    (root / 'var' / 'spool' / 'hylafax' / 'log' / 'c00000001').write_text('a new session\n')
+    assert _wait(lambda: readings() == before + 1, 5)
+
+
 def test_a_modem_lock_left_by_a_restart_never_keeps_a_line_out_of_service(entrypoint):
     """Live, 6 October 2026: the engine restarted itself during a call; faxgetty's lock on ttyIAX1 stayed in
     the container and named a process ID that the restart gave to a live process, so line 1 waited on it for
@@ -466,7 +536,7 @@ def test_a_modem_lock_left_by_a_restart_never_keeps_a_line_out_of_service(entryp
     start()
     assert _wait(lambda: _status(data).get('state') == 'running'), _status(data)
     assert not (root / 'run' / 'lock' / 'LCK..ttyIAX1').exists()
-    assert (root / 'status.ttyIAX1').read_text().strip() == 'Running and idle'
+    assert _line(root, 'ttyIAX1').read_text().strip() == 'Running and idle'
 
 
 def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
@@ -477,7 +547,7 @@ def test_a_line_that_never_gets_ready_is_never_reported_running(entrypoint):
     process = start()
     assert _wait(lambda: process.poll() is not None)
     assert process.returncode == 1 and _status(data)['state'] == 'failed', _status(data)
-    assert (root / 'status.ttyIAX1').read_text().strip() == 'Waiting for modem to come free'
+    assert _line(root, 'ttyIAX1').read_text().strip() == 'Waiting for modem to come free'
 
 
 def test_the_engine_starts_again_when_faxbot_asks_and_not_for_a_request_it_already_followed(entrypoint):
@@ -503,15 +573,15 @@ def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_rec
     start, root, data = entrypoint
     process = start()
     assert _wait(lambda: _status(data).get('state') == 'running')
-    (root / 'status.ttyIAX2').write_text('Receiving facsimile\n')
-    (root / 'status.ttyIAX1').write_text('Waiting for modem to come free\n')
+    _line(root, 'ttyIAX2').write_text('Receiving facsimile\n')
+    _line(root, 'ttyIAX1').write_text('Waiting for modem to come free\n')
     assert _wait(lambda: _status(data).get('state') == 'restarting'), _status(data)
     assert _status(data)['reason'] == "Faxbot's fax engine lost a fax line and is starting again."
     assert process.poll() is None
-    (root / 'status.ttyIAX1').write_text('Running and idle\n')
+    _line(root, 'ttyIAX1').write_text('Running and idle\n')
     assert _wait(lambda: _status(data).get('state') == 'running'), _status(data)
-    (root / 'status.ttyIAX2').write_text('Running and idle\n')
-    (root / 'status.ttyIAX1').write_text('Waiting for modem to come free\n')
+    _line(root, 'ttyIAX2').write_text('Running and idle\n')
+    _line(root, 'ttyIAX1').write_text('Waiting for modem to come free\n')
     assert _wait(lambda: process.poll() is not None)
     assert process.returncode == 1
 
@@ -534,7 +604,7 @@ def test_a_received_image_or_ticket_that_is_a_link_is_not_handed_over(engine, tm
 
 
 QFILE = ('jobtag:' + 'a' * 32 + '.' + 'b' * 32 + '\njobid:12\ncommid:000000007\nstate:8\nnpages:0\ntotpages:2\n'
-         'ndials:1\ntotdials:1\ntottries:1\nstatus:No carrier detected {E002}\nstatuscode:E002\ncsi:\n'
+         'ndials:1\ntotdials:1\ntottries:1\nstatus:No carrier detected \nerrorcode:E002\ncsi:\n'
          'signalrate:\ndataformat:\n')
 
 

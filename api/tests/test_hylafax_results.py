@@ -4,6 +4,7 @@ the engine's own secret and folders."""
 import base64
 from datetime import datetime, timedelta
 import itertools
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -164,14 +165,19 @@ def test_only_the_engine_switches_to_audio_after_its_t38_call_heard_no_fax_machi
     assert not switched and engine and set(engine) == {'2026-10-05T01:00:40Z'}
 
 
-def test_an_audio_engine_call_does_not_switch_anything(calls, monkeypatch):
-    engine = []
+def test_an_audio_engine_call_that_heard_no_fax_machine_never_moves_it_to_audio_but_asks_for_t38_again(
+        calls, monkeypatch):
+    """engine_t38_restored itself does nothing unless the engine is on audio fax (test_hylafax_engine)."""
+    engine, back, switched = [], [], []
+    monkeypatch.setattr(sip_fax_mode, '_on_fax_event', switched.append)
     monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: engine.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
     calls.record_engine_call(engine_event('0'), now=NOW)
     calls.record_engine_call(trunk_event('DISABLED', ''), now=NOW)
     engine_side(calls, 'No carrier detected {E002}')
     sip_calls.engine_audio_check(calls.for_attempt(ATTEMPT)[-1])
-    assert calls.for_attempt(ATTEMPT)[-1]['verdict'] == sip_calls.NO_FAX_SIGNAL and not engine
+    assert calls.for_attempt(ATTEMPT)[-1]['verdict'] == sip_calls.NO_FAX_SIGNAL
+    assert not engine and not switched and back == [True]
 
 
 # Restarts -----------------------------------------------------------------------------------------------
@@ -241,6 +247,7 @@ class ResultStore:
 
     def observe(self, job_id, **fields):
         self.calls.append(('observed', fields['status'], fields['error']))
+        self.category = fields.get('error_category')
         return True
 
 
@@ -350,6 +357,35 @@ def test_a_failed_send_gets_the_engines_sentence_and_only_the_engine_goes_to_aud
     answer, calls, switched = result_route(monkeypatch, payload, row)
     assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.NO_SIGNAL)]
     assert not switched and engine == ['2026-10-05T01:00:40Z']
+
+
+@pytest.mark.parametrize('verdict, category', [
+    (sip_calls.NO_FAX_SIGNAL, None), (sip_calls.CLEARED_AT_ONCE, None), ('no_media_back', None),
+    ('no_fax_answer', None),
+    # Unchanged here: a call judged person-answered fails and takes no other route by itself (category_for).
+    (sip_calls.PERSON_ANSWERED, sip_calls.PERSON_ANSWERED),
+])
+def test_a_failed_audio_send_keeps_its_failover_while_the_engine_goes_back_to_t38(monkeypatch, verdict, category):
+    """The 2026-10-11 outage: on audio, Telnyx ended each call 3 s after its own T.38 request. The fax is observed
+    failed with the same category as before the switch-back existed (no category: its next route takes it); only
+    the engine's next call changes."""
+    row = {'verdict': verdict, 'ended_at': '2026-10-11T07:28:00Z', 't38': 'no', 'direction': 'outbound',
+           'error_cause': verdict + ': No carrier detected E002'}
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'No carrier detected {E002}').decode()}
+    audio, back, stores = [], [], []
+
+    class Kept(ResultStore):
+        def __init__(self):
+            super().__init__()
+            stores.append(self)
+    monkeypatch.setattr(sys.modules[__name__], 'ResultStore', Kept)
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_failed', lambda at=None: audio.append(at))
+    monkeypatch.setattr(hylafax_engine, 'engine_t38_restored', lambda: back.append(True))
+    answer, calls, switched = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'ok'} and calls == [('observed', 'failed', sip_calls.verdict_sentence(verdict))]
+    assert stores[0].category == category
+    assert not switched and audio == [] and back == [True]
 
 
 def test_a_send_the_other_machine_answered_carries_the_engines_own_reason(monkeypatch):
@@ -625,6 +661,148 @@ def test_a_new_engine_container_repeating_a_communication_id_keeps_two_calls_tha
         calls = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
         assert len(calls) == 2 and {call['verdict'] for call in calls} == {sip_calls.NO_FAX_SIGNAL}
         assert inbound_engine_refs(app) == [f'{ENGINE_ID}:000000003-1791180000', f'{ENGINE_ID}:000000003-1791183600']
+
+
+# A fax received over the trunk is handed over whichever provider also receives ----------------------------------
+
+def trunk_installation(monkeypatch, tmp_path, **extra):
+    """Receiving over a Telnyx trunk, with HumbleFax's synthetic keys; (data folder, engine secret, client)."""
+    from api.app import main
+    from api.app.inbound import http as inbound_http
+    data, secret = engine_installation(monkeypatch, tmp_path)
+    for name, value in {'SIP_TRUNK_PRESET': 'telnyx', 'SIP_TRUNK_USERNAME': 'faxbotuser',
+                        'SIP_TRUNK_PASSWORD': 'synthetic-Trunk-Pass!42', 'HUMBLEFAX_ACCESS_KEY': 'synthetic-access',
+                        'HUMBLEFAX_SECRET_KEY': 'synthetic-secret', **extra}.items():
+        monkeypatch.setenv(name, value)
+    # No poller asks a provider for faxes, and startup does not wait for Asterisk's manager login.
+    monkeypatch.setattr(inbound_http, 'AUTOMATIC', False)
+    monkeypatch.setattr(main, 'AMI_STARTUP_WAIT_SECONDS', 0.1)
+    return data, secret, TestClient(main.app, base_url='http://testserver')
+
+
+def asterisk_handed_over(data, uniqueid):
+    """faxbot-inbound-notify's body for a fax Asterisk received on the first trunk."""
+    folder = data / 'inbound'
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / f'{uniqueid}.tiff'
+    Image.new('1', (20, 10), 1).save(image, format='TIFF')
+    return {'tiff_path': str(image), 'uniqueid': uniqueid, 'faxstatus': 'SUCCESS', 'faxpages': 1,
+            'to_number': '+15555550100', 'from_number': '+15555550199'}
+
+
+def test_a_trunk_fax_is_handed_over_while_humblefax_receives_as_on_the_partner(isolated_installation, monkeypatch,
+                                                                            tmp_path):
+    """Live, 10 October 2026 (#68): receiving set to HumbleFax (seeded from FAX_INBOUND_BACKEND) with a Telnyx
+    trunk. The engine's hand-over was answered 503 on every retry and the call read "came in, but no pages
+    arrived"; both engines' hand-overs take the fax."""
+    data, secret, client = trunk_installation(monkeypatch, tmp_path, FAX_INBOUND_BACKEND='humblefax')
+    with client:
+        engine = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret},
+                             json=handed_over(data, '1791180000', '17911995026'))
+        asterisk = client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'},
+                               json=asterisk_handed_over(data, '1791183600.7'))
+        assert (engine.status_code, asterisk.status_code) == (200, 200), (engine.text, asterisk.text)
+        stored = {item['id']: item['status'] for item in client.get('/inbound', headers=ADMIN).json()}
+        assert stored == {engine.json()['id']: 'received', asterisk.json()['id']: 'received'}
+
+
+# Every provider that receives faxes (Faxbot refuses to start with any other one receiving).
+SAVED = ['sip', 'humblefax', 'phaxio', 'sinch', 'efax']
+RECEIVING = [('', 'none')] + [(name, seed) for seed in ('variable', 'saved') for name in SAVED]
+
+
+def save_settings(client, **changes):
+    """Save changes in Settings; True when they take effect at once, False when at the next start."""
+    current = client.get('/admin/settings', headers=ADMIN).json()
+    saved = client.put('/admin/settings', headers=ADMIN,
+                       json={'expected_revision_id': current['_meta']['desired_revision_id'], **changes})
+    assert saved.status_code == 200, saved.text
+    return client.get('/admin/settings', headers=ADMIN).json()['_meta']['apply_state'] == 'applied'
+
+
+def receiving_now(client):
+    """The receiving provider in effect (none pending a restart)."""
+    view = client.get('/admin/settings', headers=ADMIN).json()
+    assert view['_meta']['apply_state'] == 'applied', view['_meta']
+    return view['hybrid']['inbound_backend']
+
+
+def every_handover(client, data, secret, n):
+    """Each engine route takes one call received over the trunk: the engine's received fax, its report of a call
+    that left no fax, and Asterisk's received fax. Call number ``n`` keeps each call apart."""
+    reason = base64.b64encode(b'No sender protocol (T.30 T1 timeout) {E102}').decode()
+    answers = {
+        'engine received': client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret},
+                                       json=handed_over(data, f'17911800{n:02d}', f'179119950{n:02d}')),
+        'engine no fax': client.post('/_internal/hylafax/received-failed', headers={'X-Internal-Secret': secret}, json={
+            'engine_id': ENGINE_ID, 'commid': f'0000000{n:02d}', 'key': f'0000000{n:02d}-17911900{n:02d}',
+            'token': f'179119960{n:02d}', 'caller': '3034265097', 'called': '15555550100', 'reason_b64': reason}),
+        'asterisk received': client.post('/_internal/asterisk/inbound', headers={'X-Internal-Secret': 'sekret'},
+                                         json=asterisk_handed_over(data, f'17911836{n:02d}.7')),
+    }
+    assert {route: answer.status_code for route, answer in answers.items()} == dict.fromkeys(answers, 200), {
+        route: answer.text for route, answer in answers.items()}
+    received = {item['id']: item['status'] for item in client.get('/inbound', headers=ADMIN).json()}
+    for route in ('engine received', 'asterisk received'):
+        assert received[answers[route].json()['id']] == 'received'
+
+
+@pytest.mark.parametrize('receiving, seed', RECEIVING, ids=lambda value: value or 'none')
+def test_every_engine_hand_over_takes_a_trunk_fax_whichever_provider_receives(isolated_installation, monkeypatch,
+                                                                              tmp_path, receiving, seed):
+    """#68's category: the Asterisk and SSL Fax engine hand-overs × every receiving provider (none at all
+    included), with the trunk set up. ``variable``: FAX_INBOUND_BACKEND seeds the first start, then another
+    provider is saved in Settings (in effect from the next start; the variable is still set). ``saved``: no
+    variable; the provider is saved in Settings after the first start. ``none``: no provider at all, then
+    HumbleFax saved."""
+    from api.app.main import app
+    extra = {'FAX_BACKEND': ''} if seed == 'none' else {}
+    if seed == 'variable':
+        extra['FAX_INBOUND_BACKEND'] = receiving
+    data, secret, client = trunk_installation(monkeypatch, tmp_path, **extra)
+    with client:
+        if seed == 'saved':
+            save_settings(client, inbound_backend=receiving)
+        else:
+            assert receiving_now(client) == receiving
+            every_handover(client, data, secret, 1)
+            later = SAVED[(SAVED.index(receiving) + 1) % len(SAVED)] if receiving in SAVED else 'humblefax'
+            save_settings(client, inbound_backend=later)
+    with TestClient(app, base_url='http://testserver') as client:
+        assert receiving_now(client) == (receiving if seed == 'saved' else later)
+        every_handover(client, data, secret, 2)
+
+
+def test_a_fax_the_engine_keeps_says_why_until_faxbot_takes_it(isolated_installation, monkeypatch, tmp_path):
+    """The one case that truly cannot take a trunk fax (no trunk set up, and FAX_INBOUND_BACKEND names Sinch):
+    the engine keeps the fax (503) and its call says why instead of "came in, but no pages arrived". Once the
+    trunk is set up, the next retry takes it and the call reads received."""
+    from api.app import sip_calls as served_calls
+    from app.routing.background import installation_engine
+    data, secret, client = trunk_installation(monkeypatch, tmp_path, SIP_TRUNK_PRESET='', FAX_INBOUND_BACKEND='sinch')
+    body = handed_over(data, '1791180000', '17911995026')
+    with client:
+        engine, _ = installation_engine(client.app)
+        # Asterisk's event for the engine's call came first, as it does live.
+        sip_calls.SipCallRecords(engine).record_engine_call(
+            inbound_event(Token='17911995026', Caller='+15555550199', DID='15555550100'))
+        writes = []
+        recorded = served_calls.SipCallRecords.record_engine_receive
+        monkeypatch.setattr(served_calls.SipCallRecords, 'record_engine_receive',
+                            lambda self, *args, **kwargs: writes.append(args) or recorded(self, *args, **kwargs))
+        for _ in range(3):
+            refused = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json=body)
+            assert refused.status_code == 503, refused.text
+        assert len(writes) == 1  # once per call, not on every retry
+        (call,) = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
+        assert call['summary'] == ('A fax was received but could not be handed to Faxbot: receiving over the SIP '
+                                   'trunk is turned off in Faxbot.')
+        assert client.get('/inbound', headers=ADMIN).json() == []
+        assert save_settings(client, sip_trunk_preset='telnyx')  # in effect at once
+        taken = client.post('/_internal/hylafax/inbound', headers={'X-Internal-Secret': secret}, json=body)
+        assert taken.status_code == 200, taken.text
+        (call,) = client.get('/admin/sip/calls', headers=ADMIN).json()['items']
+        assert call['summary'] == 'Received: 1 page.' and call['job_id'] == taken.json()['id']
 
 
 # A received call's numbers read the same whichever report came first ---------------------------------------------

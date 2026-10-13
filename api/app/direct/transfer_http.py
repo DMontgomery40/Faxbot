@@ -31,9 +31,12 @@ def _background(app):
 
     from .relay_http import _delivery
 
+    # Built once: building it reflects its tables, which held the event loop for seconds every two minutes on a
+    # busy installation when it ran on every step. A fax completed through the partner shows delivered in Sent.
+    call_repair = CallRepair(service, delivery=lambda: _delivery(app))
+
     async def repair():
-        # A fax completed through the partner shows delivered in this installation's Sent.
-        return await CallRepair(service, delivery=lambda: _delivery(app)).step()
+        return await call_repair.step()
     return [('faxbot-direct-transfers', repeat_async(expire, interval=900.0, initial_delay=45.0,
                                                      warning='Unfinished direct transfers are cleaned up later.')),
             ('faxbot-direct-call-repair', repeat_async(repair, interval=120.0, initial_delay=50.0,

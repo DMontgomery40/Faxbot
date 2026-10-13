@@ -24,9 +24,14 @@ Rules this module keeps:
   with that sentence ("Closed: the fax was delivered."). Otherwise a person
   decides: delivered, not delivered (optionally sending
   the same document again as a new fax, linked both ways), or can't tell, with
-  who decided, why, and what the checks showed then. The fax's own delivery
-  record is never changed here; confirming receipt with the provider's fax ID
-  stays a separate step.
+  who decided, why, and what the checks showed then. Delivered or not
+  delivered also ends the fax's own delivery (``success`` or ``failed``) in
+  the same transaction, so its number is no longer held for an unknown result
+  (defect 45); the attempt keeps what the provider said, so no route fallback
+  sends it again. Can't tell leaves the delivery waiting for review. A fax
+  settled before that change has its delivery ended the same way by the
+  worker, once (defect 73).
+  Confirming receipt with the provider's fax ID stays a separate step.
 - **Nothing reaches the recipient without a person.** The automatic checks
   only read stored records, or ask an enrolled partner once about a call
   (``PartnerQuestion``); the receipt query page and a new fax go only from a
@@ -50,7 +55,8 @@ from .store import _target
 
 
 TABLES = ('certainty_items', 'certainty_events', 'certainty_settings', 'outbound_deliveries', 'outbound_attempts',
-          'fax_jobs', 'access_resources', 'access_principals', 'access_users', 'mailboxes', 'work_mailbox_settings')
+          'fax_jobs', 'access_resources', 'access_principals', 'access_users', 'mailboxes', 'work_mailbox_settings',
+          'outbound_events')
 OUTCOMES = ('delivered', 'not_delivered', 'unknown')
 DEFAULT_SETTLE_HOURS = 24
 MAX_SETTLE_HOURS = 720
@@ -69,6 +75,11 @@ NOT_FOUND = 'This uncertain fax was not found.'
 CHANGED = 'This item changed; reload and try again.'
 FORBIDDEN = 'You do not have permission to do this.'
 SETTLE_PERMISSION = 'fax:reconcile'
+# How long an uncertain fax needs on the line is worked out again only when something it depends on changes: the
+# fax, its route, its call record, or the quarter hour (a learned busy hour starts on one in every time zone).
+PREDICTION_PERIOD_MINUTES = 15
+# The automatic findings that are not kept: nothing to say yet.
+NOT_KEPT = ('unavailable', 'not_done', 'asking', 'unknown')
 
 
 class CertaintyError(Exception):
@@ -142,7 +153,36 @@ class CertaintyStore:
         self.resources, self.principals, self.users = (tables['access_resources'], tables['access_principals'],
                                                        tables['access_users'])
         self.mailboxes, self.mailbox_settings = tables['mailboxes'], tables['work_mailbox_settings']
+        # The fax's own delivery history: a person's settlement is kept there too (outbound_store.settle_uncertain_on).
+        self.delivery_events = tables['outbound_events']
         self.sources = checks.CheckSources(engine)
+        # {item id: (what the prediction depended on, predicted seconds)}; see ``predictor``.
+        self._predictions = {}
+
+    # -- the call's predicted length -------------------------------------------------------------------
+    def predictor(self, item, job, facts, *, now):
+        """``predict(route)`` for ``checks.call_record_reading``: the seconds the whole fax needs on the line.
+
+        The answer is kept per item and given again while nothing it depends on has changed: the fax's number,
+        pages and document, the route, the call record (``facts``) and the quarter hour of ``now``. A prediction
+        that could not be made is never kept.
+        """
+        now = now or utcnow()
+        quarter = now.replace(minute=now.minute - now.minute % PREDICTION_PERIOD_MINUTES, second=0, microsecond=0)
+        record = facts.get('record')
+        call = (tuple(sorted(record.items())) if record else None, facts.get('carrier_seconds'), facts.get('carrier'),
+                facts.get('provider_seconds'))
+
+        def predict(route):
+            inputs = (route, job.get('to_number'), job.get('pages'), job.get('tiff_path'), call, quarter)
+            kept = self._predictions.get(item['id'])
+            if kept is not None and kept[0] == inputs:
+                return kept[1]
+            seconds = checks.predicted_seconds(route, job.get('to_number'), job, now=now)
+            if seconds is not None:
+                self._predictions[item['id']] = (inputs, seconds)
+            return seconds
+        return predict
 
     # -- settings ------------------------------------------------------------------------------------
     def settings_on(self, connection):
@@ -426,13 +466,54 @@ class CertaintyStore:
                 continue  # a person settled it first, or another worker closed it
         return closed
 
+    def end_settled(self, *, now=None, limit=100):
+        """End the delivery of each fax a person settled as delivered or not delivered before settling did that
+        itself (defect 45, #93), and that still waits for review; return how many (defect 73).
+
+        Such a fax kept reading "Needs review" and holding its number, and nothing could end it since: settling needs
+        an open item. The person's decision is applied as settling applies it now (``settle_uncertain_on``):
+        delivered ends ``success``, not delivered ``failed``, with an ``operator_settled`` event under the person who
+        decided, at the moment they decided. Only a delivery still waiting for review on the item's own attempt
+        changes, so a repeat, a result that came since or a fax already sent again changes nothing. Nothing is sent
+        again, and can't tell stays waiting for review.
+        """
+        from ..outbound_store import SETTLED_STATES, settle_uncertain_on
+        now = now or utcnow()
+        items, deliveries = self.items, self.deliveries
+        due = (sa.select(items.c.id).select_from(items.join(deliveries, deliveries.c.id == items.c.job_id))
+               .where(items.c.state == 'settled', items.c.outcome.in_(tuple(SETTLED_STATES)),
+                      deliveries.c.state == 'reconciliation_required', deliveries.c.attempt_id == items.c.attempt_id)
+               .order_by(items.c.settled_at, items.c.id).limit(limit))
+        with read_connection(self.engine) as connection:
+            identities = connection.execute(due).scalars().all()
+        ended = 0
+        for identity in identities:
+            try:
+                with write_transaction(self.engine) as connection:
+                    item = self.item_on(connection, identity)
+                    if item is None or item['state'] != 'settled':
+                        continue
+                    actor = 'principal:' + item['settled_by'] if item['settled_by'] else None
+                    ended += settle_uncertain_on(connection, deliveries, self.jobs, self.delivery_events,
+                                                 item['job_id'], attempt_id=item['attempt_id'],
+                                                 outcome=item['outcome'], actor=actor, now=now,
+                                                 decided_at=item['settled_at'])
+            except DeliveryStoreError:
+                continue  # tried again on the next step
+        if ended:
+            # A fax waiting for one of these numbers may go now.
+            from ..outbound_wake import wake
+            wake.notify()
+        return ended
+
     def record_checks(self, *, now=None, limit=50):
         """Keep each new finding of the automatic checks on open items, once; return how many were new.
 
-        The findings are worked out on a read connection; a write happens only for one not kept yet.
+        The records are read on a read connection. The call's predicted length is worked out after it closes, and
+        only when what it depends on changed (``predictor``); a write happens only for a finding not kept yet.
         """
         now = now or utcnow()
-        new = []
+        read = []
         with read_connection(self.engine) as connection:
             rows = connection.execute(sa.select(self.items).where(self.items.c.state == 'open')
                                       .order_by(self.items.c.created_at).limit(limit)).mappings().all()
@@ -440,15 +521,26 @@ class CertaintyStore:
                 item = dict(row)
                 job = self.job_on(connection, item['job_id']) or {}
                 answer, _ = self.partner_answer_on(connection, item['id'])
-                for found in (checks.partner_check(self.sources, connection, item, job, answer),
-                              checks.call_record_check(self.sources, connection, item, job, now=now)):
-                    if found['result'] in ('unavailable', 'not_done', 'asking', 'unknown'):
-                        continue
-                    key = 'found:' + hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
-                                                    ).hexdigest()[:48]
-                    if connection.execute(sa.select(self.events.c.id).where(
-                            self.events.c.item_id == item['id'], self.events.c.dedupe_key == key)).first() is None:
-                        new.append((item['id'], found, key))
+                read.append((item, job, checks.partner_check(self.sources, connection, item, job, answer),
+                             checks.call_record_facts(self.sources, connection, item)))
+        # Predictions kept for items no longer open are dropped.
+        open_ids = {item['id'] for item, *_ in read}
+        self._predictions = {key: value for key, value in self._predictions.items() if key in open_ids}
+        findings = []
+        for item, job, partner, facts in read:
+            call = checks.call_record_reading(facts, job, now=now, predict=self.predictor(item, job, facts, now=now))
+            for found in (partner, call):
+                if found['result'] in NOT_KEPT:
+                    continue
+                key = 'found:' + hashlib.sha256(f"{found['kind']}|{found['result']}|{found['text']}".encode()
+                                                ).hexdigest()[:48]
+                findings.append((item['id'], found, key))
+        new = []
+        if findings:
+            with read_connection(self.engine) as connection:
+                new = [(item_id, found, key) for item_id, found, key in findings
+                       if connection.execute(sa.select(self.events.c.id).where(
+                           self.events.c.item_id == item_id, self.events.c.dedupe_key == key)).first() is None]
         recorded = 0
         for item_id, found, key in new:
             try:
@@ -471,6 +563,8 @@ class CertaintyWorker:
         created = self.store.feed(control, now=now)
         # A fax delivered since, by any path (a partner's repair, a late result, a confirmed receipt), closes.
         self.store.close_delivered(now=now)
+        # A fax a person settled before settling ended its delivery (defect 73) ends now, once.
+        self.store.end_settled(now=now)
         self.store.record_checks(now=now)
         escalated = self.store.escalate(control, now=now)
         return created >= 100 or escalated >= 100

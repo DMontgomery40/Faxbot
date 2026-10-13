@@ -10,6 +10,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from .config_runtime import run_lifecycle_step
+from .database_busy import retry_when_busy
 from .outbound_worker import PreparationFailure, SubmissionReceipt
 from .provider_execution import service_from_profile, ProviderExecutionError
 
@@ -143,7 +144,9 @@ class CapturedTransport:
 
     @asynccontextmanager
     async def prepare(self, claim):
-        revision, profile, job = await run_lifecycle_step(lambda: self.store.load_dispatch(claim))
+        # A read; a busy database is waited out (database_busy), and a worker gives back a fax still refused.
+        revision, profile, job = await run_lifecycle_step(lambda: retry_when_busy(
+            lambda: self.store.load_dispatch(claim), what=f'the preparation of fax {claim.job_id}', idempotent=True))
         values = revision.values
         configuration = profile.configuration
         pid = configuration.provider_id
@@ -324,7 +327,9 @@ class CapturedTransport:
         engine = getattr(getattr(self.store, 'configuration', None), 'engine', None)
         records = hylafax_records.records_for(engine) if engine is not None else None
         recipient = await asyncio.to_thread(hylafax_engine.recipient_limits, engine, job['to_number'])
-        choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami)
+        # The engine the sender chose for this fax, kept at acceptance (outbound_store.engine_request_recorder).
+        requested = job.get('engine_request')
+        choice = await hylafax_engine.choose(values, members=bool(claim.members), ami=self.ami, requested=requested)
         if choice.engine == 'hylafax':
             # The engine may be on audio fax on its own after a T.38 call that heard no fax machine.
             call = hylafax_engine.with_coding(
@@ -345,7 +350,8 @@ class CapturedTransport:
                     subaddress=subaddress, trunk=trunk)
                 return engine_job, choice, call, records
             except (hylafax_engine.EngineError, ConnectionError, TimeoutError, OSError):
-                choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.NOT_RUNNING)
+                choice = hylafax_engine.EngineChoice('builtin', hylafax_engine.CHOSE_ENGINE_NOT_READY
+                                                     if requested == 'hylafax' else hylafax_engine.NOT_RUNNING)
             except ValueError:
                 raise PreparationFailure('preparation_failed') from None
         call = hylafax_engine.with_coding(hylafax_engine.call_settings(values, job['to_number'], recipient=recipient),

@@ -33,6 +33,7 @@ from .commands import overview as overview_commands
 from .commands import countries as country_commands
 from .commands import destinations as destination_commands
 from .commands import teams_annex as teams_annex_commands
+from .commands import admission as admission_commands
 
 # The console's six areas. Overview is one command; the others are groups.
 NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
@@ -175,6 +176,7 @@ partners.command('transfers')(notices.transfers_list)
 partners.command('repairs')(notices.repairs_list)
 partners.add_typer(relay.relay, name='relay')
 partners.add_typer(send_once.send_once, name='send-once')
+partners.add_typer(admission_commands.windows, name='windows')
 # Find partners: suggestions from calls, introductions and trusted directories, and publishing your number.
 partners.add_typer(discovery.discover, name='discover')
 partners.command('introduce')(discovery.introduce)

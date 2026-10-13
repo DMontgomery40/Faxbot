@@ -26,12 +26,13 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observation_refused', 'terminal_conflict', 'late_observation',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
-    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured'})
+    'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured',
+    'engine_requested', 'operator_settled'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
     'partly_sent', 'pages_unconfirmed', 'local_not_delivered', 'notice_missing', 'person_answered',
-    'wrong_station'})
+    'wrong_station', 'result_lost'})
 # A fax whose pages were only partly confirmed, or whose pages may have arrived without confirmation:
 # failed or waiting for a person, never resent automatically (no other route takes it). ``notice_missing``: a
 # Direct message the recipient's HISP never confirmed within the wait (digital/direct_message.py).
@@ -39,6 +40,7 @@ _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission
 # route would ring that person again, so the fax fails and a person checks the number (research N9).
 # ``wrong_station``: the number answered as a fax machine Faxbot did not expect there and the station check refused
 # it before any page (routing/stations.py): another route would reach the same machine.
+# ``result_lost``: the built-in engine's result for the call never reached the store (engine_results.py).
 # How long a shared call's priced partition costs are kept between claims (``OutboundStore._call_costs``).
 COST_SECONDS = 60
 NO_FALLBACK_CATEGORIES = frozenset({'partly_sent', 'pages_unconfirmed', 'notice_missing', 'person_answered',
@@ -130,6 +132,46 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
         details=json.dumps(details or {}, sort_keys=True, separators=(',', ':')), created_at=now))
 
 
+# What a person's settlement of an uncertain fax (work/certainty_service.settle) makes of its delivery.
+SETTLED_STATES = {'delivered': 'success', 'not_delivered': 'failed'}
+
+
+def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt_id, outcome, actor, now,
+                        decided_at=None):
+    """End a fax waiting for review by a person's decision, in the caller's write transaction; True when it did.
+
+    Delivered makes the delivery ``success`` and not delivered makes it ``failed``, so it stops holding its number
+    (``capacity.HOLDING``) and the next fax to that number goes at once, instead of waiting out ``capacity.HOLD``
+    (defect 45). Only a delivery still waiting for review on that same attempt changes, as a compare-and-set on its
+    version: a provider result that came first, or a fax already sent again, is left as it is. The attempt keeps
+    what the provider said (its phase stays ``uncertain``), so no route fallback ever picks the fax up: nothing is
+    sent again unless the person asks for it. The decision is kept as an ``operator_settled`` event.
+
+    ``decided_at``: when the person decided, for a decision made before settling ended the delivery (defect 73,
+    ``CertaintyStore.end_settled``); the event is kept at that moment, with when the delivery ended.
+    """
+    state = SETTLED_STATES.get(outcome)
+    if state is None:
+        return False
+    row = connection.execute(sa.select(deliveries.c.state, deliveries.c.attempt_id, deliveries.c.version).where(
+        deliveries.c.id == job_id)).mappings().one_or_none()
+    if row is None or row['state'] != 'reconciliation_required' or row['attempt_id'] != attempt_id:
+        return False
+    changed = connection.execute(deliveries.update().where(
+        deliveries.c.id == job_id, deliveries.c.version == row['version'],
+        deliveries.c.state == 'reconciliation_required', deliveries.c.attempt_id == attempt_id).values(
+        state=state, version=row['version'] + 1, updated_at=now, claim_expires_at=None, next_poll_at=None))
+    if changed.rowcount != 1:
+        return False
+    connection.execute(jobs.update().where(jobs.c.id == job_id).values(status=state, updated_at=now))
+    details = {'outcome': outcome, 'state': state, 'actor': actor}
+    if decided_at is not None:
+        details['ended_at'] = now.isoformat(timespec='seconds')
+    _event(connection, events, job_id, 'operator_settled', decided_at or now, attempt_id=attempt_id,
+           details=details)
+    return True
+
+
 def _routes_reach(values):
     """callable(number) -> whether any route of this revision may call ``number`` (``routing.dialing``)."""
     if values is None:
@@ -153,6 +195,37 @@ def accepted_dial(connection, to_number, values):
     except Exception:
         return None, None
     return (number, approval_id) if number != to_number else (None, None)
+
+
+# The engine a sender chose for a fax over the SIP trunk (``POST /fax`` ``engine``): kept once, at acceptance, as an
+# ``engine_requested`` event in the fax's history, so every attempt (a retry, a claim after a restart) reads the
+# same choice (``load_dispatch``). ``auto`` keeps nothing: the engine is chosen as before.
+ENGINE_REQUESTS = ('builtin', 'hylafax')
+_ENGINE_EVENTS = sa.table('outbound_events', sa.column('id'), sa.column('job_id'), sa.column('attempt_id'),
+                          sa.column('kind'), sa.column('dedupe_key'), sa.column('details'), sa.column('created_at'))
+
+
+def engine_request_recorder(job_id, engine):
+    """The acceptance step (``AuthorizedOutbound.accept(also=...)``) that keeps the sender's engine choice; None for
+    ``auto``."""
+    if engine not in ENGINE_REQUESTS:
+        return None
+
+    def record(connection, now):
+        _event(connection, _ENGINE_EVENTS, job_id, 'engine_requested', now, details={'engine': engine},
+               dedupe_key='engine_requested')
+    return record
+
+
+def requested_engine_on(connection, job_id):
+    """The engine the sender chose for this fax (``builtin`` or ``hylafax``), or None for the automatic choice."""
+    details = connection.execute(sa.select(_ENGINE_EVENTS.c.details).where(
+        _ENGINE_EVENTS.c.job_id == job_id, _ENGINE_EVENTS.c.kind == 'engine_requested').limit(1)).scalar()
+    try:
+        engine = json.loads(details or '{}').get('engine')
+    except (ValueError, AttributeError):
+        return None
+    return engine if engine in ENGINE_REQUESTS else None
 
 
 def record_acceptance(connection, tables, job_id, *, held, now, to_number=None, values=None):
@@ -297,6 +370,10 @@ class OutboundStore:
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
                      else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax', 'efax'})
         if not supported:
+            if manifest is None and configuration.provider_id in {'sip', 'freeswitch'}:
+                # Faxbot's own trunk or engine placed the call: there is no provider account to look in.
+                return ('This fax went over your own trunk, so there is no provider fax ID to attach; check with the '
+                        'recipient before sending it again.')
             return 'This provider cannot look up fax status; check the fax in your provider account.'
         return None
 
@@ -467,14 +544,17 @@ class OutboundStore:
     def load_dispatch(self, claim):
         """Read private submission inputs only while the preparation lease is held.
 
-        The job also carries the number choice kept at acceptance (``dial``) and
-        the number this attempt already recorded (``dialed_number``), if any.
+        The job also carries the number choice kept at acceptance (``dial``),
+        the number this attempt already recorded (``dialed_number``), if any,
+        and the engine its sender chose (``engine_request``: ``builtin``,
+        ``hylafax`` or None).
         """
         with self.configuration._locked() as connection:
             revision, profile = self._preparing(connection, claim, datetime.utcnow())
             job = connection.execute(sa.select(self.configuration.jobs).where(
                 self.configuration.jobs.c.id == claim.job_id)).mappings().one()
             job = dict(job)
+            job['engine_request'] = requested_engine_on(connection, claim.job_id)
             if 'dialed_number' in self.attempts.c:
                 job['dial'] = self._dial_state_on(connection, claim.job_id)
                 job['dialed_number'] = connection.scalar(sa.select(self.attempts.c.dialed_number).where(
@@ -1096,13 +1176,15 @@ class OutboundStore:
 
     def record_unconfirmed(self, job_id, *, attempt_id, profile_id, event_key, category='pages_unconfirmed',
                            now=None):
-        """A shared call ended without a confirmed page count, or a Direct message's notice never came
-        (``notice_missing``): this fax may have arrived.
+        """A shared call ended without a confirmed page count, a Direct message's notice never came
+        (``notice_missing``), or the built-in engine's result for the call was lost (``result_lost``,
+        engine_results.py): this fax may have arrived.
 
         The fax waits for a person, exactly like an unacknowledged submission;
         nothing is sent again. A repeated report has no further effect.
         """
-        if category not in ('pages_unconfirmed', 'notice_missing') or not isinstance(event_key, str) or not event_key \
+        if category not in ('pages_unconfirmed', 'notice_missing', 'result_lost') or not isinstance(event_key, str) \
+                or not event_key \
                 or len(event_key) > 512:
             raise DeliveryConflict('Invalid provider event identity.')
         now = now or datetime.utcnow()

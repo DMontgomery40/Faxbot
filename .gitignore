@@ -52,6 +52,9 @@ pnpm-debug.log*
 faxdata/
 .archived/
 *.db
+# A database's write-ahead log and shared-memory index (SQLite WAL mode)
+*.db-wal
+*.db-shm
 logs/
 *.log
 

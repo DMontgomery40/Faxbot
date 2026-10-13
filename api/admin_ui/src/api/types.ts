@@ -107,11 +107,17 @@ export interface FaxJob extends DeliveryMetadata {
   send_by_call?: boolean;
   // Marked urgent: it goes before other faxes waiting for the same line.
   urgent?: boolean;
+  // The fax engine the sender chose for a call over the SIP trunk, in one sentence; null for Faxbot's own choice.
+  engine_choice?: { engine: FaxEngineRequest; sentence: string } | null;
   // Why it has not started yet, or why its number stays reserved; null otherwise.
   waiting_reason?: string | null;
   // The time the sender needs it sent by, and one sentence (whether it may miss it); null without one.
   send_by?: { at: string; sentence: string; at_risk: boolean } | null;
 }
+
+// The fax engine a sender may choose for one fax over the SIP trunk (POST /fax engine): Faxbot's choice (auto),
+// the built-in engine, or the SSL Fax engine when it is running.
+export type FaxEngineRequest = 'auto' | 'builtin' | 'hylafax';
 
 // Recipients, Details: the hours a recipient takes faxes and the busy hours Faxbot learned for its number.
 export interface RecipientSchedule {

@@ -185,6 +185,34 @@ def test_call_options_ask_for_t38_at_once_lower_the_speed_and_use_iaf_only_where
     assert ami.frame_options(trunk, NUMBER, max_rate=4800) == {'t38_now': True, 'iaf': 'endpoint'}
 
 
+def test_the_frame_tables_are_reflected_once_per_database(engine, monkeypatch):
+    """A frame store is built for every call placed (the learned settings' decision) and every frame event; only
+    the first one on a database reflects its tables (py-spy on acceptance: 43 samples in 40 s)."""
+    from app import engine_learning
+    engine_frames.FrameStore(engine)
+    engine_learning.decide(values(), NUMBER, db=engine)  # its own tables are reflected once too
+    reflected, real = [], sa.MetaData.reflect
+
+    def counted(self, bind, *args, **kwargs):
+        reflected.append(kwargs.get('only'))
+        return real(self, bind, *args, **kwargs)
+    monkeypatch.setattr(sa.MetaData, 'reflect', counted)
+    first, second = engine_frames.FrameStore(engine), engine_frames.FrameStore(engine)
+    assert first.frames is second.frames and first.endpoints is second.endpoints
+    for _ in range(3):
+        engine_learning.decide(values(), NUMBER, db=engine)
+    assert reflected == []
+    # Another database reflects its own tables.
+    other = create_database_engine('sqlite:///' + str(engine.url.database) + '-other')
+    try:
+        upgrade_schema(other)
+        reflected.clear()
+        assert engine_frames.FrameStore(other).frames is not first.frames
+        assert any('fax_call_frames' in (only or ()) for only in reflected)
+    finally:
+        other.dispose()
+
+
 def test_iaf_is_refused_for_anything_but_a_peer_or_an_endpoint_with_a_name(engine):
     store = engine_frames.FrameStore(engine)
     with pytest.raises(engine_frames.FramesRefused):

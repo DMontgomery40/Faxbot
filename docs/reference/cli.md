@@ -69,6 +69,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
 * `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
 * `--court DETAILS.json`: Send under the California court profile, with the case details in this JSON file: purpose file or serve, county, case_number, plaintiff, defendant, documents (title and pages) and sender. Filing adds the MC-005 cover sheet; the pages otherwise go exactly as given.
+* `--engine ENGINE`: For a call over your SIP trunk, the fax engine that places it: auto (Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax engine when it is running, else the built-in engine).  [default: auto]
 * `--help`: Show this message and exit.
 
 ## `faxbot status`
@@ -357,6 +358,7 @@ $ faxbot savings predict [OPTIONS]
 * `--layout <str>`: normal, or dense for pages packed with more text.  [default: normal]
 * `--resolution <str>`: standard, fine, superfine, 300 or 400.  [default: fine]
 * `--file <file>`: Price this document (PDF or plain text) instead: Faxbot measures each fax coding on its own pages. --pages, --layout and --resolution then come from the document.
+* `--engine ENGINE`: With --file: the fax engine you would choose for the fax (as faxbot send --engine): auto, builtin or hylafax. A call over your SIP trunk is then measured as that engine sends it.  [default: auto]
 * `--help`: Show this message and exit.
 
 ### `faxbot savings analysis`
@@ -7111,6 +7113,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `may-introduce`: Set whether a partner may be introduced to...
 * `relay`: Partner relays: a partner office sends...
 * `send-once`: Send once: a partner&#x27;s intake files one...
+* `windows`: Line windows and preflight with partners...
 * `discover`: Recipients that run Faxbot, found from...
 * `publish`: Publish your fax number in a directory you...
 
@@ -7731,6 +7734,85 @@ $ faxbot recipients partners send-once end [OPTIONS] {partner}
 **Options**:
 
 * `--direction yours|theirs`: Which agreement to end when there are both: &#x27;yours&#x27; (their intake files your faxes) or &#x27;theirs&#x27; (yours files theirs).
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners windows`
+
+Line windows and preflight with partners that take part: ask before paying to send by phone, and queue for a partner&#x27;s limited lines instead of retrying into a busy one.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show your receiving settings and, for each...
+* `settings`: Set what you offer partners that take...
+* `partner`: Take part with a partner (on) or stop...
+
+##### `faxbot recipients partners windows show`
+
+Show your receiving settings and, for each partner, whether you take part, its windows and its answers.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows show [OPTIONS] [PARTNER]
+```
+
+**Arguments**:
+
+* `[PARTNER]`: Show one partner only.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners windows settings`
+
+Set what you offer partners that take part: lines, the reserve for other callers, the window and the policy
+for urgent faxes and deadlines.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows settings [OPTIONS]
+```
+
+**Options**:
+
+* `--lines N|trunk`: Lines you offer partners; trunk uses the trunk&#x27;s lines less the reserve.
+* `--reserve <int range>`: Lines kept for callers that don&#x27;t take part.  [0&lt;=x&lt;=500]
+* `--window MINUTES`: How long a window stays open.  [1&lt;=x&lt;=240]
+* `--urgent go|wait`: go: urgent faxes start without a window; wait: they wait too.
+* `--deadline go|wait`: go: a fax that would miss its send-by time starts without a window; wait: it still waits.
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners windows partner`
+
+Take part with a partner (on) or stop (off), and the document classes you refuse from it.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows partner [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization or id.  [required]
+* `on|off`: on: take part with this partner.  [required]
+
+**Options**:
+
+* `--refuse CLASS`: A document class you refuse from them; repeat it.
+* `--reason <str>`: The reason they see for a refusal.
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients partners discover`

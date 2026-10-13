@@ -494,3 +494,17 @@ def test_allowing_private_partners_keeps_the_original_address(tmp_path, monkeypa
     service, _, lookups = _guarded_service(tmp_path, allow_private=True, answers={})
     asyncio.run(service.http.request('POST', 'https://partner.lan/direct/verifications', json={}))
     assert _Capture.requests[-1][1] == 'https://partner.lan/direct/verifications' and lookups == []
+
+
+def test_the_code_fax_names_the_page_where_the_code_is_entered():
+    """The code a partner faxes names the console's current page for it (Recipients, then Partners, "Confirm a
+    code"), in characters the page's Helvetica can draw, and never the old Delivery routes menu."""
+    from io import BytesIO
+    from pypdf import PdfReader
+    peer = {'organization': 'North Clinic', 'phone_number': '+15550001001'}
+    document = DirectService.challenge_document(None, peer, '12345678', 'South Hospital')
+    text = ' '.join(page.extract_text() for page in PdfReader(BytesIO(document)).pages)
+    assert 'open Recipients, then Partners' in text
+    assert '"Confirm a code" for South Hospital' in text
+    assert 'Delivery routes' not in text and 'Direct partners' not in text
+    assert '→' not in text

@@ -19,7 +19,7 @@ Every command and option is listed in the [command line reference](../reference/
 | `faxbot recipients` | The numbers you fax: routes, sending together, partners and case packets |
 | `faxbot admin` | People and access, settings, checks, logs, profiles, backups and restarts |
 
-The earlier area names, such as `faxbot received`, `faxbot costs` and `faxbot system`, still work as aliases, as do renamed commands such as `faxbot costs savings`. They are hidden from help; use the current names above for new scripts. Older command forms such as `faxbot jobs list` no longer work. The [release notes](../release-notes.md#renamed-commands) list the new name for each.
+The earlier area names, such as `faxbot received`, `faxbot costs` and `faxbot system`, still work as aliases, as do renamed commands such as `faxbot costs savings`. They are hidden from help; use the current names above for new scripts. Older command forms such as `faxbot jobs list` no longer work. The [release notes](../release-notes.md#renamed-commands) list the current names.
 
 ## Install
 
@@ -34,7 +34,7 @@ The command line ships with the API in `api/app/cli`.
     python -m app.cli --help
     ```
 
-    `make cli ARGS="system health"` does the same from the repository root.
+    `make cli ARGS="admin health"` does the same from the repository root.
 
 - **As a `faxbot` command:** `pip install -e api` installs the `faxbot` script from the checkout. Install the requirements first.
 
@@ -60,7 +60,7 @@ A profile saves the address and key, so you do not need the variables:
 faxbot --url https://fax.example.com admin profiles save clinic
 ```
 
-You are asked for the API key without it being shown. Profiles live in `~/.config/faxbot/config.toml`, which only you can read (mode 600). Saving a profile makes it the default unless you add `--no-use`; choose another with `--profile NAME`, `FAXBOT_PROFILE`, or `faxbot system profiles use NAME`. `faxbot system profiles list` lists profiles without showing keys.
+You are asked for the API key without it being shown. Profiles live in `~/.config/faxbot/config.toml`, which only you can read (mode 600). Saving a profile makes it the default unless you add `--no-use`; choose another with `--profile NAME`, `FAXBOT_PROFILE`, or `faxbot admin profiles use NAME`. `faxbot admin profiles list` lists profiles without showing keys.
 
 The order is: `--url` and `--key`, then `FAXBOT_URL` and `FAXBOT_API_KEY`, then the profile, then `http://localhost:8080`. A saved key is only ever sent to the address saved with it: when `--url` or `FAXBOT_URL` names a different server, give that server's key with `--key` or `FAXBOT_API_KEY`.
 
@@ -189,4 +189,4 @@ To restore, stop Faxbot, point the environment at the installation's usual locat
 faxbot admin restore /backups/faxbot-2026-10-03
 ```
 
-Restore checks every file against the manifest first, and refuses a backup with changed, missing or added files. It does not replace an existing database, data folder or key unless you add `--force`. Restore to the same database and data folder locations the installation used: Faxbot refuses to start when its saved locations do not match. A PostgreSQL backup must be restored with the same Faxbot version that made it; a SQLite backup from an older version can be restored and then upgraded with `faxbot system migrate`.
+Restore checks every file against the manifest first, and refuses a backup with changed, missing or added files. It does not replace an existing database, data folder or key unless you add `--force`. Restore to the same database and data folder locations the installation used: Faxbot refuses to start when its saved locations do not match. A PostgreSQL backup must be restored with the same Faxbot version that made it; a SQLite backup from an older version can be restored and then upgraded with `faxbot admin migrate`.

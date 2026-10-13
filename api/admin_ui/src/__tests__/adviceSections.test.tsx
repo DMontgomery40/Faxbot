@@ -12,7 +12,8 @@ const usd = (amount: string) => ({ currency: 'USD', amount });
 describe('Costs → Recommendations: advice from history', () => {
   it('says where each section stands when there is nothing to suggest yet', async () => {
     render(<Recommendations client={client()} />);
-    expect((await screen.findByTestId('recommendations-empty')).textContent).toMatch(NO_RECOMMENDATIONS);
+    // The empty state appears only after every advice section has answered.
+    expect((await screen.findByTestId('recommendations-empty', {}, { timeout: 10000 })).textContent).toMatch(NO_RECOMMENDATIONS);
     expect((await screen.findByTestId('fax-marker-sentence')).textContent).toMatch(
       'Faxbot placed no calls over your carrier line in the last 90 days, so there is nothing to compare yet.');
     expect(screen.getByText('Mark calls as fax is on, and Faxbot leaves it on: this comparison never changes a setting.'))

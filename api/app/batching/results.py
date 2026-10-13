@@ -64,18 +64,23 @@ def _remove_image(revision, attempt_id):
 
 
 def _apply(delivery, outcomes, event_key):
+    from ..database_busy import retry_when_busy
     failures = 0
     for outcome in outcomes:
         try:
             _, profile = delivery.attempt_context(outcome.job_id, outcome.attempt_id)
             key = outcome.attempt_id + ':' + event_key
+            # A database that stays busy a moment never costs a fax its outcome; the event key makes a repeat a no-op.
             if outcome.status == 'unconfirmed':
-                delivery.record_unconfirmed(outcome.job_id, attempt_id=outcome.attempt_id, profile_id=profile.id,
-                                            event_key=key)
+                retry_when_busy(lambda: delivery.record_unconfirmed(
+                    outcome.job_id, attempt_id=outcome.attempt_id, profile_id=profile.id, event_key=key),
+                    what=f'the result of fax {outcome.job_id} in a shared call', idempotent=True)
             else:
-                delivery.observe(outcome.job_id, attempt_id=outcome.attempt_id, profile_id=profile.id,
-                                 provider_sid=outcome.job_id, status=outcome.status, event_key=key,
-                                 error=outcome.sentence, error_category=outcome.category)
+                retry_when_busy(lambda: delivery.observe(
+                    outcome.job_id, attempt_id=outcome.attempt_id, profile_id=profile.id,
+                    provider_sid=outcome.job_id, status=outcome.status, event_key=key,
+                    error=outcome.sentence, error_category=outcome.category),
+                    what=f'the result of fax {outcome.job_id} in a shared call', idempotent=True)
         except Exception:
             failures += 1  # The others still get their outcomes; this one is reconciled later.
     if failures:
