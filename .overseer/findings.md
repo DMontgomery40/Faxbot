@@ -293,7 +293,28 @@ No overreach, no test failures, no unsourced claims. All clean.
 
 **No big misses, no overreach, no unsourced claims.** Work is clean and on track.
 
-*Campaign window closing 5:30 PM MT (~3h 48min).*
+---
+
+## Heartbeat 8: Oct 13, 8:40 PM UTC (2:40 PM MT, ~2h 50min to campaign close)
+
+### BLOCKER FOUND
+
+**PR 107 (copiers/court):** MERGED at 8:13 PM UTC ✓ (merged after heartbeat 7)
+
+**PR 108 (SR140 gateway):** FAILED TEST
+- test-api-shard (4): FAILURE (41m2s)
+- test-api gate: FAILURE (downstream of shard failure)
+- All other shards passed (1, 2, 3, 5, 6, 7, 8; console/MCP/SDK all passed)
+- 1 of 8 shards broke; gate now blocks merge
+
+**Intervention:** PR 108 has a real test failure in shard 4. Needs investigation and fix before merge. No lead communication visible yet about the issue. Claude's lead should either:
+1. Debug shard 4 failure (likely a dependency on PR 107's new schema that didn't propagate correctly to shard 4's fixture)
+2. Understand if it's a flake or real blocker
+3. Rerun or fix and push new commit
+
+**No claim overreach,** but **broken harness = BIG MISS.** Should flag to lead now.
+
+*Campaign window closing 5:30 PM MT (~2h 50min).*
 
 ---
 
