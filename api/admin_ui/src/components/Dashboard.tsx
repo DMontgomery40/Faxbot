@@ -42,6 +42,8 @@ import {
   usedCapabilities,
 } from './overview/blocks';
 import { BlockFrame, DoingContent, EverydayContent, NextContent } from './overview/OverviewBlocks';
+import OutboundBoard from './overview/OutboundBoard';
+import { outboundPollerFor } from './overview/useOutboundNow';
 
 type CardData<T> = Loaded<T>;
 
@@ -149,6 +151,8 @@ interface DashboardProps {
   canReadSettings?: boolean;
   // The time now, in milliseconds; tests pass their own.
   clock?: () => number;
+  // Opens one sent fax's details in Sent, where an unknown result is settled.
+  onOpenSentFax?: (jobId: string) => void;
 }
 
 type ValueSources = {
@@ -161,7 +165,7 @@ type ValueSources = {
 const LOADING = { kind: 'loading' } as const;
 
 function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = false, onSendFax, canReadSettings = false,
-  clock = Date.now }: DashboardProps) {
+  clock = Date.now, onOpenSentFax }: DashboardProps) {
   const theme = useTheme();
   const warningTextColor = theme.palette.mode === 'light'
     ? darken(theme.palette.warning.light, 0.6)
@@ -227,7 +231,8 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
     }
   };
 
-  const refresh = () => { void fetchHealth(); void fetchDelivery(); void fetchValue(); };
+  // The outbound board keeps its own one poll; Refresh asks it to look again now.
+  const refresh = () => { void fetchHealth(); void fetchDelivery(); void fetchValue(); outboundPollerFor(client).refresh(); };
 
   useEffect(() => {
     refresh();
@@ -488,6 +493,9 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
           </Button>
         </Box>
       </Box>
+
+      {/* What is sending, waiting and needs you now: always first, above the blocks Needs attention may reorder. */}
+      <OutboundBoard client={client} onOpenSentFax={onOpenSentFax} onNavigate={onNavigate} />
 
       {ordered.map(([key, node]) => <Box key={key} data-block={key}>{node}</Box>)}
 

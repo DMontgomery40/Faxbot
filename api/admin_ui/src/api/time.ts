@@ -12,6 +12,12 @@ export function formatServerTime(value: string | null | undefined, fallback = '-
   return date ? date.toLocaleString() : fallback;
 }
 
+// The time of day of a server timestamp or a moment in milliseconds, in the reader's own form ("7:19:26 AM").
+export function formatServerClock(value: string | number | null | undefined, fallback = '-'): string {
+  const date = typeof value === 'number' ? new Date(value) : parseServerTime(value);
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString() : fallback;
+}
+
 export function toServerTime(date: Date): string {
   return date.toISOString().replace(/Z$/, '');
 }

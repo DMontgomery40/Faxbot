@@ -50,6 +50,7 @@ import { providerLabel } from '../providerLabels';
 import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { FaxRequestedByItem } from './delivery/Connectors';
+import { CompactOutboundBoard } from './overview/OutboundBoard';
 
 
 interface JobsListProps {
@@ -549,6 +550,11 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           </Button>
         </Box>
       </Box>
+
+      {/* What is sending, waiting and needs you now, from the board's one poll. Waiting shows the faxes ready to send;
+          Needs you shows the ones needing review, below the faxes your rules hold. */}
+      <CompactOutboundBoard client={client} onShowWaiting={() => changeStatus('ready')}
+        onShowNeedsYou={() => changeStatus('reconciliation_required')} />
 
       {heldOnly ? (
         <Box display="flex" alignItems="center" gap={2} flexWrap="wrap" sx={{ mb: 3 }}>
