@@ -1723,12 +1723,32 @@ def _peer(api, reference):
 
 
 @peers.command('list')
-def peers_list():
-    """List your partners."""
-    items = state.api().get('/direct/peers')['peers']
+def peers_list(partner: str = typer.Argument(None, metavar='[PARTNER]',
+                                             help='Show one partner in full: its organization, fax number or id.')):
+    """List your partners, or show one in full: what it accepts from you and which encoded pages its Faxbot reads."""
+    api = state.api()
+    if partner:
+        _peer_show(_peer(api, partner))
+        return
+    items = api.get('/direct/peers')['peers']
     state.out().result(items, lambda out: out.table(['Partner', 'Fax number', 'State', 'Status', 'Fax images', 'Verified'],
         [[item['organization'], item['fax_number'], item['state'], item['status'], item.get('fax_images_text') or '-',
           local_time(item.get('verified_at'), empty='-')] for item in items], empty='No partners.'))
+
+
+def _peer_show(peer):
+    """One partner in full, one sentence per line."""
+    def show(out):
+        out.line(f"{peer['organization']}, {peer['fax_number']}")
+        out.line(peer['status'])
+        for key in ('fax_images_text', 'notice_fax_text', 'peer_calls_text', 'payload_layouts_text',
+                    'certificate_text'):
+            if peer.get(key):
+                out.line(peer[key])
+        if peer.get('verified_at'):
+            out.line(f"Verified {local_time(peer['verified_at'])}; verification lasts until "
+                     f"{local_time(peer.get('expires_at'), empty='-')}.")
+    state.out().result(peer, show)
 
 
 @peers.command('fax-images')

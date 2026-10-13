@@ -676,12 +676,43 @@ async def _sinch_inbound(request, path_key):
 @router.post('/_internal/asterisk/inbound')
 def asterisk_inbound(request: Request, payload: dict = Body(...),
                      x_internal_secret: Optional[str] = Header(default=None)):
+    # A copier extension's fax to send on (copier_extensions.py) needs the internal secret, never receiving to be on:
+    # a send-only installation still takes its copiers' faxes. Only one Faxbot can't queue is filed as received.
+    if isinstance(payload.get('copier'), str) and re.fullmatch(r'[a-f0-9]{32}', payload['copier']):
+        _check_internal_secret(x_internal_secret)
+        queued = _copier_send(request, payload, settings.fax_data_dir)
+        if queued is not None:
+            return queued
     handover_account('/_internal/asterisk/inbound', payload)
+    _check_internal_secret(x_internal_secret)
+    return receive_handover(request, payload, settings.fax_data_dir)
+
+
+def _check_internal_secret(x_internal_secret):
     if not settings.asterisk_inbound_secret:
         raise HTTPException(401, detail='Internal secret not configured')
     if not hmac.compare_digest((x_internal_secret or '').encode(), settings.asterisk_inbound_secret.encode()):
         raise HTTPException(401, detail='Invalid internal secret')
-    return receive_handover(request, payload, settings.fax_data_dir)
+
+
+def _copier_send(request, payload, root):
+    """Queue a copier's fax as an outbound fax (``copier_extensions.queue``): the answer, or None when it can't be
+    queued, with why kept in ``payload`` for the received fax the pages are then filed as."""
+    from ..copier_extensions import HandoverRefused, queue
+    try:
+        tiff_path = inside_directory(str(payload.get('tiff_path') or ''), root)
+    except UnsafeSourcePath:
+        raise HTTPException(400, detail='TIFF path invalid') from None
+    if not os.path.isfile(tiff_path):
+        raise HTTPException(400, detail='TIFF path invalid')
+    try:
+        job_id = queue(request.app, payload, tiff_path)
+    except HandoverRefused as error:
+        logging.getLogger(__name__).warning('A copier fax was filed as received instead: %s', error)
+        payload['copier_refused'] = str(error)
+        return None
+    os.unlink(tiff_path)  # the queued fax keeps its own copy; nothing here is brought in again
+    return {'status': 'ok', 'queued': job_id}
 
 
 def received_number(value, country=None):
@@ -793,6 +824,10 @@ def receive_handover(request: Request, payload: dict, root: str):
         raise HTTPException(400, detail='TIFF path invalid') from None
     if not os.path.isfile(tiff_path):
         raise HTTPException(400, detail='TIFF path invalid')
+    # A copier extension's fax (copier_extensions.py): queued as an outbound fax from the copier's mailbox to the
+    # number it dialled. Only when that can't be done is it filed as a received fax, with why, so no page is lost.
+    # A copier fax that could not be queued (asterisk_inbound tried first) is filed here with why.
+    copier_refused = payload.get('copier_refused') if isinstance(payload.get('copier_refused'), str) else None
 
     def text(name, limit=64):
         value = payload.get(name)
@@ -824,6 +859,8 @@ def receive_handover(request: Request, payload: dict, root: str):
     peer = payload.get('peer')
     if isinstance(peer, str) and re.fullmatch(r'[a-f0-9]{32}', peer):
         report['peer_call'] = peer
+    if copier_refused:
+        report['copier'] = {'copier_id': payload['copier'], 'dialed': text('dialed', 32), 'reason': copier_refused}
     # A forwarded call (X4): where the network said it came from, checked when a receiving rule depends on it.
     diverted = received_diversion(payload, call, store.engine, received_at=source_time)
     if diverted is not None:

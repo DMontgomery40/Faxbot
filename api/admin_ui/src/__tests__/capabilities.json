@@ -1795,6 +1795,62 @@
               "command": "faxbot savings results"
             },
             "affected": null
+          },
+          {
+            "key": "court_profile",
+            "name": "California court profile",
+            "sentence": "Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 cover, the pages exactly as given and the transmission record), so a filing is not refused and sent again.",
+            "example": "A filing to a court whose local rule takes fax filing goes with the MC-005 cover sheet first, \"By fax\" on each document's first page and the pages exactly as given, and its transmission record is kept, so the court does not refuse it and you do not file it again.",
+            "outcome": "no_repeats",
+            "address": "savings/capabilities?key=court_profile",
+            "enabled": {
+              "on": true,
+              "label": "On",
+              "sentence": null
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 0,
+            "filters": [
+              "on"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              }
+            ],
+            "setting": {
+              "address": "delivery/rules",
+              "label": "Delivery setup → Routing rules",
+              "command": "faxbot delivery rules court attach mailbox {mailbox}"
+            },
+            "results": {
+              "address": "delivery/rules",
+              "label": "Delivery setup → Routing rules",
+              "command": "faxbot delivery rules court show"
+            },
+            "affected": null
           }
         ]
       },
@@ -2181,6 +2237,63 @@
               "address": "savings/opportunities?section=relays",
               "label": "Savings & optimization → Opportunities",
               "command": "faxbot recipients partners relay"
+            },
+            "affected": null
+          },
+          {
+            "key": "partner_windows",
+            "name": "Line windows and preflight with partners",
+            "sentence": "Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner grants, so calls to its busy lines queue instead of being retried.",
+            "example": "Two offices fax a hospital whose fax lines are often busy. Each office's Faxbot asks the hospital's Faxbot for a line window and starts its call then, instead of calling into a busy line and trying again.",
+            "outcome": "relationships",
+            "address": "savings/capabilities?key=partner_windows",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No partner is set to take part in line windows yet."
+            },
+            "works": {
+              "here": false,
+              "label": "Not here",
+              "sentence": "Needs a verified partner; you have none yet."
+            },
+            "evidence": {
+              "level": "built",
+              "label": "Sample data"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "experimental": false,
+            "ready": false,
+            "missing": 1,
+            "filters": [
+              "off",
+              "needs"
+            ],
+            "improvement": null,
+            "prerequisites": [
+              {
+                "kind": "partner",
+                "kind_label": "Partner",
+                "met": false,
+                "state": "missing",
+                "label": "Missing",
+                "sentence": "A verified partner: another organization that runs Faxbot, added from its partner card and confirmed with a check fax.",
+                "address": "recipients/partners",
+                "address_label": "Recipients → Partners"
+              }
+            ],
+            "setting": {
+              "address": "recipients/partners",
+              "label": "Recipients → Partners",
+              "command": null
+            },
+            "results": {
+              "address": "recipients/partners",
+              "label": "Recipients → Partners",
+              "command": "faxbot recipients partners list"
             },
             "affected": null
           },
@@ -3136,6 +3249,72 @@
             "affected": null
           },
           {
+            "key": "copier_extensions",
+            "name": "Copiers as extensions of Faxbot",
+            "sentence": "Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
+            "example": "A clinic keeps an analog line for each of its three copiers just for fax. Registered to Faxbot as extensions, the copiers fax through your trunk or fax service, and those lines can go.",
+            "outcome": "receiving",
+            "address": "savings/capabilities?key=copier_extensions",
+            "enabled": {
+              "on": false,
+              "label": "Off",
+              "sentence": "No copier is an extension of Faxbot yet."
+            },
+            "works": {
+              "here": true,
+              "label": "Works here",
+              "sentence": null
+            },
+            "evidence": {
+              "level": "lab",
+              "label": "Test lab"
+            },
+            "here": {
+              "used": 0,
+              "sentence": "Not used in 30 days"
+            },
+            "experimental": false,
+            "ready": true,
+            "missing": 0,
+            "filters": [
+              "off",
+              "ready"
+            ],
+            "improvement": {
+              "kind": "now",
+              "label": "You can do this now"
+            },
+            "prerequisites": [
+              {
+                "kind": "connection",
+                "kind_label": "Connection",
+                "met": true,
+                "state": "in_place",
+                "label": "In place",
+                "sentence": "A fax service account or your own trunk that sends faxes.",
+                "address": "delivery/connections",
+                "address_label": "Delivery setup → Providers & accounts"
+              },
+              {
+                "kind": "engine",
+                "kind_label": "Fax engine",
+                "met": true,
+                "state": "not_checked",
+                "label": "Not checked yet",
+                "sentence": "Faxbot's fax engine published on your local network (docker-compose.phone-system.yml), so a copier can register to it.",
+                "address": "delivery/trunk",
+                "address_label": "Delivery setup → Telnyx"
+              }
+            ],
+            "setting": {
+              "address": "delivery/trunk",
+              "label": "Delivery setup → Telnyx",
+              "command": "faxbot delivery providers trunk copier-extensions add {copier} {extension}"
+            },
+            "results": null,
+            "affected": null
+          },
+          {
             "key": "advice_line_inventory",
             "name": "Lines and carrier closing dates",
             "sentence": "Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
@@ -3663,6 +3842,9 @@
       "    Missing: Recipient's agreement",
       "    Not used in 30 days",
       "    Turn it on in Recipients.",
+      "  California court profile (court_profile): On · Works here · Sample data",
+      "    Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 cover, the pages exactly as given and the transmission record), so a filing is not refused and sent again.",
+      "    Not used in 30 days",
       "",
       "Work better with regular recipients",
       "Agree better ways to deliver with the organizations you fax most.",
@@ -3695,6 +3877,12 @@
       "    Needs a verified partner; you have none yet.",
       "    Missing: Partner",
       "    No suggestions now",
+      "  Line windows and preflight with partners (partner_windows): Off · Not here · Sample data",
+      "    Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner grants, so calls to its busy lines queue instead of being retried.",
+      "    No partner is set to take part in line windows yet.",
+      "    Needs a verified partner; you have none yet.",
+      "    Missing: Partner",
+      "    Not used in 30 days",
       "  Registered senders (advice_registered_senders): On · Works here · Sample data",
       "    Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
       "    No suggestions now",
@@ -3767,6 +3955,11 @@
       "    Needs your Telnyx key saved on the Telnyx page.",
       "    Missing: Setting",
       "    No suggestions now",
+      "  Copiers as extensions of Faxbot (copier_extensions): Off · Works here · Test lab · Ready to turn on",
+      "    Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
+      "    No copier is an extension of Faxbot yet.",
+      "    Not used in 30 days",
+      "    Turn it on in Delivery setup → Telnyx.",
       "  Lines and carrier closing dates (advice_line_inventory): On · Not here · Sample data",
       "    Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
       "    Needs your line inventory; none is imported yet.",
@@ -3867,6 +4060,14 @@
         "    Missing: Setting",
         "    Pressed keys on 1 call in 30 days",
         "    Turn it on in Recipients.",
+        "",
+        "Lower receiving and service costs",
+        "Keep only the numbers, lines and plans you need, and turn away junk calls.",
+        "  Copiers as extensions of Faxbot (copier_extensions): Off · Works here · Test lab · Ready to turn on",
+        "    Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
+        "    No copier is an extension of Faxbot yet.",
+        "    Not used in 30 days",
+        "    Turn it on in Delivery setup → Telnyx.",
         "",
         "On or Off: Whether it is switched on for your faxes.",
         "Works here or Not here: Whether this installation has what it needs, such as its own phone line or a partner.",
@@ -4083,6 +4284,7 @@
     "delivery/identity",
     "delivery/moves",
     "delivery/numbers",
+    "delivery/rules",
     "delivery/trunk",
     "faxes/sent",
     "recipients/list",

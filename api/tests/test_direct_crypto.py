@@ -103,5 +103,8 @@ def test_a_signed_capability_statement_with_a_key_this_release_does_not_know_sti
     assert parse_capabilities({**newer, 'own_engine': 1}) is None
     assert parse_capabilities({**newer, 'said_at': 'not a time'}) is None
     assert parse_capabilities({key: value for key, value in newer.items() if key != 'peer_calls'}) is None
-    # This release never sends a key of its own beyond the known ones.
+    # Without the encoded-page variants, a statement carries only keys every earlier release reads; the variants go
+    # only to a partner whose own statement announced them (test_partner_layouts.py).
     assert set(said) <= {'fax_images', 'peer_calls', 'said_at', 'own_engine'}
+    with_layouts = capabilities(fax_images=True, peer_calls=False, payload_layouts=['runs', 'grid'])
+    assert with_layouts['payload_layouts'] == ['grid', 'runs']

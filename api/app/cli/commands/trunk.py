@@ -537,5 +537,7 @@ from .teams_annex import teams_annex as _teams_annex  # noqa: E402
 trunk.command('teams-annex')(_teams_annex)
 from .teams_annex import copiers as _copiers  # noqa: E402
 trunk.command('copiers')(_copiers)
+from .copier_extensions import extensions as _copier_extensions  # noqa: E402
+trunk.add_typer(_copier_extensions, name='copier-extensions')
 from .teams_annex import caller_check as _caller_check  # noqa: E402
 trunk.add_typer(_caller_check, name='caller-check')

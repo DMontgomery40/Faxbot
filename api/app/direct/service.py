@@ -26,7 +26,7 @@ from ..routing.transport import DirectRefused
 from .addresses import PartnerAddressError, checked_address, pinned_request, resolve
 from .crypto import (FAX_IMAGE, FORM, RELAY, DirectProtocolError, capabilities, card, canonical, check_card,
                      check_signed, kind_of, open_document, parse_capabilities, parse_manifest, parse_own_engine,
-                     parse_timestamp, seal,
+                     parse_payload_layouts, parse_timestamp, seal,
                      signed, timestamp, verify)
 from . import faximage
 from .filing import DirectFiling
@@ -227,12 +227,20 @@ class DirectService:
         except IdentityUnavailable:
             raise DirectUnavailable() from None
 
-    def offered(self, peer):
+    def offered(self, peer, *, layouts=None):
         """What this installation accepts from ``peer``, as its signed answers tell the partner, and whether its own
-        Faxbot fax engine answers its number (the partner may then tune JBIG for it, pages/tuning.py)."""
+        Faxbot fax engine answers its number (the partner may then tune JBIG for it, pages/tuning.py).
+
+        The encoded-page variants this installation's decoder reads (``payload_layouts``) go only to a partner whose
+        own signed statement announced them (``layouts`` None), because a partner before the tolerant capability
+        parser refuses a statement with a key it does not know. ``layouts=True`` includes them anyway: the signed
+        answer to a partner's own statement, which a partner before that parser never reads."""
+        from ..codec.variants import DECODED
         from ..pages.tuning import own_engine_answers
+        if layouts is None:
+            layouts = peer.get('partner_payload_layouts') is not None
         return capabilities(fax_images=accepts_fax_images(peer), peer_calls=_flag(peer.get('receive_peer_calls')),
-                            own_engine=own_engine_answers(self.values()))
+                            own_engine=own_engine_answers(self.values()), payload_layouts=DECODED if layouts else None)
 
     def _refusal(self, identity, message_id, reason, text, peer=None):
         statement = {'type': 'refusal', 'message_id': message_id, 'reason': reason, 'detail': text}
@@ -250,7 +258,10 @@ class DirectService:
         if found is None:
             return False
         fax_images, peer_calls, said_at = found
-        kept = self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at)
+        from ..codec.variants import stored
+        layouts = parse_payload_layouts(statement.get('capabilities'))
+        kept = self.store.note_capabilities(peer['id'], fax_images=fax_images, peer_calls=peer_calls, said_at=said_at,
+                                            payload_layouts=None if layouts is None else stored(layouts))
         if kept:
             from ..pages.tuning import note_partner_engine
             note_partner_engine(self.store.engine, peer['id'], parse_own_engine(statement.get('capabilities')), said_at)
@@ -485,16 +496,25 @@ class DirectService:
         if found is None or abs(found[2] - now) > FRESHNESS:
             return refused
         self.heard(peer, body)
-        return 200, {'recorded': True}
+        # Our own signed statement back, with the encoded pages we read: a partner before this release reads only
+        # 'recorded' and ignores it; a newer one learns from it that it may tell us its own (``tell_partner``).
+        peer = self.store.get_peer(peer['id']) or peer
+        answer = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'],
+                                   'capabilities': self.offered(peer, layouts=True)})
+        return 200, {'recorded': True, 'statement': answer}
 
-    async def tell_partner(self, peer):
+    async def tell_partner(self, peer, *, again=True):
         """Tell a partner, signed, what we accept from it now: ``told``, ``unreachable`` or ``unsupported``.
 
         A partner that could not be reached learns it from the next receipt,
         refusal or status answer we sign for it, which carry the same statement.
         ``unsupported`` is a partner whose Faxbot has no fax images yet (it
         answers 404 for the statement), so it keeps sending original documents.
+
+        A partner whose signed answer shows, for the first time, that it reads ``payload_layouts`` is told once
+        more at once (``again``), now with the encoded pages we read.
         """
+        from ..codec.variants import stored
         identity = await run_lifecycle_step(lambda: self.identity(create=True))
         offered = self.offered(peer)
         envelope = signed(identity, {'type': 'capabilities', 'recipient': peer['signing_key'], 'capabilities': offered})
@@ -504,14 +524,41 @@ class DirectService:
             return 'unreachable'
         if status == 200 and isinstance(body, dict) and body.get('recorded') is True:
             outcome = 'told'
+            if 'statement' in body:
+                await run_lifecycle_step(lambda: self._hear_answer(identity, peer, body['statement']))
         elif status in (404, 405):
             outcome = 'unsupported'
         else:
             return 'unreachable'
-        # Told (or a Faxbot without fax images, which learns it from our answers once it has them): not asked again.
+        # Told (or a Faxbot without fax images, which learns it from our answers once it has them): not asked again,
+        # unless it has since announced the encoded pages it reads and was told without ours (``store.untold``).
+        told = offered.get('payload_layouts')
         await run_lifecycle_step(lambda: self.store.mark_told(peer['id'], fax_images=offered['fax_images'],
-                                                              peer_calls=offered['peer_calls']))
+                                                              peer_calls=offered['peer_calls'],
+                                                              layouts='' if told is None else stored(told)))
+        if again and outcome == 'told' and told is None:
+            fresh = await run_lifecycle_step(lambda: self.store.get_peer(peer['id']))
+            if fresh is not None and fresh['state'] != 'revoked' and fresh.get('partner_payload_layouts') is not None:
+                return await self.tell_partner(fresh, again=False)
         return outcome
+
+    def _hear_answer(self, identity, peer, envelope, *, now=None):
+        """Keep what a partner's signed answer to our statement says it accepts from us (``note``). An answer that
+        does not check is logged and kept nowhere; our statement was still recorded."""
+        now = now or utcnow()
+        try:
+            answer = check_signed(envelope, peer['signing_key'])
+            if (set(answer) != {'type', 'signer', 'recipient', 'capabilities'} or answer['type'] != 'capabilities'
+                    or answer['recipient'] != identity.signing_key):
+                raise DirectProtocolError('malformed', 'The answer is not a capability statement for us.')
+            found = parse_capabilities(answer['capabilities'])
+            if found is None or abs(found[2] - now) > FRESHNESS:
+                raise DirectProtocolError('malformed', 'The answer carries no current capabilities.')
+        except (DirectProtocolError, UnicodeEncodeError) as error:
+            logging.getLogger(__name__).warning("A partner's signed answer about what it accepts could not be "
+                                                'checked (%s); it is not kept.', getattr(error, 'reason', 'malformed'))
+            return False
+        return self.heard(peer, answer)
 
     async def tell_partners(self):
         """Tell every enrolled partner not told yet what we accept from it: after an upgrade, an enrollment or a

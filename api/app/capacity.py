@@ -50,6 +50,9 @@ DEFAULT_CALLS_TO_A_NUMBER = 1
 NO_CALL_ROUTES = ('local', 'direct')
 HOLDING = ('preparing', 'submitting', 'in_progress', 'reconciliation_required')
 TRUNK = 'sip'
+# A fax waiting for a partner's answer or window is looked at again this soon: the answer arrives in the
+# background (direct/admission.py), and the claim reads only what is stored.
+ADMISSION_RECHECK = timedelta(seconds=5)
 # Least recently served sender: their attempts over this window are compared.
 SERVED_WINDOW = timedelta(days=1)
 
@@ -571,6 +574,12 @@ class Capacity:
                 if full and self._waits_for_room(connection, job_id, values, full, limited) is not None:
                     skip.append(job_id)
                     continue
+                # A partner's line window or preflight answer it waits for (direct/admission.py); it stays ready.
+                admitted = self.admission_wait(connection, values, job_id, now)
+                if admitted is not None:
+                    self.held[job_id] = min(admitted.until, now + ADMISSION_RECHECK)
+                    skip.append(job_id)
+                    continue
                 decision, _ = self.decision(connection, values, [job_id], now, memo)
                 if decision is not None and decision.hold_until is not None:
                     self.held[job_id] = min(decision.hold_until, now + RECHECK)
@@ -582,6 +591,13 @@ class Capacity:
             if len(ids) < self.CANDIDATES:
                 break
         return self._delivery(connection, deliveries, later) if later else None
+
+    @staticmethod
+    def admission_wait(connection, values, job_id, now):
+        """``admission.Wait`` while a fax to a partner you take part with waits for its preflight answer or line
+        window, else None (direct/admission.py)."""
+        from .direct.admission import hold_on
+        return hold_on(connection, job_id, values, now)
 
     @staticmethod
     def _delivery(connection, deliveries, job_id):
@@ -640,6 +656,9 @@ class Capacity:
             held = self.schedule_sentence(connection, values, job_id, row, now)
             if held:
                 return held
+            admitted = self.admission_wait(connection, values, job_id, now)
+            if admitted is not None:
+                return admitted.sentence
             if not self.number_has_room(connection, row['to_number'], now):
                 holds = self.holds(now).subquery()
                 blocking = connection.execute(sa.select(holds.c.state, holds.c.submitted_at).where(

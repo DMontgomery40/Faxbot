@@ -45,6 +45,8 @@ import { routeCostSentence } from './delivery/shared';
 import { countPdfPages } from './common/pdfPages';
 import ProviderRulesSendFields, { NO_SEND_OPTIONS, sendBody, type SendChoices, type SendOptions } from './ProviderRulesSendFields';
 import { CoverInHeaderChoice } from './HeaderNotice';
+import { CourtSendFields, courtJson } from './CourtProfile';
+import type { CourtDetails } from '../api/courtTypes';
 import { rulesApiFor } from './ProviderRulesApi';
 
 interface SendFaxProps {
@@ -192,6 +194,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [urgent, setUrgent] = useState(false);
   // The first page is a cover sheet whose notice is printed at the top of every page instead (header_notice.py).
   const [coverInHeader, setCoverInHeader] = useState(false);
+  // A court fax (California court profile): the case details, or null for an ordinary fax.
+  const [court, setCourt] = useState<CourtDetails | null>(null);
   const [sendOptions, setSendOptions] = useState<SendOptions>(NO_SEND_OPTIONS);
   // Optional: the time it must be sent by, in this browser's local time (a datetime-local value).
   const [sendBy, setSendBy] = useState('');
@@ -430,7 +434,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       const response = await client.sendFax(intent.destination, intent.file,
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
           byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
-          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine });
+          sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine,
+          court: court ? courtJson(court) : undefined });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -573,7 +578,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                     disabled={!configReady || loading} />}
                   label="Urgent: send before other faxes waiting for the same line" />
                 <CoverInHeaderChoice client={client} mailbox={sendOptions.mailbox} checked={coverInHeader}
-                  onChange={setCoverInHeader} disabled={!configReady || loading} />
+                  onChange={setCoverInHeader} disabled={!configReady || loading || court !== null} />
+                <CourtSendFields value={court} onChange={setCourt} disabled={!configReady || loading} />
 
                 {sendChoices && (
                   <ProviderRulesSendFields value={sendOptions} onChange={setSendOptions} disabled={!configReady || loading}

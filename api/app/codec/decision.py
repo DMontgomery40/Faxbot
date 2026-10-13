@@ -42,6 +42,9 @@ from dataclasses import dataclass
 import hashlib
 
 RUN_LIMITS = (7, 15, 63)
+# The partner's Faxbot announced which encoded pages it reads, and none of those fits this route.
+NOT_READ = ("Your partner's Faxbot does not read the encoded pages this route could carry, so the fax goes as normal "
+            'pages.')
 # The capacity profiles tried for a recipient whose decoder reads them: the shortest call and the fewest pages.
 CAPACITY_PROFILES = ('time', 'pages')
 
@@ -191,8 +194,13 @@ def unchosen_measured(frames, memo=None):
 def choose(document, *, route_key, destination, pages_original, page_bits_original, exact_raster,
            ecm_and_fine_seen, provider_renders, fec='medium', style='dense', secret=None, picture=None,
            resolution='fine', encoder=None, tools=None, usable=None, frames_original=None, capacity=False,
-           memo=None, receiving=None):
+           memo=None, receiving=None, allowed=None):
     """The Choice for one fax. ``tools`` is (predict, Shape); tests pass a fake.
+
+    ``allowed`` (a set of ``variants`` tokens, or None for no limit): the encoded-page variants the recipient's
+    decoder reads. For an enrolled partner it is what the partner announced in its signed capabilities, or the
+    variants every Faxbot decodes when it did not say (``variants.allowed_for_partner``); a candidate outside it is
+    never made or priced.
 
     ``receiving`` (``routing.predict.ReceivingLeg``): what the receiving end bills, added to each candidate's price
     when the owner pays it too (one of your own trunk numbers); its sentence goes in the explanation either way.
@@ -230,6 +238,11 @@ def choose(document, *, route_key, destination, pages_original, page_bits_origin
                 + candidates
     else:
         candidates = [dict(layout='grid', sturdy=provider_renders)]
+    if allowed is not None:
+        from .variants import token
+        candidates = [options for options in candidates if token(options['layout'], options.get('profile')) in allowed]
+        if not candidates:
+            return Choice(False, NOT_READ, pages_original=pages_original, original=original)
     best = None
     for options in candidates:
         drawn = picture if options['layout'] == 'picture' else None

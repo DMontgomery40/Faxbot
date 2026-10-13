@@ -149,6 +149,9 @@ export default function DirectPartners({ client, partners, canWrite, onChanged }
       {partner.certificate_text && (
         <Typography variant="body2" color="error">{partner.certificate_text}</Typography>
       )}
+      {partner.payload_layouts_text && (
+        <Typography variant="body2" color="text.secondary">{partner.payload_layouts_text}</Typography>
+      )}
       {tunnelCalls(partner)}
     </Box>
   );

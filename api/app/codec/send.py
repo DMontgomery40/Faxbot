@@ -56,6 +56,32 @@ def setting_for(engine, number, recipient=None):
     return setting
 
 
+def partner_variants(engine, number, *, decoder='any'):
+    """The encoded-page variants an enrolled, verified partner at ``number`` may be sent (``variants``), or None when
+    ``number`` is not a verified partner's: what its newest signed statement announced, or the variants every Faxbot
+    decodes when it did not say. A record that cannot be read raises: the partner's word is never skipped."""
+    from ..direct.store import DirectStore
+    from .variants import allowed_for_partner
+    peer = DirectStore(engine).verified_peer_for(number)
+    if peer is None:
+        return None
+    return allowed_for_partner(announced_variants(peer), decoder=decoder or 'any')
+
+
+def announced_variants(peer):
+    """What a partner's kept statement announced (``direct_peers.partner_payload_layouts``, canonical JSON), or None
+    when its newest statement did not say."""
+    import json
+    from ..direct.crypto import parse_payload_layouts
+    kept = peer.get('partner_payload_layouts')
+    if kept is None:
+        return None
+    try:
+        return parse_payload_layouts({'payload_layouts': json.loads(kept)})
+    except ValueError:
+        return None
+
+
 def _ecm_and_fine_seen(engine, number):
     """True when the last negotiated outbound call to ``number`` used ECM at fine resolution or better."""
     try:
@@ -103,12 +129,16 @@ def attempt_pages(engine, setting, *, frames, page_bits, number, route, pdf_path
     document = codec.Document(Path(pdf_path).read_bytes(), 'application/pdf', 'document.pdf')
     # With a shared key the visible picture is a plain pattern: the first page would show through.
     picture = frames[0].convert('L') if setting['style'] == 'picture' and not secret and frames else None
+    # An enrolled partner gets only the variants its Faxbot announced (or every version's, when it did not say).
+    allowed = partner_variants(engine, number, decoder=setting.get('decoder'))
+    capacity = (setting.get('decoder') == 'capacity' if allowed is None
+                else any(item.startswith('capacity/') for item in allowed))
     choice = decision.choose(
         document, route_key=route, destination=number, pages_original=len(frames), page_bits_original=page_bits,
         exact_raster=exact_raster, ecm_and_fine_seen=exact_raster and _ecm_and_fine_seen(engine, number),
         provider_renders=not exact_raster, fec=setting['fec'], style=setting['style'], secret=secret,
         picture=picture, resolution=resolution, tools=tools, usable=usable, frames_original=frames,
-        capacity=setting.get('decoder') == 'capacity', memo=memo, receiving=receiving)
+        capacity=capacity, memo=memo, receiving=receiving, allowed=allowed)
     if not choice.use:
         log.info('Encoded pages were not chosen for this attempt: %s', choice.sentence)
         return None

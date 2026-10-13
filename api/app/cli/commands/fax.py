@@ -212,6 +212,11 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                                    'of every page instead and leave that page out. Needs a header '
                                                    "notice ('faxbot delivery identity notice set'); a recipient that "
                                                    'needs a cover sheet still gets it.'),
+         court: Path = typer.Option(None, '--court', metavar='DETAILS.json', exists=True, dir_okay=False,
+                                    help='Send under the California court profile, with the case details in this '
+                                         'JSON file: purpose file or serve, county, case_number, plaintiff, '
+                                         'defendant, documents (title and pages) and sender. Filing adds the MC-005 '
+                                         'cover sheet; the pages otherwise go exactly as given.'),
          engine: str = typer.Option('auto', '--engine', metavar='ENGINE',
                                     help='For a call over your SIP trunk, the fax engine that places it: auto '
                                          '(Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax '
@@ -238,6 +243,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         data['labels'] = list(label)
     if by:
         data['send_by'] = by
+    if court is not None:
+        data['court'] = court.read_text(encoding='utf-8')
     if engine != 'auto':
         data['engine'] = engine
     if cover_in_header:
@@ -465,6 +472,12 @@ def _sent_detail_sentences(api, fax_id):
         pass
     try:
         found += (api.get('/routing/stations/faxes/' + segment(fax_id)) or {}).get('sentences') or []
+    except CliError:
+        pass
+    from .court import sentences as court_sentences  # a court fax: its case, the profile and its timing
+    found += court_sentences(api, fax_id)
+    try:  # a fax to a partner you take part with: its preflight answer (never a receipt) and its line window
+        found += (api.get('/direct/admission/faxes/' + segment(fax_id)) or {}).get('sentences') or []
     except CliError:
         pass
     return found

@@ -76,7 +76,7 @@ def record_first_send_warning(engine, job_id, answer):
 
 
 def accept_generated_fax(runtime, access, actor, revision, *, to_number, document, file_name, pages, job_id=None,
-                         case_packet=False, after=None):
+                         case_packet=False, after=None, mailbox=None):
     """Write the document beside other fax artifacts and accept it; returns the fax id.
 
     ``job_id`` (32 hex characters) lets a caller name the fax in advance, so it
@@ -86,6 +86,8 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
     its route envelope exactly as for POST /fax (``routing.rules_acceptance``);
     ``case_packet`` marks a case packet for them. ``after(connection, now, job_id)`` runs last in the same
     acceptance transaction (a route test pins its account there, ``route_families_http``); raising refuses the fax.
+    ``mailbox``: the mailbox the fax is sent from, which an administrator chose for this sender beforehand (a copier
+    extension, copier_extensions.py), so its sending rules and reply number apply.
     """
     profile_id = revision.profile_id('outbound')
     if profile_id is None:
@@ -121,7 +123,7 @@ def accept_generated_fax(runtime, access, actor, revision, *, to_number, documen
         from .rules_acceptance import recorder_for
         rules = recorder_for(runtime.manager.store.engine, revision, actor, job_id=job_id, destination=to_number,
                              pages=pages, document_path=pdf, case_packet=case_packet,
-                             control=getattr(access, 'control', None))
+                             control=None if mailbox else getattr(access, 'control', None), mailbox=mailbox)
         also = rules if after is None else (lambda connection, at: (rules(connection, at), after(connection, at, job_id)))
         access.outbound.accept(actor, revision, {
             'id': job_id, 'to_number': to_number, 'file_name': file_name, 'tiff_path': tiff, 'status': 'queued',

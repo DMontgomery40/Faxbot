@@ -108,6 +108,7 @@ class DirectStore:
                     challenge_expires_at=None, challenge_failures=0, verified_at=None, expires_at=None,
                     receive_fax_images=None, receive_peer_calls=None, partner_receives_fax_images=None,
                     partner_peer_calls=None, partner_said_at=None, peer_call_address=None, told_partner_at=None,
+                    partner_payload_layouts=None, told_payload_layouts=None,
                     version=existing['version'] + 1, updated_at=now))
                 return self.get_peer(existing['id'], connection)
             identity = uuid4().hex
@@ -188,24 +189,35 @@ class DirectStore:
             return self.get_peer(peer_id, connection)
 
     def untold(self, *, limit=50):
-        """Enrolled partners that still have to be told, signed, what we accept from them."""
+        """Enrolled partners that still have to be told, signed, what we accept from them: never told since a change,
+        not told by this release yet (``told_payload_layouts`` NULL), or a partner that announced which encoded pages
+        it reads and was last told something other than what this release reads (``codec.variants.DECODED``)."""
+        from ..codec.variants import DECODED, stored
+        layouts = stored(DECODED)
+        peers = self.peers
         with read_connection(self.engine) as connection:
-            return [dict(row) for row in connection.execute(sa.select(self.peers).where(
-                self.peers.c.state != 'revoked', self.peers.c.told_partner_at.is_(None))
-                .order_by(self.peers.c.created_at, self.peers.c.id).limit(limit)).mappings()]
+            due = sa.or_(peers.c.told_partner_at.is_(None), peers.c.told_payload_layouts.is_(None),
+                         sa.and_(peers.c.partner_payload_layouts.is_not(None), peers.c.told_payload_layouts != layouts))
+            return [dict(row) for row in connection.execute(
+                sa.select(peers).where(peers.c.state != 'revoked', due)
+                .order_by(peers.c.created_at, peers.c.id).limit(limit)).mappings()]
 
-    def mark_told(self, peer_id, *, fax_images, peer_calls):
-        """The partner has our statement; kept only if our choices are still the ones it was told."""
+    def mark_told(self, peer_id, *, fax_images, peer_calls, layouts=''):
+        """The partner has our statement; kept only if our choices are still the ones it was told. ``layouts``: the
+        encoded-page variants it was told we read (stored JSON), or '' when the statement went without them."""
         with write_transaction(self.engine) as connection:
             peer = self.get_peer(peer_id, connection)
             if (peer is None or accepts_fax_images(peer) != fax_images
                     or (peer['receive_peer_calls'] is not None and int(peer['receive_peer_calls']) == 1) != peer_calls):
                 return False
-            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(told_partner_at=utcnow()))
+            connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
+                told_partner_at=utcnow(), told_payload_layouts=layouts))
             return True
 
-    def note_capabilities(self, peer_id, *, fax_images, peer_calls, said_at):
+    def note_capabilities(self, peer_id, *, fax_images, peer_calls, said_at, payload_layouts=None):
         """Keep what a partner said it accepts from us, unless a newer signed statement is already kept.
+        ``payload_layouts``: the encoded-page variants it said its decoder reads (stored JSON), or None when that
+        statement did not say, which leaves it the variants every Faxbot decodes.
 
         Signed times have one-second resolution; of two statements signed in
         the same second, the one that arrives later is kept.
@@ -216,7 +228,8 @@ class DirectStore:
                 return False
             connection.execute(self.peers.update().where(self.peers.c.id == peer_id).values(
                 partner_receives_fax_images=1 if fax_images else None, partner_peer_calls=1 if peer_calls else None,
-                partner_said_at=said_at, version=peer['version'] + 1, updated_at=utcnow()))
+                partner_said_at=said_at, partner_payload_layouts=payload_layouts, version=peer['version'] + 1,
+                updated_at=utcnow()))
             return True
 
     def _notices(self):

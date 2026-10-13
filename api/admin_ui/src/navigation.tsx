@@ -104,6 +104,7 @@ import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import TuneIcon from '@mui/icons-material/Tune';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import Capabilities from './components/capabilities/Capabilities';
+import { CourtProfilePanel } from './components/CourtProfile';
 
 export type AreaId = 'overview' | 'savings' | 'faxes' | 'delivery' | 'recipients' | 'admin';
 
@@ -458,9 +459,15 @@ export const NAVIGATION: NavArea[] = [
           </>) },
       // Which account sends each fax: the organization's rules, sites, lists and workflows.
       { id: 'rules', label: 'Routing rules', icon: <AltRouteIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
-          currency={currency(ctx)} onNavigate={ctx.navigate}
-          loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} /> },
+        render: (ctx) => (
+          <>
+            <ProviderRules api={rulesApiFor(ctx.client)} canWrite={ctx.permissions.has('settings:write')}
+              currency={currency(ctx)} onNavigate={ctx.navigate}
+              loadNumberRules={ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage') ? numberRules(ctx.client) : undefined} />
+            {/* The California court profile, attached to a mailbox or a routing rule (court/). */}
+            <CourtProfilePanel client={ctx.client} canWrite={ctx.permissions.has('settings:write')} />
+          </>
+        ) },
       providerPage('humblefax', 'HumbleFax', 'humblefax', 'humblefax'),
       providerPage('efax', 'eFax', 'efax', 'efax'),
       providerPage('phaxio', 'Phaxio', 'phaxio', 'phaxio'),

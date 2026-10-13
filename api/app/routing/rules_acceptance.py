@@ -56,6 +56,8 @@ class Prepared:
     bound_key: str | None
     # Where Faxbot may dial (``guard.preview``): the dialed number's class, read before the lock.
     dialing: object = None
+    # A fax under the California court profile (``court/acceptance.py``): fax calls only, to the number given.
+    court: bool = False
 
 
 def sender_of(actor):
@@ -164,8 +166,9 @@ def send_choices(engine=None, *, connection=None):
 
 
 def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbox=None, workflow=None, labels=(),
-            urgent=False, by_call=False, case_packet=False, document_sha256=None, direct_ready=None):
-    """Read the facts and decide a preview, before the acceptance lock."""
+            urgent=False, by_call=False, case_packet=False, document_sha256=None, direct_ready=None, court=False):
+    """Read the facts and decide a preview, before the acceptance lock. ``court``: the fax goes under the California
+    court profile, so its route keeps only fax calls to the number given (``court.acceptance.narrow``)."""
     from ..accounts import default_sending_key, sending_accounts
     values = revision.values
     accounts = sending_accounts(values)
@@ -180,14 +183,17 @@ def prepare(engine, revision, *, actor, destination, pages, size_bytes=0, mailbo
     # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
     from .sender_pins import narrow_for
     decision = narrow_for(engine, decision, facts)
+    if court:
+        from ..court.acceptance import narrow as court_narrow
+        decision = court_narrow(decision, accounts)
     from . import guard
     dialing = guard.preview(engine, values, destination=facts.destination, decision=decision, accounts=accounts)
     return Prepared(facts, accounts, decision, store, document_sha256, getattr(values, 'time_zone', '') or '',
-                    default_sending_key(values), dialing)
+                    default_sending_key(values), dialing, court=bool(court))
 
 
 def recorder_for(engine, revision, actor, *, job_id, destination, pages, document_path=None, case_packet=False,
-                 control=None):
+                 control=None, mailbox=None):
     """Facts, preview and the acceptance-transaction recorder in one call, for faxes Faxbot accepts itself.
 
     Email and folder connectors (``intake/sources/send.py``) and generated documents (case packets, challenge
@@ -204,7 +210,7 @@ def recorder_for(engine, revision, actor, *, job_id, destination, pages, documen
         except OSError:
             size = 0
     plan = prepare(engine, revision, actor=actor, destination=destination, pages=pages, size_bytes=size,
-                   case_packet=case_packet, document_sha256=digest)
+                   case_packet=case_packet, document_sha256=digest, mailbox=mailbox)
     return recorder(plan, job_id, actor, control=control)
 
 
@@ -235,6 +241,10 @@ def recorder(prepared, job_id, actor, *, control=None):
         # A recipient that recognises faxes by their sending number: only its registered trunk (sender_pins, N17).
         from .sender_pins import narrow_on
         decision = narrow_on(connection, decision, facts)
+        if prepared.court:
+            # A court fax: fax calls only, by your sending accounts, to the number given (court/acceptance.py).
+            from ..court.acceptance import narrow as court_narrow
+            decision = court_narrow(decision, prepared.accounts)
         principal = getattr(actor, 'principal_id', None)
         decision_id = prepared.store.record_decision_on(connection, job_id=job_id, facts=facts, decision=decision,
                                                         actor_principal_id=principal, now=now)

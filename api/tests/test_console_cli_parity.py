@@ -64,6 +64,8 @@ NOT_OPERATOR = {
     ('GET', '/direct/deliveries/{message_id}'): 'partner protocol: a signed status request',
     ('POST', '/direct/verifications'): 'partner protocol: a signed code confirmation',
     ('POST', '/direct/capabilities'): 'partner protocol: a signed statement of what the partner accepts',
+    ('POST', '/direct/admission/grants'): 'partner protocol: a signed request for a line window',
+    ('POST', '/direct/preflight'): 'partner protocol: a signed preflight about a document class',
     ('GET', '/forms/partner/holdings'): 'partner protocol: a signed question about which forms are held',
     ('GET', '/forms/partner/forms/{address}'): 'partner protocol: a signed fetch of one form by address',
     ('POST', '/direct/relay/statements'): 'partner protocol: a signed relay offer, acceptance, withdrawal, price or receipt',

@@ -357,6 +357,30 @@ def keys_after_answer(here, now):
                   'call', 'calls')
 
 
+def court_profile(here, now):
+    return _acted(_rows(here, 'court_sends', 'created_at', _since(here, now)), here, 'Used on')
+
+
+def partner_windows(here, now):
+    # Faxes whose call waited for a line window a partner granted, or that asked the partner's Faxbot first
+    # (direct/admission.py, direct/preflight.py): each fax once, whichever it used.
+    since, jobs = _since(here, now), set()
+    for table, direction, extra in (('admission_grants', 'received', ('outcome', 'granted')),
+                                    ('preflight_answers', 'asked', None)):
+        found, tests = _where(table, ('created_at', '>=', since), ('direction', direction),
+                              *((extra,) if extra else ()), extra=('job_id',))
+        with read_connection(here.engine) as connection:
+            jobs.update(connection.scalars(sa.select(sa.distinct(found.c.job_id)).select_from(found).where(
+                *tests, found.c.job_id.is_not(None))))
+    return _acted(len(jobs), here, 'Used on')
+
+
+def copier_extensions(here, now):
+    # Received faxes sent on to a copier's extension; the faxes copiers send are ordinary faxes in Sent.
+    return _acted(_rows(here, 'copier_forwards', 'created_at', _since(here, now), ('state', 'sent')), here,
+                  'Sent on', 'received fax', 'received faxes')
+
+
 COUNTERS = {
     'charge_checks': charge_checks,
     'advice_sending': advice_sending,
@@ -392,6 +416,10 @@ COUNTERS = {
     'answer_cap': answer_cap,
     'station_check': station_check,
     'keys_after_answer': keys_after_answer,
+    'court_profile': court_profile,
+    'partner_windows': partner_windows,
+    # No part on Savings either; the catalogue's line says the faxes it sent on are in Received details.
+    'copier_extensions': copier_extensions,
 }
 
 

@@ -68,6 +68,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--patient-given-name NAME`: The patient&#x27;s given name, for a recipient that confirms the patient.
 * `--patient-birth-date DAY`: The patient&#x27;s birth date, such as 1980-04-30, for a recipient that confirms the patient.
 * `--cover-in-header`: The first page is a cover sheet: print its notice in the header of every page instead and leave that page out. Needs a header notice (&#x27;faxbot delivery identity notice set&#x27;); a recipient that needs a cover sheet still gets it.
+* `--court DETAILS.json`: Send under the California court profile, with the case details in this JSON file: purpose file or serve, county, case_number, plaintiff, defendant, documents (title and pages) and sender. Filing adds the MC-005 cover sheet; the pages otherwise go exactly as given.
 * `--engine ENGINE`: For a call over your SIP trunk, the fax engine that places it: auto (Faxbot chooses), builtin (the built-in engine), or hylafax (the SSL Fax engine when it is running, else the built-in engine).  [default: auto]
 * `--help`: Show this message and exit.
 
@@ -4361,6 +4362,7 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `telnyx`: Telnyx settings for fax over IP (T.38) on...
 * `send-only`: Numbers you show on faxes you send but...
 * `analog-line`: An analog phone line through a gateway:...
+* `copier-extensions`: Copiers that register to Faxbot as their...
 * `caller-check`: The caller-verification stamp on received...
 
 ##### `faxbot delivery providers trunk status`
@@ -4950,6 +4952,100 @@ $ faxbot delivery providers trunk analog-line import [OPTIONS] {FILE}
 * `--source URL`: The address of the page the list came from.
 * `--help`: Show this message and exit.
 
+##### `faxbot delivery providers trunk copier-extensions`
+
+Copiers that register to Faxbot as their own extension: their faxes go out through your routes and rules, and faxes for their numbers go on to them.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List your copier extensions and where...
+* `add`: Add a copier extension.
+* `remove`: Take a copier extension away and revoke...
+* `received`: Say whether a received fax went on to its...
+
+###### `faxbot delivery providers trunk copier-extensions list`
+
+List your copier extensions and where their faxes go.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions add`
+
+Add a copier extension. Its password is printed once: enter it on the copier, then press Apply on the trunk
+page (faxbot delivery providers trunk apply) so the fax engine loads it.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions add [OPTIONS] {name} {extension}
+```
+
+**Arguments**:
+
+* `name`: The copier, such as &quot;Front desk Ricoh&quot;.  [required]
+* `extension`: Its extension, 3 to 6 digits, such as 601.  [required]
+
+**Options**:
+
+* `--mailbox <str>`: The mailbox its faxes are sent from, by ID.
+* `--number <str>`: A fax number whose faxes go on to it; repeat it.
+* `--receive copier|intake`: copier: faxes to its numbers go on to it; intake: they stay in Received.  [default: copier]
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions remove`
+
+Take a copier extension away and revoke its sending key.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions remove [OPTIONS] {copier}
+```
+
+**Arguments**:
+
+* `copier`: The copier, by its extension, name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk copier-extensions received`
+
+Say whether a received fax went on to its copier, or why it stays in Received.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk copier-extensions received [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: A received fax&#x27;s ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ##### `faxbot delivery providers trunk caller-check`
 
 The caller-verification stamp on received faxes: what the network asserted about who called, and your registered senders.
@@ -5532,6 +5628,7 @@ $ faxbot delivery rules [OPTIONS] COMMAND [ARGS]...
 * `regions`: Regions: named sets of countries and...
 * `sites`: Sites: the places your organization sends...
 * `workflows`: Workflows: named kinds of work, such as...
+* `court`: The California court profile: faxes filed...
 
 #### `faxbot delivery rules list`
 
@@ -6234,6 +6331,135 @@ $ faxbot delivery rules workflows remove [OPTIONS] {KEY}
 * `--scope SCOPE`: Whose rules: organization (the default), mailbox:NAME or workflow:KEY.  [default: organization]
 * `--help`: Show this message and exit.
 
+#### `faxbot delivery rules court`
+
+The California court profile: faxes filed with a court or served on a party go exactly as given, with the MC-005 cover sheet when filing, and keep their transmission record.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show where the court profile applies, what...
+* `attach`: Send every fax from a mailbox, or whose...
+* `detach`: Stop sending a mailbox&#x27;s faxes, or a...
+* `courts`: List which California superior courts take...
+* `deadline`: Extend a deadline that runs from service...
+* `record`: Save a court fax&#x27;s transmission record,...
+
+##### `faxbot delivery rules court show`
+
+Show where the court profile applies, what it does, and the rules and holidays it rests on.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court show [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court attach`
+
+Send every fax from a mailbox, or whose route a routing rule chooses, under the court profile. Their senders
+must then give the case details.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court attach [OPTIONS] {mailbox|rule} {name}
+```
+
+**Arguments**:
+
+* `mailbox|rule`: Attach it to a mailbox or a routing rule.  [required]
+* `name`: The mailbox or routing rule, by its name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court detach`
+
+Stop sending a mailbox&#x27;s faxes, or a routing rule&#x27;s, under the court profile.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court detach [OPTIONS] {mailbox|rule} {name}
+```
+
+**Arguments**:
+
+* `mailbox|rule`: A mailbox or a routing rule.  [required]
+* `name`: The mailbox or routing rule, by its name or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court courts`
+
+List which California superior courts take direct fax filing, which stopped and which refuse it, each with
+its source.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court courts [OPTIONS]
+```
+
+**Options**:
+
+* `--status accepts|stopped|does_not_accept`: Only courts in this state.
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court deadline`
+
+Extend a deadline that runs from service by fax by two court days (rule 2.306(d)), counting court holidays.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court deadline [OPTIONS] {DAY}
+```
+
+**Arguments**:
+
+* `DAY`: The deadline you worked out from a fax service date, such as 2026-11-20.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery rules court record`
+
+Save a court fax&#x27;s transmission record, with a draft proof of transmission or of service, as a PDF.
+
+**Usage**:
+
+```console
+$ faxbot delivery rules court record [OPTIONS] {fax_id}
+```
+
+**Arguments**:
+
+* `fax_id`: Fax ID of a court fax.  [required]
+
+**Options**:
+
+* `-o, --output <str>`: Save the PDF here; the default is transmission-record-&lt;fax&gt;.pdf.
+* `--help`: Show this message and exit.
+
 ## `faxbot recipients`
 
 Fax numbers you send to: routing, batching several faxes into one call, and direct delivery partners.
@@ -6890,7 +7116,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `card`: Show this installation&#x27;s partner card.
-* `list`: List your partners.
+* `list`: List your partners, or show one in full:...
 * `add`: Add a partner from their card.
 * `challenge`: Fax the partner a one-page code to enter...
 * `confirm`: Enter the code from a partner&#x27;s check fax...
@@ -6909,6 +7135,7 @@ $ faxbot recipients partners [OPTIONS] COMMAND [ARGS]...
 * `may-introduce`: Set whether a partner may be introduced to...
 * `relay`: Partner relays: a partner office sends...
 * `send-once`: Send once: a partner&#x27;s intake files one...
+* `windows`: Line windows and preflight with partners...
 * `discover`: Recipients that run Faxbot, found from...
 * `publish`: Publish your fax number in a directory you...
 
@@ -6929,13 +7156,17 @@ $ faxbot recipients partners card [OPTIONS]
 
 #### `faxbot recipients partners list`
 
-List your partners.
+List your partners, or show one in full: what it accepts from you and which encoded pages its Faxbot reads.
 
 **Usage**:
 
 ```console
-$ faxbot recipients partners list [OPTIONS]
+$ faxbot recipients partners list [OPTIONS] [PARTNER]
 ```
+
+**Arguments**:
+
+* `[PARTNER]`: Show one partner in full: its organization, fax number or id.
 
 **Options**:
 
@@ -7525,6 +7756,85 @@ $ faxbot recipients partners send-once end [OPTIONS] {partner}
 **Options**:
 
 * `--direction yours|theirs`: Which agreement to end when there are both: &#x27;yours&#x27; (their intake files your faxes) or &#x27;theirs&#x27; (yours files theirs).
+* `--help`: Show this message and exit.
+
+#### `faxbot recipients partners windows`
+
+Line windows and preflight with partners that take part: ask before paying to send by phone, and queue for a partner&#x27;s limited lines instead of retrying into a busy one.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Show your receiving settings and, for each...
+* `settings`: Set what you offer partners that take...
+* `partner`: Take part with a partner (on) or stop...
+
+##### `faxbot recipients partners windows show`
+
+Show your receiving settings and, for each partner, whether you take part, its windows and its answers.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows show [OPTIONS] [PARTNER]
+```
+
+**Arguments**:
+
+* `[PARTNER]`: Show one partner only.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners windows settings`
+
+Set what you offer partners that take part: lines, the reserve for other callers, the window and the policy
+for urgent faxes and deadlines.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows settings [OPTIONS]
+```
+
+**Options**:
+
+* `--lines N|trunk`: Lines you offer partners; trunk uses the trunk&#x27;s lines less the reserve.
+* `--reserve <int range>`: Lines kept for callers that don&#x27;t take part.  [0&lt;=x&lt;=500]
+* `--window MINUTES`: How long a window stays open.  [1&lt;=x&lt;=240]
+* `--urgent go|wait`: go: urgent faxes start without a window; wait: they wait too.
+* `--deadline go|wait`: go: a fax that would miss its send-by time starts without a window; wait: it still waits.
+* `--help`: Show this message and exit.
+
+##### `faxbot recipients partners windows partner`
+
+Take part with a partner (on) or stop (off), and the document classes you refuse from it.
+
+**Usage**:
+
+```console
+$ faxbot recipients partners windows partner [OPTIONS] {partner} {on|off}
+```
+
+**Arguments**:
+
+* `partner`: Partner organization or id.  [required]
+* `on|off`: on: take part with this partner.  [required]
+
+**Options**:
+
+* `--refuse CLASS`: A document class you refuse from them; repeat it.
+* `--reason <str>`: The reason they see for a refusal.
 * `--help`: Show this message and exit.
 
 #### `faxbot recipients partners discover`

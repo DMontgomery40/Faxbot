@@ -421,6 +421,10 @@ def evaluate(engine, values, account, claim, job, pdf, tiff, *, rule=None, seal=
         return None
     from ..routing.sender_pins import pinned
     binding = pinned(engine, job.get('recipient_number') or job.get('to_number'))
+    if not binding:
+        # A court fax goes exactly as accepted (court/acceptance.py, California Rules of Court 2.304 and 2.306).
+        from ..court.store import send_for as court_send
+        binding = court_send(engine, job_id) is not None
     if binding and not compare:
         return None  # a registered-sender recipient's copy is binding: the pages go as they are (sender_pins, N17)
     route, mode = account.provider_id, account.mode
