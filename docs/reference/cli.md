@@ -27,7 +27,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `send`: Send a fax.
-* `status`: Show where a sent fax is now.
+* `status`: Show what is sending now, what waits and...
 * `overview`: Show the Overview: what Faxbot is doing...
 * `savings`: What Faxbot can do to save money here and...
 * `faxes`: Faxes received, sent and expected, forms...
@@ -73,20 +73,21 @@ $ faxbot send [OPTIONS] {to} {file}
 
 ## `faxbot status`
 
-Show where a sent fax is now.
+Show what is sending now, what waits and why, what needs you, and how today went; or where one sent fax is.
 
 **Usage**:
 
 ```console
-$ faxbot status [OPTIONS] {fax_id}
+$ faxbot status [OPTIONS] [FAX_ID]
 ```
 
 **Arguments**:
 
-* `fax_id`: Fax ID shown when the fax was sent.  [required]
+* `[FAX_ID]`: A sent fax: show where that fax is now. Leave it out to see every fax that is sending or waiting.
 
 **Options**:
 
+* `--watch`: Show the board again every 5 seconds until you press Ctrl-C.
 * `--help`: Show this message and exit.
 
 ## `faxbot overview`
