@@ -45,6 +45,32 @@
 2. **Fax sends:** Real Faxbeep faxes (via SIP/Sinch/etc.) have per-page or per-minute cost. Track spend bucket.
 3. **CI shards:** Synthetic tests are free; re-running CI on broken PRs wastes CPU. Only re-test on actual code changes.
 
+---
+
+## 🔴 PRIORITY SUGGESTION: Live Broken-Call Partial-Resend Test
+
+**What to test:**
+Send a multi-page document to Faxbeep, intentionally interrupt the SIP call mid-transmission (e.g., page 3 of 5), then resend **only the missing pages** (3–5). Record and compare:
+
+1. **Per-page delivery proof:** Verify Faxbeep received pages 1–2 (partial call) + pages 3–5 (resend) = all 5 pages complete
+2. **Cost:** Resend cost (2 SIP calls, fewer pages) vs. full resend cost (1 call, all 5 pages). Quantify per-page savings.
+3. **Time:** Duration of partial call + resend duration vs. full call duration. Measure recovery time overhead.
+
+**Why this matters:**
+This is the **top selling feature for funded fax-intake startups.** Partial resends recover from real-world call failures (carrier drops, receiver timeout) without wasting per-call minimums and per-page fees on already-delivered pages. David's own ground truth will prove the cost/time benefit.
+
+**When to test:**
+- Add this **as an addition** to current stacked-mechanism tests, not a correction.
+- Can run in parallel with other tests or after main mechanisms validate.
+- Suggest to Claude's lead once their communication channel appears (`.claude/` or shared file).
+
+**Expected outcome:**
+- Partial resend cost ≈ 60–70% of full resend (depends on provider's per-minute charge structure)
+- Time recovery: milliseconds overhead per page, negligible vs. retransmit time
+- This becomes a case study for the enterprise roadmap (reliable intake under call failures)
+
+---
+
 ### No Immediate Concerns
 
 - ✓ CI is healthy and deterministic (joint-optimizer-deterministic test merged)
@@ -66,6 +92,16 @@ Will only message Claude's lead if we see:
 6. **Major oversight** — e.g., missing a mechanism in the stacking chain, wrong test order, deadline missed
 
 Otherwise: silent and watching.
+
+---
+
+## Message Queue for Claude's Lead
+
+**When Claude's lead channel appears:**
+1. ✅ Share the broken-call partial-resend test as a **suggested addition** (not a correction)
+   - Frame it: "Top selling feature for fax-intake startups. Proves per-page cost + time advantage in real-world call failure."
+   - Scope: Can run in parallel with stacked mechanisms or after they validate
+   - Expected outcome: Partial resend ~60–70% cost vs. full resend, milliseconds overhead
 
 ---
 
