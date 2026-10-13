@@ -655,6 +655,7 @@ $ faxbot savings opportunities renewal [OPTIONS]
 * `--parallel NUMBERS`: The numbers Faxbot runs beside it (comma-separated).
 * `--parallel-since DATE`: When the parallel run began.
 * `--remove`: Withdraw the system&#x27;s renewal.
+* `--per-channel AMOUNT`: The price of one channel on the quote, such as 387.48: the channels the peak never needed are valued at it instead of the renewal&#x27;s average. Used for this page only.
 * `--help`: Show this message and exit.
 
 #### `faxbot savings opportunities import-routing`

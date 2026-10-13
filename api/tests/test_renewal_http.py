@@ -43,6 +43,21 @@ def test_import_calls_record_a_renewal_and_read_its_page(client):
     page = saved.json()['pages'][0]
     assert page['renewal']['state'] == 'review' and page['channels']['unneeded_value'] == '$16,722.94'
     assert page['parallel']['numbers'][0]['number'] == '+13035550100'
+    assert page['channels']['priced_by'] == 'average'
+    # A line-item price from the quote (Texas DMV paid $387.48 a FoIP channel, PO 14970) values the 5 unused channels
+    # at 5 x $387.48, not at the renewal's average; it is read for this page only.
+    priced = client.get('/routing/renewals', headers=ADMIN, params={'per_channel': '387.48'}).json()['pages'][0]
+    assert (priced['channels']['per_channel'], priced['channels']['unneeded_value'],
+            priced['channels']['average_per_channel'], priced['channels']['priced_by']) == (
+        '$387.48', '$1,937.40', '$3,344.59', 'line_item')
+    assert 'At $387.48 a channel, the price you entered, those 5 channels are $1,937.40.' in ' '.join(priced['sentences'])
+    assert {item['id'] for item in priced['reference']} >= {'txdmv-rightfax', 'sr140-cdw'}
+    assert client.get('/routing/renewals', headers=ADMIN).json()['pages'][0]['channels']['unneeded_value'] == \
+        '$16,722.94'
+    for bad in ('abc', '0', '-5', '387.4801234'):
+        refused = client.get('/routing/renewals', headers=ADMIN, params={'per_channel': bad})
+        assert refused.status_code == 400 and refused.json()['detail'] == (
+            'Write the price per channel as an amount, such as 387.48.'), bad
     routed = client.post('/routing/renewals/routes', headers=ADMIN, data={'system': 'RightFax at HQ'},
                          files={'file': ('routing.csv', ROUTES.encode(), 'text/csv')})
     assert routed.status_code == 200 and routed.json()['imported'] == 3 and routed.json()['skipped_count'] == 1
@@ -94,6 +109,9 @@ def test_the_command_line_imports_records_and_shows_the_page(renewal_cli, tmp_pa
     said = ' '.join(saved.stdout.split())
     assert 'RightFax 22.2 renews on' in said and '$26,756.71' in said
     assert 'For comparison: Cuyahoga County' in said
+    priced = renewal_cli('costs', 'recommendations', 'renewal', '--per-channel', '387.48')
+    assert priced.exit_code == 0, priced.stdout + priced.stderr
+    assert 'those 5 channels are $1,937.40.' in ' '.join(priced.stdout.split())
     routed = renewal_cli('costs', 'recommendations', 'import-routing', routing, '--system', 'RightFax at HQ')
     assert routed.exit_code == 0 and 'Imported 3 numbers.' in routed.stdout and 'Grace' in routed.stdout
     shown = renewal_cli.json('costs', 'recommendations', 'channels')
