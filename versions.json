@@ -342,14 +342,19 @@
   {
     "version": "64bd0612d2429859e9c8d8c41c8f5a418c16345d",
     "title": "64bd0612d2429859e9c8d8c41c8f5a418c16345d",
-    "aliases": [
-      "latest"
-    ]
+    "aliases": []
   },
   {
     "version": "056bf57397730c83a031051eb81d1e87ae1af4b0",
     "title": "056bf57397730c83a031051eb81d1e87ae1af4b0",
     "aliases": []
+  },
+  {
+    "version": "54a01d98c5cff32876f631aff96fd151546b3689",
+    "title": "54a01d98c5cff32876f631aff96fd151546b3689",
+    "aliases": [
+      "latest"
+    ]
   },
   {
     "version": "50c55e0",
