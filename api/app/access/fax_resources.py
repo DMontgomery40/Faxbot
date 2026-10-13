@@ -90,6 +90,29 @@ class FaxResources:
         return sa.select(resources.c.fax_job_id).where(resources.c.id.in_(visible),
             resources.c.kind == 'outbound', resources.c.fax_job_id.is_not(None))
 
+    def outbound_read_scope_on(self, connection, actor, *, now):
+        """(containers, faxes): the personal and legacy containers whose every outbound fax this actor may read
+        (``fax:read``), and the outbound fax resources it may read outside them, on this locked Connection.
+
+        The same predicate as ``visible_outbound_ids_on``, asked once of each container instead of each fax: a
+        grant at a container (or the installation) covers every fax filed under it, now or later, so a reader can
+        apply the scope to faxes accepted afterwards until the access policy changes (``policy_version``).
+        """
+        source = self.control._current_source_on(connection, actor, now)
+        if source.reset_required:
+            raise FaxAccessError('reset_required')
+        self.store.require_lock_on(connection)
+        resource, parent, tree, valid = self.control._resource_query()
+        containers = frozenset(connection.execute(sa.select(resource.c.id).select_from(tree).where(
+            valid, resource.c.kind.in_(['personal', 'legacy']),
+            self.control._authority_predicate(actor, source, 'fax:read', resource, parent))).scalars())
+        visible = self.control.visible_resource_ids_on(connection, actor, 'fax:read', 'outbound', now=now)
+        resources = self.tables['access_resources']
+        outside = sa.select(resources.c.id).where(resources.c.id.in_(visible))
+        if containers:
+            outside = outside.where(resources.c.parent_id.not_in(sorted(containers)))
+        return containers, frozenset(connection.execute(outside).scalars())
+
     def require_outbound_on(self, connection, actor, job_id, permission, *, now):
         """Permit the exact action, or distinguish hidden from visible denial.
 
