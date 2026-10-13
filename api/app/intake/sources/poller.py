@@ -247,7 +247,9 @@ class Poller:
             return record(text.TOO_LARGE_SEND.format(limit=values.max_file_size_mb), state='failed',
                           reply_to=reply_to)
         try:
+            # The address tag, then RightFax's /fax=NUMBER/ addressing in an address or display name, then the subject.
             number = (mail.tagged_number(message, settings['address'], values.fax_default_country)
+                      or mail.rightfax_number(message, settings['address'], values.fax_default_country)
                       or mail.subject_number(message.subject, values.fax_default_country))
         except ValueError as error:
             reason = (text.TWO_NUMBERS if str(error) == 'two numbers'
