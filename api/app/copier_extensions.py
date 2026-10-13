@@ -65,7 +65,9 @@ def digest(username, password):
 
 
 def _table(bind):
-    return sa.Table('copier_extensions', sa.MetaData(), autoload_with=bind)
+    # Reflected once per engine (routing.database.reflect): the Capabilities page reads this on every visit.
+    from .routing.database import reflect
+    return reflect(bind, ('copier_extensions',))['copier_extensions']
 
 
 def copiers(engine, *, active_only=True):
