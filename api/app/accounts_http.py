@@ -262,7 +262,7 @@ async def create_telnyx_fax_application(key: str, body: FaxApplicationInput, req
                                                       'could not save its ID. Enter that ID on the Telnyx Fax API '
                                                       'page.') from None
     sentence = (f'Faxbot created the Fax Application "{name}" in your Telnyx account and saved its ID. Before you '
-                'send, assign your fax number and an outbound voice profile to it in Telnyx.')
+                'send, assign an outbound voice profile to it in Telnyx.')
     return {**state, 'created': {'key': key, 'connection_id': created, 'sentence': sentence}}
 
 

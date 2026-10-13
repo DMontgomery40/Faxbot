@@ -125,6 +125,9 @@ PROVIDER_ORDER = ('sip', 'humblefax', 'sinch', 'phaxio', 'telnyx_fax', 'efax', '
 # Paths where each provider's received-fax notifications arrive; an extra account's is this plus /<key>.
 WEBHOOK_PATHS = {'sinch': '/sinch-inbound', 'phaxio': '/phaxio-inbound', 'efax': '/efax-inbound'}
 POLLING = ('humblefax', 'efax')
+# Required settings Faxbot can fill in itself after the account is added: a Telnyx Fax API account's Fax Application,
+# which `POST /admin/providers/accounts/{key}/telnyx-fax-application` creates in the account's Telnyx account.
+FAXBOT_CREATES = frozenset({('telnyx_fax', 'connection_id')})
 HEALTH_STATES = ('ready', 'not_set_up', 'off', 'waiting', 'failing', 'spending_limit')
 # Failing: at least this many of the last attempts, and most of them, failed.
 FAILING_WINDOW, FAILING_MINIMUM = 10, 3
@@ -1069,6 +1072,6 @@ def provider_kinds(values, provider_ids):
         kinds.append({'id': provider, 'label': provider_name(provider, values) if provider != 'sip' else 'Carrier trunk',
                       'supports_inbound': supports_inbound(provider),
                       'fields': [{'name': name, 'label': label, 'secret': is_secret(value_field), 'required': required,
-                                  'help': help_text}
+                                  'help': help_text, 'faxbot_creates': (provider, name) in FAXBOT_CREATES}
                                  for name, value_field, label, required, help_text in FIELDS[provider]]})
     return kinds

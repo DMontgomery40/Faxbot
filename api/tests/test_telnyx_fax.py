@@ -3,6 +3,7 @@
 Every request goes to an in-process fake (httpx.MockTransport); nothing reaches Telnyx.
 """
 import base64
+from datetime import datetime, timedelta
 import json
 import time
 
@@ -273,10 +274,24 @@ async def test_a_telnyx_fax_is_sent_once_and_confirmed_by_polling(installation, 
         store.bind_provider_identity(job, expected_version=view['version'], provider_sid=SID.upper(), actor='admin')
     else:
         assert store.get(job)['state'] == 'in_progress'
-    await OutboundPoller(store).refresh(job)
+    # The background poller finds the fax by itself: polling is how a Telnyx fax finishes without notices.
+    with configuration.engine.begin() as connection:
+        connection.execute(store.deliveries.update().where(store.deliveries.c.id == job).values(
+            next_poll_at=datetime.utcnow() - timedelta(seconds=1)))
+    assert await OutboundPoller(store).step() is True
     assert store.get(job)['state'] == 'success'
     await worker.step()
     assert [request.method for request in fake.requests] == ['POST', 'POST', 'GET']
+    # Before sending, route choice prices it from the card; a sent fax's own cost waits for its call length,
+    # which Telnyx's fax record does not give, so it is unknown, never $0.
+    from api.app.routing.capture import CostRecorder
+    from api.app.routing.store import RouteStore
+    from api.tests.test_sinch_route import fax_cost
+    routes = RouteStore(configuration.engine)
+    routes.replace_cards([rate('telnyx_fax', page='0.007', minute='0.005', minimum=60)])
+    CostRecorder(routes).step()
+    state, summary = fax_cost(configuration, routes, job)
+    assert state != 'priced' and '$0.00' not in summary, (state, summary)
 
 
 @pytest.mark.asyncio

@@ -200,10 +200,13 @@ def accounts_add(provider: str = typer.Option(..., '--provider', help='The provi
     kind = provider_kind(current, provider)
     settings = plain_settings(kind, setting)
     missing = [field['label'] for field in kind.get('fields') or []
-               if field.get('required') and not field.get('secret') and field['name'] not in settings]
+               if field.get('required') and not field.get('secret') and field['name'] not in settings
+               and not field.get('faxbot_creates')]
     if missing:
         raise CliError(f"{kind['label']} needs these settings too: {', '.join(missing)}. Give each with --setting "
                        'NAME=VALUE.')
+    created_later = [field['label'] for field in kind.get('fields') or []
+                     if field.get('faxbot_creates') and field['name'] not in settings]
     if receives and not kind.get('supports_inbound'):
         raise CliError(f"{kind['label']} cannot receive faxes, so leave out --receives.")
     body = {
@@ -218,6 +221,9 @@ def accounts_add(provider: str = typer.Option(..., '--provider', help='The provi
 
     def human(out):
         out.line(f"Account {body['label']} added.")
+        if created_later:
+            out.line(f"To create its {', '.join(created_later)}, run faxbot delivery providers accounts "
+                     f"fax-application {key}.")
         if added and added.get('webhook_address'):
             out.line(f"Give {kind['label']} this address for received faxes: {added['webhook_address']}")
     state.out().result(result, human)
