@@ -681,6 +681,8 @@ const consoleHandlers = [
     accounts: [], providers: [], sites: [] })),
   // Several trunks (WP-T): send-only numbers on the trunk page, and trunk advice under Recommendations.
   http.get('/admin/sip/send-only', () => json({ numbers: [], advice: [], quiet_days: 90 })),
+  http.get('/admin/sip/fax-servers', () => json({ servers: [], where_text: '' })),
+  http.get('/admin/sip/fax-servers/calls', () => json({ calls: [] })),
   // Number advice (BG): placement, site advice, your NPI record and the check before a first fax.
   http.get('/routing/recommendations/numbers', () => json({ days: 30, estimate: true, state: 'no_numbers',
     sentence: 'Faxbot knows none of your fax numbers yet, so there is nothing to place.', numbers: [], accounts: [],

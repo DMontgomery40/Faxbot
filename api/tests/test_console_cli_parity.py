@@ -53,6 +53,8 @@ NOT_OPERATOR = {
     ('GET', '/sinch-inbound/{key}'): 'public reachability probe, for one more Sinch account',
     ('GET', '/efax-inbound/{key}'): 'public reachability probe, for one more eFax account',
     ('POST', '/_internal/asterisk/inbound'): 'internal: the fax engine hands over a received fax',
+    ('POST', '/_internal/asterisk/fax-server/admit'): "internal: the fax engine asks before answering a fax server's call",
+    ('POST', '/_internal/asterisk/fax-server/handover'): "internal: the fax engine hands over a fax server's fax",
     ('POST', '/_internal/freeswitch/outbound_result'): 'internal: FreeSWITCH reports a send result',
     ('POST', '/_internal/hylafax/polled'): 'internal: the fax engine reports collection of a held fax',
     ('POST', '/_internal/hylafax/result'): 'internal: the SSL Fax engine reports a send result',
