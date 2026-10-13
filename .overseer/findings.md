@@ -229,7 +229,33 @@ All work is clean:
 
 Nothing to intervene on. If FAXBEEP tests were supposed to happen, they may be deferred or canceled. No big misses visible.
 
-**Next heartbeat:** 5:50 PM (past campaign end time, final check).
+---
+
+## Heartbeat 5: Oct 13, 1:50 PM UTC (11:50 AM MT, ~5:40 PM MT campaign end approaching)
+
+### What Changed Since 11:03 AM MT
+
+**PRs:**
+- PR 107 (copiers/court): Still OPEN; CI all passing, no blockers, no reviews
+- PR 108 (SR140): Still OPEN; waiting on PR 107
+
+**Main branch:** No new merges since 4:15 PM MT. Three PRs merged today (106, 104, 105).
+
+**Communication:** `.claude/` folder still empty. No lead messages.
+
+### Assessment
+
+**M3a wave stable.** Three features shipped (RightFax sidecar, outbound board, Telnyx). Two remaining PRs (copiers/court + SR140 gateway) are CI-clean and dependency-ordered. No rush or pressure visible; standard merge cadence.
+
+**No overreach, no big misses.** All facts sourced, test scope honest, claims match evidence.
+
+**Campaign closing at 5:30 PM MT** (40 min from this heartbeat). If no lead communication arrives by then, wave is complete as-is, or lead is coordinating offline.
+
+**No interventions needed.**
+
+---
+
+*Ready for final heartbeat or campaign close.*
 
 ---
 
