@@ -466,6 +466,7 @@ export const NAVIGATION: NavArea[] = [
       providerPage('sinch', 'Sinch', 'sinch', 'sinch'),
       providerPage('signalwire', 'SignalWire', 'signalwire', 'signalwire'),
       providerPage('documo', 'Documo', 'documo', 'documo'),
+      providerPage('telnyx-fax', 'Telnyx Fax API', 'telnyx_fax', 'telnyx_fax'),
       // Titled by its carrier or phone system ("Telnyx", "Avaya IP Office").
       { id: 'trunk', label: 'Carrier trunk', labelFor: () => providerLabel('sip'), icon: <SettingsPhoneIcon />, provider: 'sip',
         group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, render: (ctx) => settingsPage(['trunk'], providerLabel('sip'))(ctx) },

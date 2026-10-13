@@ -21,7 +21,7 @@ const BILLING = [
   { value: 60, label: 'Whole minutes' },
 ];
 
-const PROVIDERS = ['sip', 'signalwire', 'phaxio', 'sinch', 'documo', 'humblefax', 'efax']
+const PROVIDERS = ['sip', 'signalwire', 'phaxio', 'sinch', 'telnyx_fax', 'documo', 'humblefax', 'efax']
   .map((value) => ({ value, label: providerLabel(value) }));
 
 // Today in the viewer's own time zone, as YYYY-MM-DD (not the UTC date).

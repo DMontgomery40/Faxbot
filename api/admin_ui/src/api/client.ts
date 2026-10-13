@@ -1873,6 +1873,18 @@ class AdminAPIClient {
     return this.json(`/routing/destinations/${id(number)}/toll-free/suggestions${query(search)}`);
   }
 
+  // The provider account list (Delivery setup → Providers & accounts); its generation guards each change.
+  async getProviderAccounts(): Promise<{ generation: number }> {
+    return this.json('/admin/providers/accounts');
+  }
+
+  // Create a Fax Application in the account's Telnyx account and save its ID on the account.
+  async createTelnyxFaxApplication(key: string, expectedGeneration: number)
+    : Promise<{ generation: number; created?: { key?: string; connection_id?: string; sentence?: string } }> {
+    return this.json(`/admin/providers/accounts/${id(key)}/telnyx-fax-application`, { method: 'POST',
+      body: JSON.stringify({ expected_generation: expectedGeneration }) });
+  }
+
   // Direct messages and FHIR (Delivery setup → Providers & accounts): the HISP account and FHIR clients; secrets are write-only.
   async getDigitalAccounts(): Promise<DigitalAccountsState> {
     return this.json('/digital/accounts');

@@ -29,7 +29,7 @@ const titles = (groups: ReturnType<typeof providerChoices>) => groups.map((group
 describe('Every provider choice, by name and grouped', () => {
   it('lists fax services, carriers (local ones first) and phone systems, and no longer offers FreeSWITCH', () => {
     expect(titles(providerChoices(TRUNK, 'GB', false))).toEqual([
-      ['Fax services', ['HumbleFax', 'eFax', 'Phaxio', 'Sinch Fax', 'SignalWire Fax', 'Documo']],
+      ['Fax services', ['HumbleFax', 'eFax', 'Phaxio', 'Sinch Fax', 'Telnyx Fax API', 'SignalWire Fax', 'Documo']],
       ['Your own fax line through a carrier', ['Gamma — UK', 'BT One Voice — UK', 'Telnyx', 'Telstra SIP Connect — Australia', 'Another carrier']],
       ['Your phone system', ['Avaya IP Office', 'Avaya Aura']],
     ]);

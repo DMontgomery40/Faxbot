@@ -249,7 +249,7 @@ def test_the_providers_failed_try_billing_changes_the_decision():
 
 def test_every_billing_entry_is_sourced_and_dated():
     for route, entry in schedule.FAILED_TRIES.items():
-        assert entry.read_on == '2026-10-07' and entry.note.endswith('.'), route
+        assert entry.read_on in ('2026-10-07', '2026-10-13') and entry.note.endswith('.'), route
         assert {entry.busy, entry.no_answer, entry.no_fax} <= {'bills', 'free', 'unknown'}, route
         assert route == 'sip' or entry.sources, route
 

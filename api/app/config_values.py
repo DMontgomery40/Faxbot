@@ -216,6 +216,14 @@ class ConfigurationValues(BaseModel):
     documo_api_key: str = Field('', validation_alias='DOCUMO_API_KEY', repr=False, json_schema_extra={'secret': True})
     documo_base_url: str = Field('https://api.documo.com', validation_alias='DOCUMO_BASE_URL')
     documo_use_sandbox: bool = Field(False, validation_alias='DOCUMO_SANDBOX')
+    # Telnyx Programmable Fax (the Fax API, billed by the page; telnyx_fax_service.py): the Fax Application that
+    # sends (its id is the fax's connection_id), the number faxes come from, and the public key Telnyx signs its fax
+    # notifications with. Its API key is telnyx_api_key above, the same key a Telnyx trunk uses.
+    telnyx_fax_connection_id: str = Field('', validation_alias='TELNYX_FAX_CONNECTION_ID',
+                                          pattern=r'^[A-Za-z0-9_-]{0,64}$')
+    telnyx_fax_from_number: str = Field('', validation_alias='TELNYX_FAX_FROM_NUMBER',
+                                        pattern=r'^(?:\+[1-9][0-9]{6,14})?$')
+    telnyx_fax_public_key: str = Field('', validation_alias='TELNYX_FAX_PUBLIC_KEY', pattern=r'^[A-Za-z0-9+/=]{0,200}$')
     humblefax_access_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_ACCESS_KEY', 'HUMBLEFAX_API_ACCESS_KEY'),
                                       repr=False, json_schema_extra={'secret': True})
     humblefax_secret_key: str = Field('', validation_alias=AliasChoices('HUMBLEFAX_SECRET_KEY', 'HUMBLEFAX_API_SECRET_KEY'),

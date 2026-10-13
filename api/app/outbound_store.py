@@ -57,7 +57,8 @@ def _failure_sentences():
     from .documo_service import FAILURE_SENTENCES as DOCUMO_SENTENCES
     from .humblefax_service import FAILURE_SENTENCES
     from .sinch_service import FAILURE_SENTENCES as SINCH_SENTENCES
-    return FAILURE_SENTENCES | SINCH_SENTENCES | DOCUMO_SENTENCES
+    from .telnyx_fax_service import FAILURE_SENTENCES as TELNYX_SENTENCES
+    return FAILURE_SENTENCES | SINCH_SENTENCES | DOCUMO_SENTENCES | TELNYX_SENTENCES
 
 
 def _safe_event_details(encoded):
@@ -368,7 +369,8 @@ class OutboundStore:
         configuration = profile.configuration
         manifest = configuration.manifest
         supported = ('get_status' in manifest.get('actions', {}) if manifest is not None
-                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'humblefax', 'efax'})
+                     else configuration.provider_id in {'phaxio', 'signalwire', 'sinch', 'documo', 'telnyx_fax',
+                                                         'humblefax', 'efax'})
         if not supported:
             if manifest is None and configuration.provider_id in {'sip', 'freeswitch'}:
                 # Faxbot's own trunk or engine placed the call: there is no provider account to look in.
@@ -398,7 +400,7 @@ class OutboundStore:
         if reason is not None:
             raise DeliveryConflict(reason)
         documo_uuid = (profile.configuration.manifest is None
-                       and profile.configuration.provider_id in {'documo', 'efax'})
+                       and profile.configuration.provider_id in {'documo', 'efax', 'telnyx_fax'})
         if documo_uuid:
             if re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', provider_sid) is None:
                 raise ValueError('Invalid provider identity reconciliation input.')
