@@ -20,7 +20,7 @@ import {
   inUseText, LEGEND, lineFull, needsYouLine, needsYouSentence, notChecked, onTheLineText, pagesText, routeText,
   sendingLine, shownOfText, sinceText, todayLine, untilText, waitingLine, waitingMoreText, waitingSentence,
 } from './outboundText';
-import { useOutboundNow, type OutboundNowView } from './useOutboundNow';
+import { useOutboundNow, type OutboundNowView } from '../../hooks/useOutboundNow';
 
 type TileKey = 'sending' | 'waiting' | 'needs_you' | 'today';
 

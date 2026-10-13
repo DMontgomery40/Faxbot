@@ -18,7 +18,7 @@ export const BOARD_TEXT = {
   delivered: 'delivered',
   todayDelivered: 'Delivered',
   todayFailed: 'Failed',
-  todayAccepted: 'Sent today',
+  todayAccepted: 'Faxes today',
   sendingEmpty: 'Nothing is sending right now.',
   waitingEmpty: 'Nothing is waiting.',
   needsYouEmpty: 'Nothing needs you.',
@@ -192,8 +192,8 @@ export function todayLine(board: OutboundNow): string {
   // Faxes accepted before midnight can still be delivered or fail today.
   if (accepted === 0) return `${failedPart} today.`;
   const onTheirWay = accepted - delivered - failed;
-  return onTheirWay > 0 ? `${failedPart}, ${onTheirWay} still on their way, of ${accepted} faxes today`
-    : `${failedPart}, of ${accepted} faxes today`;
+  return onTheirWay > 0 ? `${failedPart}, ${onTheirWay} still on their way, of ${accepted} faxes today.`
+    : `${failedPart}, of ${accepted} faxes today.`;
 }
 
 // -- lists -----------------------------------------------------------------------------------------------

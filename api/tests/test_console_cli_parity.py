@@ -138,8 +138,6 @@ CLI_ONLY = {
 
 # Gaps still open in the console. Builder L removes each entry with the screen that closes it.
 AWAITING_CONSOLE: dict = {
-    # The live outbound board: board-ui (brief 108) shows it on Overview and Sent.
-    ('GET', '/outbound/now'): 'board-ui adds the board to Overview and Sent',
 }
 
 # Gaps still open in the command line. Builder M removes each entry with the command that closes it.

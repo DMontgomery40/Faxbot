@@ -43,7 +43,7 @@ import {
 } from './overview/blocks';
 import { BlockFrame, DoingContent, EverydayContent, NextContent } from './overview/OverviewBlocks';
 import OutboundBoard from './overview/OutboundBoard';
-import { outboundPollerFor } from './overview/useOutboundNow';
+import { outboundPollerFor } from '../hooks/useOutboundNow';
 
 type CardData<T> = Loaded<T>;
 

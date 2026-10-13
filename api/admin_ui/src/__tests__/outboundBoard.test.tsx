@@ -12,7 +12,7 @@ import OutboundBoard, { CompactOutboundBoard } from '../components/overview/Outb
 import {
   BOARD_TEXT, durationText, needsYouLine, sendingLine, todayLine, waitingLine, whenText,
 } from '../components/overview/outboundText';
-import { OUTBOUND_POLL, OutboundPoller, type PollerDeps } from '../components/overview/useOutboundNow';
+import { OUTBOUND_POLL, OutboundPoller, type PollerDeps } from '../hooks/useOutboundNow';
 import { emptyOutboundNow, server } from '../test/server';
 
 const keyClient = (onUnauthorized?: () => void) => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' }, { onUnauthorized });
@@ -99,7 +99,7 @@ describe('the outbound board on Overview', () => {
     expect(count('today')).toBe('231');
     expect(tile('today').textContent).toContain('delivered');
     // 231 delivered and 12 failed of 260: 17 are still on their way.
-    expect(line('today')).toBe('12 failed, 17 still on their way, of 260 faxes today');
+    expect(line('today')).toBe('12 failed, 17 still on their way, of 260 faxes today.');
 
     const meter = screen.getByTestId('outbound-line');
     expect(meter.getAttribute('data-full')).toBe('true');
@@ -357,9 +357,9 @@ describe("the tiles' lines", () => {
     expect(waitingLine({ ...board, lines: [{ ...board.lines[0], limit: null }] }))
       .toBe("Waiting for a free line: 2 of 2 calls in use, your carrier's limit at once.");
     expect(todayLine({ ...board, today: { ...board.today, accepted: 0, delivered: 3, failed: 0 } })).toBe('None failed today.');
-    expect(todayLine({ ...board, today: { ...board.today, accepted: 20, delivered: 20, failed: 0 } })).toBe('None failed, of 20 faxes today');
+    expect(todayLine({ ...board, today: { ...board.today, accepted: 20, delivered: 20, failed: 0 } })).toBe('None failed, of 20 faxes today.');
     expect(todayLine({ ...board, today: { ...board.today, accepted: 20, delivered: 18, failed: 0 } }))
-      .toBe('None failed, 2 still on their way, of 20 faxes today');
+      .toBe('None failed, 2 still on their way, of 20 faxes today.');
     // One fax needing you is said in its own sentence.
     expect(needsYouLine({ ...board, needs_you: { count: 1, items: [board.needs_you.items[1]] } }))
       .toBe('No sending rule allows a route for this fax.');
@@ -591,5 +591,34 @@ describe('the one outbound poll', () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
     expect(signedOut).not.toHaveBeenCalled();
     expect(probed).toBe(0);
+  });
+});
+
+// A reply the API itself produced (api/tests/test_outbound_now.py writes it and checks it keeps every field), so the
+// console and the server can't drift apart.
+import fromApi from './outboundNowFromApi.json';
+
+describe('the outbound board with a reply from the API', () => {
+  it('shows every section of a real reply with no missing words', async () => {
+    const board = { ...(fromApi as unknown as OutboundNow), as_of: earlier(1) };
+    await renderBoard(board);
+    expect(count('sending')).toBe('2');
+    expect(count('waiting')).toBe('4');
+    expect(count('needs_you')).toBe('1');
+    expect(line('needs_you')).toBe('No account is allowed for this fax.');
+    expect(screen.getByTestId('outbound-engine').textContent).toContain('Faxbot sends audio fax until the network is fixed.');
+    expect(within(screen.getByTestId('outbound-line')).getByTestId('line-in-use').textContent).toBe('2 of 2 in use');
+    expect(screen.getByTestId('outbound-groups').textContent).toContain('olive');
+    const expected: Record<string, string> = {
+      sending: 'Telnyx', waiting: 'Waiting for a free line: all 2 lines are in use.',
+      needs_you: 'No account is allowed for this fax.', today: 'Another problem (see Sent)',
+    };
+    for (const [key, words] of Object.entries(expected)) {
+      fireEvent.click(tile(key));
+      const list = await screen.findByTestId(`outbound-list-${key}`);
+      expect(list.textContent).toContain(words);
+      const text = screen.getByTestId('outbound-board').textContent ?? '';
+      for (const broken of ['undefined', 'NaN', 'null', '[object Object]', 'Invalid Date']) expect(text).not.toContain(broken);
+    }
   });
 });

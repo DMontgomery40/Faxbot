@@ -4,8 +4,8 @@
 // Every request signs in, which writes the session's last use, so it asks every 5 seconds only while faxes are
 // sending or waiting and every 15 seconds otherwise; after a decision on a held fax it asks at once.
 import { useSyncExternalStore } from 'react';
-import AdminAPIClient, { AdminAPIError } from '../../api/client';
-import type { OutboundNow, OutboundNowReply } from '../../api/outboundTypes';
+import AdminAPIClient, { AdminAPIError } from '../api/client';
+import type { OutboundNow, OutboundNowReply } from '../api/outboundTypes';
 
 // How often the board looks again (while faxes are sending or waiting, and otherwise), and the longest it waits
 // after a busy or failed answer.

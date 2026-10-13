@@ -1109,7 +1109,7 @@ class AdminAPIClient {
     };
   }
 
-  // The live outbound board (GET /outbound/now), polled by one hook per tab (overview/useOutboundNow.ts). A busy
+  // The live outbound board (GET /outbound/now), polled by one hook per tab (hooks/useOutboundNow.ts). A busy
   // server (429 or 503) is not a signed-out session: the reply says how long it asked to wait, and the hook backs off.
   async outboundNow(): Promise<OutboundNowReply> {
     const res = await this.send('/outbound/now');

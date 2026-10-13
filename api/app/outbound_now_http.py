@@ -10,8 +10,8 @@ from .config_runtime import run_lifecycle_step
 
 
 router = APIRouter(tags=['Faxes'])
-UNAVAILABLE = 'The outbound board is unavailable right now. Try again in a moment.'
-BUSY = 'The database is busy right now, so the board could not be read. Try again in a moment.'
+UNAVAILABLE = "Outgoing faxes can't be shown right now. Try again in a moment."
+BUSY = "Faxbot is busy right now, so outgoing faxes can't be shown. Try again in a moment."
 # Seconds the console waits before asking again after a 503 (its poll backs off on 503 and 429).
 RETRY_SECONDS = 2
 

@@ -660,8 +660,7 @@ def test_a_busy_database_answers_503_with_retry_after(client, monkeypatch):
     monkeypatch.setattr(served.Board, '_counts', locked)
     busy = client.get('/outbound/now', headers=ADMIN)
     assert busy.status_code == 503 and busy.headers['Retry-After'] == '2'
-    assert busy.json()['detail'] == ('The database is busy right now, so the board could not be read. Try again in '
-                                     'a moment.')
+    assert busy.json()['detail'] == "Faxbot is busy right now, so outgoing faxes can't be shown. Try again in a moment."
     # Another cause still answers 200 with what it could read.
     monkeypatch.setattr(served.Board, '_counts', lambda self, *args, **kwargs: (_ for _ in ()).throw(KeyError('x')))
     partial = client.get('/outbound/now', headers=ADMIN)
@@ -672,3 +671,55 @@ def test_a_busy_database_answers_503_with_retry_after(client, monkeypatch):
     monkeypatch.setattr(served.Board, 'scope', unavailable)
     access_busy = client.get('/outbound/now', headers=ADMIN)
     assert access_busy.status_code == 503 and access_busy.headers['Retry-After'] == '1'
+
+
+# -- the console renders what the API returns ---------------------------------------------------------------------------
+
+CONSOLE_FIXTURE = __import__('pathlib').Path(__file__).parents[1] / 'admin_ui/src/__tests__/outboundNowFromApi.json'
+
+
+def _keys(value):
+    """The field names of a board, recursively; a list's items are merged, so one sample of each item shape is enough."""
+    if isinstance(value, dict):
+        return {key: _keys(item) for key, item in value.items()}
+    if isinstance(value, list):
+        merged = {}
+        for item in value:
+            if isinstance(item, dict):
+                for key, keys in _keys(item).items():
+                    merged[key] = keys if merged.get(key) in (None, 'value') else merged[key]
+        return [merged] if merged else []
+    return 'value'
+
+
+def test_the_console_fixture_has_every_field_the_api_returns(database, tmp_path):
+    """outboundNowFromApi.json is a reply from this API; the console's tests render it, so the two can't drift apart.
+
+    Set FAXBOT_WRITE_BOARD_FIXTURE=1 to write it again after a change to the reply.
+    """
+    import json
+    import os
+    from api.app import sip_fax_mode
+    board_desk = Desk(database, tmp_path, SIP_TRUNK_PRESET='telnyx', SIP_TRUNK_MAX_CALLS='2',
+                      SIP_TRUNK_CALLS_PER_SECOND='10', SIP_T38_ENABLED='false')
+    first, second = board_desk.accept(to=NUMBER, trunk=True, pages=3), board_desk.accept(to=OTHER, trunk=True)
+    board_desk.start(first)
+    board_desk.start(second)
+    for index in range(4):
+        board_desk.accept(to=f'+1202555040{index}', trunk=True, pages=2)
+    held = board_desk.accept(board_desk.alice, to=THIRD)
+    board_desk.hold(held, 'no_route', reason='No account is allowed for this fax.', requested_by='alice')
+    failed = board_desk.accept(to='+12025550150')
+    board_desk.set(failed, state='failed', updated_at=NOW - timedelta(minutes=5), error='Something else went wrong.')
+    delivered = board_desk.accept(to='+12025550151')
+    board_desk.set(delivered, state='success', updated_at=NOW - timedelta(minutes=2))
+    sip_fax_mode.write(board_desk.values, 'audio', sip_fax_mode.NETWORK, NOW)
+
+    board = board_desk.look()
+    for section in ('sending', 'waiting', 'needs_you'):
+        assert board[section]['items'], section
+    assert board['waiting']['reasons'] and board['today']['failures'] and board['lines'] and board['groups']
+    assert board['engine'] is not None and board['not_checked'] == []
+    if os.environ.get('FAXBOT_WRITE_BOARD_FIXTURE') == '1':
+        CONSOLE_FIXTURE.write_text(json.dumps(board, indent=2, sort_keys=True) + '\n')
+    assert _keys(json.loads(CONSOLE_FIXTURE.read_text())) == _keys(board)
