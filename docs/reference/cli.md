@@ -5023,6 +5023,7 @@ $ faxbot delivery providers accounts [OPTIONS] COMMAND [ARGS]...
 * `disable`: Switch an account off.
 * `default-sending`: Choose the account Faxbot sends by when no...
 * `default-receiving`: Choose the account whose notifications...
+* `fax-application`: Create the Fax Application a Telnyx Fax...
 * `health`: Whether each account is ready, and what to...
 * `country-rules`: Countries whose regulator licenses calls...
 
@@ -5184,6 +5185,25 @@ $ faxbot delivery providers accounts default-receiving [OPTIONS] {KEY}
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers accounts fax-application`
+
+Create the Fax Application a Telnyx Fax API account sends with, in your Telnyx account, and save its ID.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers accounts fax-application [OPTIONS] [KEY]
+```
+
+**Arguments**:
+
+* `KEY`: The Telnyx Fax API account&#x27;s key or name; the first one when left out.  [default: telnyx_fax]
+
+**Options**:
+
+* `--name <str>`: Its name in Telnyx, such as &quot;Faxbot&quot;.
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers accounts health`

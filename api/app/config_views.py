@@ -170,6 +170,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             'connection_id': values.telnyx_fax_connection_id,
             'from_number': values.telnyx_fax_from_number,
             'public_key': values.telnyx_fax_public_key,
+            # The address a Fax Application Faxbot creates sends fax results to.
+            'results_url': values.public_api_url.rstrip('/') + '/telnyx-fax-callback',
             'configured': bool(values.telnyx_api_key and values.telnyx_fax_connection_id
                                and values.telnyx_fax_from_number),
         },

@@ -205,6 +205,67 @@ def update_account(key: str, body: AccountPatch, request: Request,
     return _write(request, identity, documents, changes)
 
 
+class FaxApplicationInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    expected_generation: int
+
+
+@router.post('/{key}/telnyx-fax-application', summary='Create a Telnyx Fax Application for a Telnyx Fax API account')
+async def create_telnyx_fax_application(key: str, body: FaxApplicationInput, request: Request,
+                                        identity=Depends(require_permission('providers:write', audit=True))):
+    """Create the Fax Application the account sends with, in the account's own Telnyx account, and save its ID.
+
+    Telnyx sends the application's fax results to Faxbot's results address. The account must have its API key and
+    no Fax Application yet, so a second press never makes a second application.
+    """
+    from .outbound_transport import TELNYX_CALLBACK_PATH
+    from .telnyx_fax_service import TelnyxFaxError, TelnyxFaxService
+    snapshot = _snapshot(request)
+    _expect(snapshot, body.expected_generation)
+    values = snapshot.desired.values
+    account = accounts.account_named(values, key)
+    if account is None and key == 'telnyx_fax':
+        # The first Telnyx Fax API account is listed once it is set up; creating its application is part of that.
+        account = accounts.ProviderAccount(key=key, provider=key, label=accounts.provider_name(key, values),
+                                           primary=True, sends=True, receives=False)
+    if account is None:
+        raise HTTPException(404, detail='Faxbot has no account with this key.')
+    if account.provider != 'telnyx_fax':
+        raise HTTPException(400, detail='Only a Telnyx Fax API account sends with a Fax Application.')
+    try:
+        own = accounts.account_values(values, key)
+    except accounts.AccountsError as error:
+        _refusal(error)
+    if own.telnyx_fax_connection_id:
+        raise HTTPException(400, detail='This account already has a Fax Application. To create another, clear its '
+                                        'Fax Application ID first.')
+    if not own.telnyx_api_key:
+        raise HTTPException(400, detail='Enter the Telnyx API key first.')
+    name = body.name or f'Faxbot ({account.label})'
+    try:
+        created = await TelnyxFaxService(api_key=own.telnyx_api_key, connection_id='', from_number='') \
+            .create_fax_application(name, values.public_api_url.rstrip('/') + TELNYX_CALLBACK_PATH)
+    except TelnyxFaxError as error:
+        raise HTTPException(502, detail=error.sentence) from None
+    documents, changes = dict(accounts.documents(values)), {}
+    if account.primary:
+        changes['telnyx_fax_connection_id'] = created
+    else:
+        documents, changes = accounts.patched(values, key, {'settings': {'connection_id': created}},
+                                              provider_ids=_provider_ids(values), sites=None)
+    try:
+        state = await run_lifecycle_step(lambda: _write(request, identity, documents, changes))
+    except HTTPException as error:
+        # The application exists in Telnyx either way; give the ID so it is never created twice.
+        raise HTTPException(error.status_code, detail=f'Telnyx created the Fax Application {created}, but Faxbot '
+                                                      'could not save its ID. Enter that ID on the Telnyx Fax API '
+                                                      'page.') from None
+    sentence = (f'Faxbot created the Fax Application "{name}" in your Telnyx account and saved its ID. Before you '
+                'send, assign your fax number and an outbound voice profile to it in Telnyx.')
+    return {**state, 'created': {'key': key, 'connection_id': created, 'sentence': sentence}}
+
+
 @router.get('/{key}/health', summary="One provider account's health")
 async def account_health(key: str, request: Request, identity=Depends(require_permission('providers:read'))):
     snapshot = _snapshot(request)

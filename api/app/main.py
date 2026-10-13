@@ -2606,6 +2606,34 @@ async def phaxio_callback(request: Request):
     return await _receive_outbound_callback(request, 'phaxio')
 
 
+@app.post('/telnyx-fax-callback')
+async def telnyx_fax_callback(request: Request):
+    """Telnyx's fax results. A notice signed with the attempt's account key makes Faxbot read the fax's status at
+    once from that account; the status read decides, never the notice's own fields. The Fax Application's own
+    address carries no attempt, so a notice there changes nothing and Faxbot keeps checking by itself."""
+    from .outbound_callbacks import verified_telnyx_notice
+    body = await request.body()
+    if len(body) > 65536:
+        raise HTTPException(413, detail='Callback is too large.')
+    job_id, attempt_id = request.query_params.get('job_id'), request.query_params.get('attempt_id')
+    if job_id is None and attempt_id is None:
+        return {'ok': True, 'applied': False}
+    try:
+        await run_lifecycle_step(lambda: verified_telnyx_notice(
+            _deliveries(), job_id, attempt_id, timestamp=request.headers.get('telnyx-timestamp', ''),
+            signature=request.headers.get('telnyx-signature-ed25519', ''), body=body))
+    except (CallbackRejected, DeliveryConflict, UnboundProviderProfile):
+        raise HTTPException(401, detail='Callback could not be authenticated for this attempt.') from None
+    try:
+        applied = await OutboundPoller(_deliveries()).refresh(job_id)
+    except (DeliveryConflict, UnboundProviderProfile, RuntimeError, TimeoutError) as error:
+        # A fax waiting for a person, or Telnyx not answering the read: the poller keeps checking by itself.
+        logging.getLogger(__name__).info('Telnyx notice for fax %s left for the next check: %s', job_id,
+                                         type(error).__name__)
+        return {'ok': True, 'applied': False}
+    return {'ok': True, 'applied': bool(applied)}
+
+
 # ===== Inbound receiving: notifications and fetching live in inbound/http.py =====
 
 

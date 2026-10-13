@@ -7,6 +7,8 @@ export function settingsFixture(overrides: (data: Json) => void = () => undefine
     hybrid: { outbound_backend: 'phaxio', inbound_backend: 'phaxio', outbound_override: '', inbound_override: '' },
     phaxio: { api_key: '***', api_secret: '***', callback_token: '', callback_url: '', verify_signature: true, configured: true },
     documo: { api_key: '', base_url: 'https://api.documo.com', sandbox: false, configured: false },
+    telnyx_fax: { api_key: '', connection_id: '', from_number: '', public_key: '',
+      results_url: 'https://fax.example/telnyx-fax-callback', configured: false },
     humblefax: { access_key: '***', secret_key: '***', from_number: '', configured: true },
     efax: { app_id: '', api_key: '', user_id: '', caller_id: '', csid: '', poll_seconds: 60, delete_after_download: false,
       webhook_secret: '', webhook_secret_set: false, configured: false },

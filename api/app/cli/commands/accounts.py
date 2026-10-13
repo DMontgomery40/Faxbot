@@ -318,6 +318,31 @@ def accounts_default_receiving(key: str = typer.Argument(..., metavar='KEY', hel
     _patch(api, current, account, {'default_receiving': True}, f"{account['label']} is the default receiving account.")
 
 
+@accounts.command('fax-application')
+def accounts_fax_application(key: str = typer.Argument('telnyx_fax', metavar='KEY',
+                                                       help="The Telnyx Fax API account's key or name; the first "
+                                                            'one when left out.'),
+                             name: str = typer.Option(None, '--name', help='Its name in Telnyx, such as "Faxbot".')):
+    """Create the Fax Application a Telnyx Fax API account sends with, in your Telnyx account, and save its ID."""
+    api = state.api()
+    current = load(api)
+    try:
+        account = find(current, key)
+    except CliError:
+        if key != 'telnyx_fax':
+            raise
+        account = {'key': key, 'label': 'Telnyx Fax API'}  # listed once it is set up
+    body = {'expected_generation': current['generation'], **({'name': name} if name else {})}
+    result = api.post('/admin/providers/accounts/' + segment(account['key']) + '/telnyx-fax-application', json=body)
+
+    def human(out):
+        created = result.get('created') or {}
+        out.line(created.get('sentence') or 'Done.')
+        if created.get('connection_id'):
+            out.line(f"Its Fax Application ID is {created['connection_id']}.")
+    state.out().result(result, human)
+
+
 @accounts.command('health')
 def accounts_health(key: str = typer.Argument(None, metavar='KEY', help="One account's key or name; all when left out.")):
     """Whether each account is ready, and what to do when it is not."""

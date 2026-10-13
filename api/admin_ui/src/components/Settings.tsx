@@ -47,6 +47,8 @@ import { ResponsiveTextField, ResponsiveFormSection } from './common/ResponsiveF
 import SipTrunkSettings from './SipTrunkSettings';
 import EfaxSettings, { efaxEditorValues } from './EfaxSettings';
 import HumbleFaxReceiving, { humblefaxReceivingValues } from './HumbleFaxReceiving';
+import { TELNYX_FAX_APPLICATION_HELP, TELNYX_FAX_KEY_HELP, TELNYX_FAX_NUMBER_HELP, TELNYX_FAX_PRICE_SENTENCE,
+  TELNYX_FAX_PUBLIC_KEY_HELP, TelnyxFaxApplication } from './TelnyxFaxSettings';
 import { COUNTRY_HELP, CountryField, countryName, internationalHint, settingsNumberFormat } from './common/numbers';
 import { BUILTIN_PROVIDERS, PROVIDER_LABELS, RECEIVING_PROVIDERS, directionSummary, providerLabel } from '../providerLabels';
 import ProviderDirectionFields, { directionFields, directionProblem, loadedDirections } from './common/ProviderDirections';
@@ -70,7 +72,7 @@ interface SettingsProps {
 // The parts of the settings document a console page can show on its own.
 export type SettingsSection =
   | 'providers' | 'inbound' | 'routes'
-  | 'phaxio' | 'sinch' | 'documo' | 'humblefax' | 'efax' | 'trunk' | 'signalwire'
+  | 'phaxio' | 'sinch' | 'documo' | 'telnyx_fax' | 'humblefax' | 'efax' | 'trunk' | 'signalwire'
   | 'direct' | 'intake' | 'email'
   | 'security' | 'storage' | 'advanced' | 'backup' | 'mcp' | 'identity'
   | 'plugins' | 'diagnostics' | 'phones' | 'developer' | 'audit' | 'installation-key';
@@ -165,6 +167,9 @@ function editorValues(data: SettingsType): SettingsForm {
     documo_api_key: data.documo?.api_key ?? '',
     documo_base_url: data.documo?.base_url ?? '',
     documo_use_sandbox: data.documo?.sandbox ?? false,
+    telnyx_fax_connection_id: data.telnyx_fax?.connection_id ?? '',
+    telnyx_fax_from_number: data.telnyx_fax?.from_number ?? '',
+    telnyx_fax_public_key: data.telnyx_fax?.public_key ?? '',
     humblefax_access_key: data.humblefax?.access_key ?? '',
     humblefax_secret_key: data.humblefax?.secret_key ?? '',
     humblefax_from_number: data.humblefax?.from_number ?? '',
@@ -963,6 +968,37 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                       ]}
                       showCurrentValue={false}
                     />
+                  </ResponsiveSettingSection>
+                )}
+
+                {providerShown('telnyx_fax', 'telnyx_fax') && (
+                  <ResponsiveSettingSection
+                    title={providerTitle('Telnyx Fax API')}
+                    subtitle="Your Telnyx account, for faxes billed by the page"
+                  >
+                    {providerStatus('telnyx_fax')}
+                    <Typography variant="body2" sx={{ mb: 2 }} data-testid="telnyx-fax-price">
+                      {TELNYX_FAX_PRICE_SENTENCE}
+                    </Typography>
+                    <ResponsiveSettingItem
+                      icon={getStatusIcon(!!settings?.telnyx_fax?.api_key)}
+                      label="Telnyx API key"
+                      value={settings?.telnyx_fax?.api_key ? 'Saved' : ''}
+                      editValue={form.telnyx_api_key ?? ''}
+                      helperText={TELNYX_FAX_KEY_HELP}
+                      placeholder="Telnyx API key"
+                      onChange={(value) => handleForm('telnyx_api_key', value)}
+                      type="password"
+                      showCurrentValue={!pendingRestart && !!settings?.telnyx_fax?.api_key}
+                      {...envField('telnyx_api_key')}
+                    />
+                    {textField('Fax Application ID', 'telnyx_fax_connection_id', TELNYX_FAX_APPLICATION_HELP)}
+                    {textField('Fax number', 'telnyx_fax_from_number', TELNYX_FAX_NUMBER_HELP)}
+                    {textField('Telnyx public key (optional)', 'telnyx_fax_public_key', TELNYX_FAX_PUBLIC_KEY_HELP)}
+                    <TelnyxFaxApplication client={client} apiKeySaved={!!settings?.telnyx_fax?.api_key}
+                      connectionId={String(loadedForm.telnyx_fax_connection_id ?? '')}
+                      resultsUrl={settings?.telnyx_fax?.results_url} canWrite={canWrite && canEdit}
+                      onCreated={fetchSettings} />
                   </ResponsiveSettingSection>
                 )}
 

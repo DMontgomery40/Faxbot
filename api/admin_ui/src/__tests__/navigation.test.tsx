@@ -47,7 +47,8 @@ describe('the navigation table', () => {
       ['capabilities', 'opportunities', 'facts', 'results', 'spending', 'charges', 'invoices', 'prices']);
     expect(pagesOf(areas, 'faxes')).toEqual(['received', 'sent', 'send', 'expected', 'forms', 'cases']);
     expect(pagesOf(areas, 'delivery')).toEqual(['numbers', 'mailboxes', 'moves', 'blocked', 'identity', 'email', 'connectors',
-      'connections', 'rules', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'trunk', 'change']);
+      'connections', 'rules', 'humblefax', 'efax', 'phaxio', 'sinch', 'signalwire', 'documo', 'telnyx-fax', 'trunk',
+      'change']);
     expect(groupsOf(areas, 'delivery')).toEqual(['Numbers & mailboxes', 'Documents in and out', 'Connections']);
     expect(pagesOf(areas, 'recipients')).toEqual(['list', 'partners']);
     expect(pagesOf(areas, 'admin')).toEqual(['users', 'groups', 'roles', 'who', 'keys', 'sessions',
@@ -58,7 +59,7 @@ describe('the navigation table', () => {
     expect(admin.pages.filter((page) => page.group === 'Developer').map((page) => page.label))
       .toEqual(['API & SDKs', 'AI assistants', 'Terminal', 'Scripts & checks', 'Provider plugins']);
     // The 52 entries the console had, and Capabilities.
-    expect(NAVIGATION.flatMap((area) => area.pages)).toHaveLength(53);
+    expect(NAVIGATION.flatMap((area) => area.pages)).toHaveLength(54);
   });
 
   it('shows a fax operator their faxes and their own sessions only', () => {

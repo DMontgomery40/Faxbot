@@ -21,6 +21,7 @@ OWN_AUTHENTICATION = {
     ("GET", "/inbound/{inbound_id}/pdf"): "inbound:document via identity, or the fax's unexpired download token (checked in the handler)",
     ("POST", "/phaxio-callback"): "verified provider callback",
     ("POST", "/signalwire-callback"): "verified provider callback",
+    ("POST", "/telnyx-fax-callback"): "Ed25519-signed provider notice; only prompts a status read from the attempt's account",
     ("POST", "/phaxio-inbound"): "verified provider ingest",
     ("POST", "/sinch-inbound"): "verified provider ingest",
     ("POST", "/efax-inbound"): "verified provider signal; starts a check of eFax, stores nothing",

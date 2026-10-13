@@ -302,6 +302,52 @@ async def test_a_failed_fax_is_failed_or_waits_for_a_person(installation, tmp_pa
     assert store.get(job)['state'] == state
 
 
+@pytest.mark.asyncio
+async def test_a_signed_notice_prompts_a_status_read_and_nothing_else_does(installation, tmp_path, monkeypatch):
+    from api.app.outbound_callbacks import CallbackRejected, verified_telnyx_notice
+    private, public, _ = keypair()
+    configuration, store, job = accepted(installation, tmp_path, captured(public))
+    bodies = []
+
+    def create(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(202, json=fax('queued'))
+    mock_clients(monkeypatch, FakeTelnyx(create=create))
+    await OutboundWorker(store, CapturedTransport(store, Runtime())).step()
+    attempt = store.get(job)['attempt_id']
+    # With the account's public key, Telnyx is told to send this attempt's results to Faxbot.
+    assert bodies[0]['webhook_url'] == (f'https://faxbot.example.org/telnyx-fax-callback?job_id={job}'
+                                        f'&attempt_id={attempt}')
+    body = json.dumps({'data': {'event_type': 'fax.delivered', 'payload': {'fax_id': SID, 'status': 'delivered',
+                                                                          'page_count': 3}}}).encode()
+    now = int(time.time())
+
+    def check(**changes):
+        given = {'timestamp': str(now), 'signature': sign(private, body, now), 'body': body, **changes}
+        return verified_telnyx_notice(store, changes.pop('job', job), changes.pop('attempt', attempt),
+                                      **{name: given[name] for name in ('timestamp', 'signature', 'body')})
+
+    assert check() is True
+    for forged in ({'body': body.replace(b'delivered', b'failed')}, {'signature': sign(keypair()[0], body, now)},
+                   {'timestamp': str(now - 600), 'signature': sign(private, body, now - 600)}):
+        try:
+            check(**forged)
+        except CallbackRejected:
+            continue
+        pytest.fail(f'accepted a notice with a forged {sorted(forged)}')
+    with pytest.raises(CallbackRejected):
+        verified_telnyx_notice(store, job, 'f' * 32, timestamp=str(now), signature=sign(private, body, now),
+                               body=body)
+    other = json.dumps({'data': {'payload': {'fax_id': SID.replace('3b', '4c')}}}).encode()
+    with pytest.raises(CallbackRejected):
+        verified_telnyx_notice(store, job, attempt, timestamp=str(now), signature=sign(private, other, now),
+                               body=other)
+    # The status read, not the notice, decides the result.
+    assert store.get(job)['state'] == 'in_progress'
+    await OutboundPoller(store).refresh(job)
+    assert store.get(job)['state'] == 'success'
+
+
 def test_the_results_address_is_given_only_with_a_public_key():
     from types import SimpleNamespace
     values = SimpleNamespace(public_api_url='https://faxbot.example.org/')

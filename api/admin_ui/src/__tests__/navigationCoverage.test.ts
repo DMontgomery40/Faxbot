@@ -114,10 +114,10 @@ describe('the 52 old navigation entries', () => {
     expect(OLD_ENTRIES).toHaveLength(52);
     expect(new Set(OLD_ENTRIES.map(([old]) => old)).size).toBe(52);
     for (const [, home] of OLD_ENTRIES) expect(pageAt(home), home).toBeTruthy();
-    // Every page of the new table is the home of an old entry, except Capabilities, which is new.
+    // Every page of the new table is the home of an old entry, except Capabilities and the Telnyx Fax API, which are new.
     const homes = new Set(OLD_ENTRIES.map(([, home]) => home));
     const pages = NAVIGATION.flatMap((area) => area.pages.map((page) => `${area.id}/${page.id}`));
-    expect(pages.filter((page) => !homes.has(page))).toEqual(['savings/capabilities']);
+    expect(pages.filter((page) => !homes.has(page))).toEqual(['savings/capabilities', 'delivery/telnyx-fax']);
   });
 
   it.each(OLD_ENTRIES)('%s keeps its gate at %s', (_old, home, gate) => {
