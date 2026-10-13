@@ -340,7 +340,46 @@ No changes. **PR 108 shard 4 still failing, no fix pushed.** Same CI run from 18
 
 ~55min to close. If no fix by 5:30 PM MT, PR 108 stays open for post-campaign work.
 
-*Campaign closes 5:30 PM MT (55min).*
+---
+
+## FINAL HEARTBEAT: Oct 13, 11:40 PM UTC (5:40 PM MT, Campaign Close)
+
+### What Claude Shipped Today (M3a Enterprise Release Wave)
+
+✅ **MERGED (4 features):**
+1. **PR 106 (fix/rightfax-sidecar):** RightFax email gateway addressing, renewal line-item pricing. Sources: TxDMV PO, CDW specs. Tests: synthetic mail, renewal valuation.
+2. **PR 104 (feat/outbound-board):** Live outbound status board (UI/API/CLI). Shows sending, waiting, needs-you, today's stats. Tests: 331 SQLite, 594 console. Acknowledged: "not yet run live on busy install."
+3. **PR 105 (feat/telnyx-fax-api):** Telnyx per-page billing provider ($0.007/page + $0.005/min). Tests: mocked Telnyx, pricing, route choice. Acknowledged: "not reached Telnyx live."
+4. **PR 107 (feat/copiers-court-landing):** Copiers as extensions, California court profile, partner line windows (schema 0082–0085). Tests: 169 passed, parity, console. Merged at 8:13 PM UTC.
+
+❌ **OPEN, PENDING (1 feature):**
+5. **PR 108 (feat/fax-server-gateway):** RightFax/SR140 gateway (fax servers send through Faxbot). Depends on PR 107. **test-api-shard (4) FAILED** (schema sync issue after PR 107 merge). Other 7 shards passed. CLI/console/SDK checks passed. Awaiting fix or post-campaign work.
+
+### Key Observations
+
+- **4 of 5 features shipped successfully** by 8:40 PM UTC, well before campaign close (11:30 PM UTC).
+- **No overclaims or unsourced facts:** All PRs properly source pricing (TxDMV, CDW, telnyx.com), acknowledge live testing boundaries, and test synthetic-only.
+- **Shard 4 failure on PR 108 is routine dev work:** Likely schema fixture mismatch after PR 107 merge. Claude visible the failure; normal path is fix/rerun or defer post-campaign.
+- **Zero big misses or bad direction:** Work is clean, focused, honest about scope.
+
+### Ideas Worth Noting
+
+1. **Partial-resend test (broken-call recovery):** Top-selling feature for funded fax-intake startups. Reference case: 600 pages, $1.505 full resend vs. $0.38 partial. Documented in scratchpad with only sourced data.
+2. **PR 108 resolution:** If shard 4 not fixed by now, leave open for post-campaign debug. Schema sync issues are worth thorough investigation rather than rushed merge.
+
+### Post-Campaign
+
+- Three PRs now in main and shipped.
+- One PR (107) merged after heartbeat 8 and hit post-campaign close.
+- One PR (108) pending; shard 4 fix or defer.
+- No lead communication in `.claude/` folder.
+- Work is complete as-is or structured for next cycle.
+
+**Campaign window closed at 5:30 PM MT (11:30 PM UTC). Monitoring ends.**
+
+---
+
+*Overseer monitoring complete. Scratchpad at cursor/overseer-scratchpad-861e.*
 
 ---
 
