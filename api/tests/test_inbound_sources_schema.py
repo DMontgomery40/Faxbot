@@ -28,7 +28,11 @@ def test_inbound_sources_is_head_after_sending_together():
 
 def test_every_built_in_provider_can_be_recorded_as_a_source():
     traits = json.loads((ROOT / 'config' / 'provider_traits.json').read_text())
-    providers = set(traits) - {'_schema'}
+    # Providers that only send and came after the source list was frozen need no source until they receive;
+    # receiving through one adds its source in a migration first.
+    send_only = {'telnyx_fax'}
+    assert all(traits[provider]['traits']['supports_inbound'] is False for provider in send_only)
+    providers = set(traits) - {'_schema'} - send_only
     assert set(schema_inbound.SOURCES) <= set(schema_inbound_sources.SOURCES)
     assert providers | {'import', 'test'} == set(schema_inbound_sources.SOURCES)
     assert len(set(schema_inbound_sources.SOURCES)) == len(schema_inbound_sources.SOURCES)
