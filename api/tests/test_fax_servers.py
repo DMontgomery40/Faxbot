@@ -507,3 +507,53 @@ def test_the_sr140_stand_in_calls_like_an_sr140_and_has_every_refusal_case():
     assert (folder / 'fax' / 'test-fax.tiff').stat().st_size < 20000
     for script in ('run.sh', 'send.sh'):
         assert subprocess.run(['sh', '-n', str(folder / script)], capture_output=True).returncode == 0
+
+
+# asterisk/start.sh fills in where fax servers reach Faxbot ---------------------------------------------------------
+
+def _fax_server_trunk(tmp_path):
+    server = fax_servers.FaxServer('a' * 32, 'RightFax', '192.168.68.50', 'faxserver-aaaaaaaa', 'b' * 32, None,
+                                   ('US',), 60, 500, None, None, None, 'active')
+    shared = tmp_path / 'data' / 'asterisk'
+    shared.mkdir(parents=True, exist_ok=True)
+    text = sip_trunk.rendered_configuration(_values(), peers=[], copiers=[], servers=[server])
+    (shared / 'pjsip.conf').write_text(text)
+    # The image ships these two; start.sh narrows them to the published range.
+    (tmp_path / 'etc').mkdir(exist_ok=True)
+    for name in ('rtp.conf', 'udptl.conf'):
+        shutil.copy(ROOT / 'asterisk' / 'etc' / 'asterisk' / name, tmp_path / 'etc' / name)
+    return text
+
+
+@pytest.mark.skipif(shutil.which('bash') is None or shutil.which('envsubst') is None,
+                    reason='bash and envsubst are needed to run the start script.')
+def test_start_names_the_published_address_and_port_or_drops_the_lines(tmp_path):
+    from api.tests.test_asterisk_start import start
+    text = _fax_server_trunk(tmp_path / 'one')
+    result, etc, shared = start(tmp_path / 'one', FAXBOT_FAX_SERVER_ADDRESS='192.168.68.230',
+                                FAXBOT_FAX_SERVER_PORT='5070', FAXBOT_MEDIA_PORTS='6000-6039')
+    assert result.returncode == 0, result.stderr
+    loaded = (etc / 'pjsip.conf').read_text()
+    transport = loaded.split('[transport-fax-server]\n', 1)[1].split('\n\n', 1)[0]
+    assert 'external_media_address=192.168.68.230' in transport and 'external_signaling_port=5070' in transport
+    assert '@FAXBOT_FAX_SERVER' not in loaded and (shared / 'pjsip.conf.started').read_text() == text
+    assert (tmp_path / 'one' / 'data' / 'fax-server').is_dir() and 'media range' not in result.stderr
+    # Without docker-compose.fax-server.yml the lines go, and the transport names no address at all.
+    _fax_server_trunk(tmp_path / 'two')
+    result, etc, _ = start(tmp_path / 'two')
+    loaded = (etc / 'pjsip.conf').read_text()
+    assert result.returncode == 0 and '@FAXBOT_FAX_SERVER' not in loaded
+    assert 'external_signaling_port' not in loaded.split('[transport-fax-server]\n', 1)[1].split('\n\n', 1)[0]
+    # No published media range: Asterisk still starts, and says why fax servers' faxes would fail.
+    _fax_server_trunk(tmp_path / 'three')
+    result, _, _ = start(tmp_path / 'three', FAXBOT_FAX_SERVER_ADDRESS='192.168.68.230')
+    assert result.returncode == 0 and 'Fax servers need a published media range' in result.stderr
+    for number, (environment, message) in enumerate((
+            ({'FAXBOT_FAX_SERVER_ADDRESS': '192.168.68.300'}, 'Unsupported fax server address'),
+            ({'FAXBOT_FAX_SERVER_ADDRESS': '192.168.68.2/s/x/'}, 'Unsupported fax server address'),
+            ({'FAXBOT_FAX_SERVER_ADDRESS': '192.168.68.2', 'FAXBOT_FAX_SERVER_PORT': '70000'},
+             'Unsupported fax server port'))):
+        folder = tmp_path / f'bad{number}'
+        _fax_server_trunk(folder)
+        result, _, _ = start(folder, **environment)
+        assert result.returncode != 0 and message in result.stderr
