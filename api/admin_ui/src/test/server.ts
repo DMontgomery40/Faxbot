@@ -182,6 +182,17 @@ export function newReceivingAdvice() {
 }
 
 // GET /routing/savings for an installation that has saved nothing yet.
+// The live outbound board (GET /outbound/now) with nothing going out; board tests answer with their own.
+export function emptyOutboundNow() {
+  return {
+    as_of: '2026-10-13T15:20:05Z', not_checked: [] as string[],
+    sending: { count: 0, items: [] }, waiting: { count: 0, more: 0, reasons: [], items: [] },
+    needs_you: { count: 0, items: [] },
+    today: { since: '2026-10-13T06:00:00Z', accepted: 0, delivered: 0, failed: 0, failures: [] },
+    lines: [], engine: null, groups: [],
+  };
+}
+
 export function emptySavings() {
   const part = (sentence: string) => ({ estimate: true, saved: [], sentence });
   return {
@@ -698,6 +709,7 @@ const consoleHandlers = [
   http.get('/routing/fax-costs', () => json({ costs: {} })),
   // Savings: nothing saved yet, every part an estimate.
   http.get('/routing/savings', () => json(emptySavings())),
+  http.get('/outbound/now', () => json(emptyOutboundNow())),
   // Pricing the document itself: refused by default, so Send a fax keeps its page-count price.
   http.post('/routing/predict', () => json({ detail: 'This operation is not permitted.' }, 403)),
   // The Overview's savings map: an answer with no mechanisms draws no map.

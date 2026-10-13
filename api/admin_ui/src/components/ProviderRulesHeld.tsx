@@ -18,7 +18,7 @@ const KIND_TITLE: Record<Hold['kind'], string> = {
   approval: 'Waiting for approval', window: 'Waiting for its time window', no_route: 'No route your rules allow',
 };
 
-function RefuseDialog({ hold, onClose, onRefuse }: { hold: Hold | null; onClose: () => void; onRefuse: (reason: string) => void }) {
+export function RefuseDialog({ hold, onClose, onRefuse }: { hold: Hold | null; onClose: () => void; onRefuse: (reason: string) => void }) {
   const [reason, setReason] = useState('');
   useEffect(() => { if (hold) setReason(''); }, [hold]);
   return (
@@ -39,7 +39,7 @@ function RefuseDialog({ hold, onClose, onRefuse }: { hold: Hold | null; onClose:
 
 // A fax with no route the rules allow: send it by one of the accounts left out only by a cost cap or by being
 // down or busy. Accounts a rule forbids outright are never offered, and the dialog says why.
-function SendAnywayDialog({ hold, onClose, onSend }: { hold: Hold | null; onClose: () => void; onSend: (account: string) => void }) {
+export function SendAnywayDialog({ hold, onClose, onSend }: { hold: Hold | null; onClose: () => void; onSend: (account: string) => void }) {
   const [account, setAccount] = useState('');
   useEffect(() => { if (hold) setAccount(hold.options?.[0]?.account ?? ''); }, [hold]);
   const options = hold?.options ?? [];

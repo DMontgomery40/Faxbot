@@ -125,6 +125,7 @@ from .work.certainty_http import router as certainty_router
 from .work.expectation_http import router as expected_router
 from .routing.continuation_http import router as continuation_router
 from .setup_plan.http import router as setup_plan_router
+from .outbound_now_http import router as outbound_now_router
 from .routing.transport import RoutedTransport
 from .batching.http import router as batching_router, summaries as batching_summaries
 from .codec.http import router as codec_router
@@ -297,6 +298,7 @@ app.include_router(certainty_router)
 app.include_router(expected_router)
 app.include_router(continuation_router)
 app.include_router(setup_plan_router)
+app.include_router(outbound_now_router)
 app.include_router(hylafax_router)
 app.include_router(pages_router)
 app.include_router(batching_router)

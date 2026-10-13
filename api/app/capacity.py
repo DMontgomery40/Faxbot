@@ -259,6 +259,8 @@ class Room:
     key: str = TRUNK
     label: str = 'your phone line'
     trunk: bool = True
+    # Of ``trunk_calls``, the calls coming in over the trunk.
+    incoming: int = 0
 
     @property
     def trunk_full(self):
@@ -398,7 +400,7 @@ class Capacity:
                 a.c.submitted_at > now - timedelta(seconds=1), a.c.submitted_at <= now,
                 sa.func.coalesce(c.c.route, j.c.backend).in_(routes)))
         return Room(int(outgoing or 0) + int(incoming or 0), found.at_once, int(starts or 0),
-                    found.calls_per_second, key=key, label=found.label, trunk=found.trunk)
+                    found.calls_per_second, key=key, label=found.label, trunk=found.trunk, incoming=int(incoming or 0))
 
     def rooms(self, connection, values, now, *, exclude=(), limited=None):
         """{account key: Room} for every account whose calls or faxes at once are limited: its own room, or the
@@ -671,6 +673,34 @@ class Capacity:
             return rooms[key]
         key = self._waits_for_room(connection, job_id, values, full, limited)
         return rooms[key] if key is not None else None
+
+    def waiting_for_room(self, connection, values, now, job_ids, *, limited=None, rooms=None):
+        """{job: the ``Room`` of the full account it waits for} for the faxes among ``job_ids`` that the claim gate
+        holds back for room, worked out once for the whole set (the outbound board): the rooms once, the faxes
+        bound to a full account in one query, and the envelope of each fax with a rule decision, all on
+        ``connection``. ``waits_for`` answers the same for one fax."""
+        limited = limited if limited is not None else limited_accounts(values)
+        rooms = rooms if rooms is not None else self.rooms(connection, values, now, limited=limited)
+        full = {key for key, room in rooms.items() if room.full}
+        wanted = list(dict.fromkeys(job_ids))
+        if not full or not wanted:
+            return {}
+        j = self.t['fax_jobs']
+        found = {}
+        for job_id, backend in connection.execute(sa.select(j.c.id, j.c.backend).where(
+                j.c.id.in_(wanted), self._bound_to_full(connection, j, values, full, limited))).all():
+            key = next(key for key in full if limited[key].backend == backend)
+            found[job_id] = rooms[key]
+        decisions = self._decisions(connection)
+        if decisions is not None:
+            decided = set(connection.execute(sa.select(decisions.c.job_id).where(
+                decisions.c.job_id.in_([job_id for job_id in wanted if job_id not in found]))).scalars())
+            for job_id in wanted:
+                if job_id in decided:
+                    key = self._waits_for_room(connection, job_id, values, full, limited)
+                    if key is not None:
+                        found[job_id] = rooms[key]
+        return found
 
     def schedule_sentence(self, connection, values, job_id, row, now):
         """Why the recipient's schedule holds this fax, in one sentence with what a failed try may cost; or None."""

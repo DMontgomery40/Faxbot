@@ -33,6 +33,7 @@ from .commands import overview as overview_commands
 from .commands import countries as country_commands
 from .commands import destinations as destination_commands
 from .commands import teams_annex as teams_annex_commands
+from .commands import status as status_commands
 
 # The console's six areas. Overview is one command; the others are groups.
 NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
@@ -377,7 +378,7 @@ def canonical(path):
 
 def register(app):
     app.command('send')(fax.send)
-    app.command('status')(fax.status)
+    app.command('status')(status_commands.status)
     # The console's Overview: what Faxbot is doing here and what needs attention.
     app.command('overview')(overview_commands.overview)
     for name, home in HOMES.items():
