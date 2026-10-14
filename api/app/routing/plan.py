@@ -45,6 +45,7 @@ REASON_TEXT = {
                        'order between them and compared prices only within each currency.'),
     'cheapest_converted': 'The cheapest route at the exchange rate you set.',
     'own_trunk_one_line': "Your own trunk can't call its own number with one line.",
+    'plan_over_budget': 'Your plan is past its normal-use budget this month, so this fax goes by the next route.',
 }
 
 
@@ -58,6 +59,8 @@ DECIDED_TEXT = {
                       'this one by the next cheapest route.'),
     'mixed_currency': ('Your routes charge in different currencies and no exchange rate is set, so Faxbot used your '
                        'order between them instead of comparing the amounts.'),
+    'plan_over_budget': ('Your plan was past its normal-use budget this month, so Faxbot sent this fax by the next '
+                         'route.'),
 }
 
 
@@ -65,6 +68,9 @@ def decided_text(route, reason):
     """One sentence for a sent fax's stored route reason, or None for a reason Faxbot does not know."""
     if reason == 'included':
         return f'Included in your {route_label(route)} plan.'
+    if reason == 'over_budget':
+        return (f'Included in your {route_label(route)} plan, though it was past its normal-use budget; Faxbot had '
+                'no other reliable route for this fax.')
     if reason == ONE_LINE:
         return f"Your own trunk can't call its own number with one line, so this fax went through {route_label(route)}."
     return DECIDED_TEXT.get(reason) or REASON_TEXT.get(reason)
@@ -99,6 +105,12 @@ def _explain(choice, destination=None):
     if choice.reason == ONE_LINE:
         return (f"Your own trunk can't call its own number with one line, so this fax goes through "
                 f'{route_label(choice.route.key)}.')
+    if choice.reason == 'over_budget':
+        return (f'Included in your {route_label(choice.route.key)} plan, though it is past its normal-use budget '
+                'this month; Faxbot has no other reliable route for this fax.')
+    if choice.reason == 'plan_over_budget' and choice.over_plan:
+        return (f'{route_label(choice.over_plan)} is past your normal-use budget this month, so this fax goes by '
+                f'{route_label(choice.route.key)}.')
     if choice.reason == 'included':
         card = choice.route.card
         if card is None or card.monthly_fee_micros is None:
@@ -118,6 +130,30 @@ def _explain(choice, destination=None):
 
 # A first route chosen by price may be first only because a plan's room is held for other faxes.
 _PRICED_FIRST = ('cheapest', 'known_cheapest', 'cheapest_delivered', 'configured', 'cheapest_converted')
+
+
+# Reasons a first route has from the price ranking alone, which a plan past its budget may have displaced.
+_RANKED_FIRST = _PRICED_FIRST + ('unknown_cost', 'reliable')
+
+
+def over_budget_first(choices, prices):
+    """The first route's reason becomes ``plan_over_budget`` when a plan later in the order is past its normal-use
+    budget and would have cost this fax less (``plan_budget``: such a plan goes after every route within budget), so
+    the reason names the plan instead of a price; any other first route keeps its reason."""
+    if not choices or not prices or choices[0].reason not in _RANKED_FIRST:
+        return choices
+    first = choices[0]
+    first_price = prices.get(first.route.key)
+    for choice in choices[1:]:
+        price = prices.get(choice.route.key)
+        if price is None or not price.over_budget or price.micros is None:
+            continue
+        if first_price is not None and first_price.currency and price.currency != first_price.currency:
+            continue  # amounts in different currencies are never compared
+        if first.estimated_cost_micros is None or price.micros < first.estimated_cost_micros:
+            from dataclasses import replace
+            return [replace(first, reason='plan_over_budget', over_plan=choice.route.key)] + list(choices[1:])
+    return choices
 
 
 def _reserved(choices, prices):
@@ -476,7 +512,7 @@ class RoutePlanner:
             ordered = policy.order(candidates, stats=stats, preferred=preferred, pages=pages, delivered=delivered,
                                    prices=prices, doubtful=incident)
             ordered, kept = _reserved(ordered, prices)
-            return ordered, kept, ()
+            return over_budget_first(ordered, prices), kept, ()
 
         choices, held, unreliable = rank(candidates)
         if one_line and choices and choices[0].route.kind in CALLING:

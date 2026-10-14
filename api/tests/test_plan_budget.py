@@ -688,6 +688,64 @@ def test_a_flat_plan_past_its_normal_use_budget_is_not_named_the_cheapest(plans)
                                                    'so its plan may not take this much.')
 
 
+FAXBEEP = '+19725329272'  # the US test line of the live case
+
+
+def _planned(routes, settings, pages=1):
+    """[(route, reason, explanation)] for the next fax to FAXBEEP, as the route preview and the worker rank it."""
+    from api.app.routing.plan import RoutePlanner, explain
+    from api.app.routing.pricing import prices_for
+    prices = prices_for(routes, settings, FAXBEEP, pages, bound='humblefax', now=OCTOBER)
+    plan = RoutePlanner(routes, direct_ready=lambda: True, local_ready=lambda: True).plan(
+        to_number=FAXBEEP, bound='humblefax', values=settings, pages=pages, alternates=True, prices=prices,
+        now=OCTOBER)
+    return [(choice.route.key, choice.reason, explain(choice, plan.destination)) for choice in plan.choices]
+
+
+@pytest.mark.parametrize('budget, used, over', [
+    # Live, 13 October 2026: 57 faxes of HumbleFax's default budget of 200 pages and 50 faxes, past both.
+    ('humblefax:pages=200,faxes=50', [4] * 57, True),
+    ('humblefax:pages=200,faxes=none', [5] * 41, True),     # past it by pages only
+    ('humblefax:pages=none,faxes=50', [1] * 50, True),      # by faxes only: the 51st would pass it
+    ('humblefax:pages=200,faxes=none', [5] * 40, True),     # exactly at the limit: one more page passes it
+    ('humblefax:pages=200,faxes=none', [5] * 39 + [4], False),  # one page left: a 1-page fax fits
+    ('humblefax:pages=none,faxes=none', [4] * 57, False),   # no budget set: never past it
+])
+def test_a_flat_plan_past_its_budget_goes_after_every_route_within_budget(plans, budget, used, over):
+    """The live defect: HumbleFax past its budget still went first ("Included in your HumbleFax plan"), because the
+    trunk beside it had no price and an unknown price never ranked ahead of a known one. A plan past its budget now
+    goes after every route within budget (plan_budget.order_key), and the first route says why."""
+    from api.app.routing.plan import route_label
+    multi, routes = plans
+    routes.replace_cards([HUMBLEFAX])  # the trunk has no rate card: its price is unknown
+    settings = values(outbound_route_providers=('sip',), plan_budgets=budget)
+    for pages in used:
+        record(multi, routes, 'humblefax', LAB, OCTOBER, pages=pages)
+    order = _planned(routes, settings)
+    if over:
+        assert order == [
+            ('sip', 'plan_over_budget', f'HumbleFax is past your normal-use budget this month, so this fax goes by '
+                                        f'{route_label("sip")}.'),
+            ('humblefax', 'alternative', 'Used if the routes above it are unavailable.')]
+    else:
+        assert order[0] == ('humblefax', 'included', 'Included in your HumbleFax plan ($10 a month).')
+
+
+def test_a_flat_plan_past_its_budget_also_goes_after_a_priced_route_and_alone_says_so(plans):
+    multi, routes = plans
+    settings = values(outbound_route_providers=('sip', 'sinch'), plan_budgets='humblefax:pages=200,faxes=50')
+    for _ in range(51):
+        record(multi, routes, 'humblefax', LAB, OCTOBER, pages=4)
+    order = _planned(routes, settings)
+    assert [(route, reason) for route, reason, _ in order] == [
+        ('sip', 'plan_over_budget'), ('sinch', 'alternative'), ('humblefax', 'alternative')]
+    # The plan as the only route: it still takes the fax, and says it is past its budget.
+    alone = _planned(routes, values(outbound_route_providers=(), plan_budgets='humblefax:pages=200,faxes=50'))
+    assert alone == [('humblefax', 'over_budget', 'Included in your HumbleFax plan, though it is past its normal-use '
+                                                  'budget this month; Faxbot has no other reliable route for this '
+                                                  'fax.')]
+
+
 def test_the_carrier_list_reads_only_published_prices():
     found, missing = carriers()
     names = {carrier.id: carrier.name for carrier in found}

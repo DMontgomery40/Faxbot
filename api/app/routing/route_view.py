@@ -142,7 +142,7 @@ def fax_route(engine, configuration, job_id, *, rules=None, hold_view=None):
             next_key = (choices.get(following['id']) or {}).get('account_key') or (
                 costs.get(following['id']) or {}).get('route')
         estimate = _money(cost.get('estimated_cost_micros'), cost.get('currency'))
-        in_plan = cost.get('route_reason') == 'included' or _plan_fax(cards, key, cost)
+        in_plan = cost.get('route_reason') in ('included', 'over_budget') or _plan_fax(cards, key, cost)
         if in_plan:
             estimate = None  # a monthly plan's own fax reads "In your plan", never $0.00
         dialed = attempt.get('dialed_number')
