@@ -296,9 +296,8 @@ async def test_ami_adapter_issues_captured_metadata_even_when_environment_change
         try:
             raw = (await writer.request(task)).decode()
             fields = dict(line.split(": ", 1) for line in raw.splitlines() if line)
-            variables = dict(
-                part.split("=", 1) for part in fields["Variable"].split(",")
-            )
+            # Parsed the way Asterisk 22 does, so the escaped commas in the hang-up handler stay in its value.
+            variables = _asterisk_variable_assignments(fields["Variable"])
             assert base64.b64decode(variables["FAXHEADER64"]).decode() == header
             assert base64.b64decode(variables["FAXSTATION64"]).decode() == station
             assert fields["CallerID"] == station

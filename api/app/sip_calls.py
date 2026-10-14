@@ -128,6 +128,106 @@ _DISPOSITION_TEXT = {
 }
 _UNFINISHED = 'The call connected but the fax did not finish.'
 
+# The carrier's own answer to an engine call it never connected. The SSL Fax engine hears only that its line hung up
+# before answer and reports every such ending as busy (E001, within a second of dialling). The trunk knows better:
+# its last SIP response, read after Dial with HANGUPCAUSE(<trunk leg>,tech) ("SIP 603 Decline", the event's Sip64),
+# and the Q.850 cause Asterisk gave the call (chan_pjsip's hangup_sip2cause: 603, 403, 401 and 407 are 21; 404 and
+# 604 are 1; 484 is 28; 486 and 600 are 17; 408 is 18; 480 is 19; 500 is 38; 502 is 27; 503 is 34). For a call the
+# carrier never connected, that answer decides the call's disposition and the fax's sentence
+# (hylafax_http.engine_result). Live over Telnyx, 13 October 2026: 603 Decline for countries the outbound profile
+# did not allow, 404 for numbers Telnyx could not route, 480 for one it could not reach, and 486 only for a line
+# that really was busy.
+CARRIER_BUSY, CARRIER_REFUSED, CARRIER_NOT_FOUND = 'busy', 'refused', 'not_found'
+CARRIER_NO_ANSWER, CARRIER_UNAVAILABLE = 'no_answer', 'unavailable'
+_SIP_KINDS = {486: CARRIER_BUSY, 600: CARRIER_BUSY,
+              401: CARRIER_REFUSED, 403: CARRIER_REFUSED, 407: CARRIER_REFUSED, 603: CARRIER_REFUSED,
+              404: CARRIER_NOT_FOUND, 484: CARRIER_NOT_FOUND, 604: CARRIER_NOT_FOUND,
+              408: CARRIER_NO_ANSWER, 480: CARRIER_NO_ANSWER, 487: CARRIER_NO_ANSWER,
+              500: CARRIER_UNAVAILABLE, 502: CARRIER_UNAVAILABLE, 503: CARRIER_UNAVAILABLE}
+# The same answers by their Q.850 cause alone, for an Asterisk that did not report the SIP response.
+_CAUSE_KINDS = {17: CARRIER_BUSY, 21: CARRIER_REFUSED, 1: CARRIER_NOT_FOUND, 28: CARRIER_NOT_FOUND,
+                18: CARRIER_NO_ANSWER, 19: CARRIER_NO_ANSWER,
+                27: CARRIER_UNAVAILABLE, 34: CARRIER_UNAVAILABLE, 38: CARRIER_UNAVAILABLE, 42: CARRIER_UNAVAILABLE}
+_CARRIER_DISPOSITIONS = {CARRIER_BUSY: 'busy', CARRIER_NO_ANSWER: 'no_answer', CARRIER_UNAVAILABLE: 'congestion',
+                         CARRIER_REFUSED: 'failed', CARRIER_NOT_FOUND: 'failed'}
+# What the admin reads (at most 80 characters, what a fax's error shows); busy keeps the engine's own sentence.
+_CARRIER_SENTENCES = {
+    CARRIER_REFUSED: 'Your carrier refused the call ({}); check its permissions for the country.',
+    CARRIER_NOT_FOUND: 'Your carrier could not reach the number as dialled ({}); check the number.',
+    CARRIER_NO_ANSWER: 'The number was unavailable or did not answer ({}); try again later.',
+    CARRIER_UNAVAILABLE: 'Your carrier could not take the call ({}); try again later.',
+}
+_SIP_ANSWER = re.compile(r'SIP ([1-6][0-9]{2})(?: (.*))?', re.ASCII)
+_STORED_SIP = re.compile(r'SIP ([3-6][0-9]{2})\b', re.ASCII)
+_STORED_CAUSE = re.compile(r'\(cause ([0-9]{1,3})\)$', re.ASCII)
+
+
+def _carrier_said(event):
+    """The trunk's final SIP answer in an engine call's event (``Sip64``): (code, its words), or None for none or for
+    a provisional one (a call cancelled while it rang)."""
+    found = _SIP_ANSWER.fullmatch(_decoded(event.get('Sip64')))
+    if not found or int(found.group(1)) < 300:
+        return None
+    return int(found.group(1)), re.sub(r'[^A-Za-z0-9 .-]', '', found.group(2) or '').strip()[:36].rstrip()
+
+
+def _carrier_kind(code, cause):
+    """What the carrier's answer means: its SIP response first, else its Q.850 cause; None when neither says."""
+    if code in _SIP_KINDS:
+        return _SIP_KINDS[code], f'SIP {code}'
+    if isinstance(cause, int) and cause in _CAUSE_KINDS:
+        return _CAUSE_KINDS[cause], f'cause {cause}'
+    return None
+
+
+def _unconnected_words(disposition, carrier, q850, kind):
+    """What error_cause stores for a call the carrier never connected: 'SIP 603 Decline (cause 21)', or Asterisk's
+    reading of it ('call failed (cause 21)'); the cause only when the carrier's answer is known."""
+    words = (f'SIP {carrier[0]} {carrier[1]}'.rstrip() if carrier else _REASON_TEXT.get(
+        {'busy': '5', 'no_answer': '3', 'congestion': '8'}.get(disposition, '0'), 'call failed'))
+    return words + (f' (cause {q850})' if q850 and (carrier or kind) else '')
+
+
+def _q850(cause):
+    cause = str(cause or '').strip()
+    return int(cause) if cause.isdecimal() and 0 < len(cause) <= 3 and int(cause) else None
+
+
+def _note_refusal(kind):
+    """The carrier refused a call it never connected (SIP 403 or 603, 404 or 484: Q.850 cause 21, 1 or 28): a burst of
+    them reads your Telnyx balance at once (routing/telnyx_balance.note_refusal), for either engine."""
+    if kind and kind[0] in (CARRIER_REFUSED, CARRIER_NOT_FOUND):
+        from .routing import telnyx_balance
+        telnyx_balance.note_refusal()
+
+
+def carrier_answer(record):
+    """(kind, label) for an outbound call the carrier never connected, from its stored record ('refused', 'SIP 603');
+    None for an answered call, one still in progress, or one whose carrier said nothing Faxbot can read."""
+    if not record or record.get('direction') != 'outbound' or record.get('disposition') in (
+            None, 'answered', 'ambiguous'):
+        return None
+    words = record.get('error_cause') or ''
+    sip, cause = _STORED_SIP.match(words), _STORED_CAUSE.search(words)
+    return _carrier_kind(int(sip.group(1)) if sip else None, int(cause.group(1)) if cause else None)
+
+
+def carrier_sentence(record):
+    """The sentence for a call the carrier never connected (``carrier_answer``), or None (busy: the number was busy,
+    as the engine says)."""
+    found = carrier_answer(record)
+    if found is None or found[0] not in _CARRIER_SENTENCES:
+        return None
+    return _CARRIER_SENTENCES[found[0]].format(found[1])
+
+
+def carrier_sentences(*kinds):
+    """Every sentence ``carrier_sentence`` can give for these kinds (exact matching elsewhere, as for adapters)."""
+    labels = [(kind, f'SIP {code}') for code, kind in _SIP_KINDS.items()]
+    labels += [(kind, f'cause {cause}') for cause, kind in _CAUSE_KINDS.items()]
+    return frozenset(_CARRIER_SENTENCES[kind].format(label) for kind, label in labels
+                     if kind in kinds and kind in _CARRIER_SENTENCES)
+
 
 class SipCallRecordError(RuntimeError):
     """Sanitized storage failure; never includes SQL or values."""
@@ -373,7 +473,7 @@ def call_summary(record):
     if disposition == 'failed' and record['direction'] == 'inbound':
         return 'The caller hung up before Faxbot answered.'
     if disposition != 'answered':
-        return _DISPOSITION_TEXT[disposition]
+        return carrier_sentence(record) or _DISPOSITION_TEXT[disposition]
     found = stored_verdict(record)
     if found == NOT_HANDED_OVER:
         return handover_sentence((record['error_cause'] or '').split(':', 1)[1])
@@ -591,6 +691,32 @@ class SipCallRecords:
             return self._outbound_row(connection, table, job_id, attempt_id, now, **values, **extra)['id']
         return self._write(write)
 
+    def record_unanswered(self, event, *, now=None):
+        """A built-in engine call the carrier never connected (the dialplan's FaxCallUnanswered, sent before
+        Asterisk's OriginateResponse, which carries no cause): the carrier's own answer decides the call's
+        disposition and words, as for the SSL Fax engine's calls, and OriginateResponse then leaves the ended call
+        as it is. Without an answer Faxbot can read nothing changes. Returns the row's id, or None."""
+        job_id, attempt_id = _identity(event.get('JobID')), _identity(event.get('AttemptID'))
+        if job_id is None or attempt_id is None:
+            return None
+        carrier, q850 = _carrier_said(event), _q850(event.get('Cause'))
+        kind = _carrier_kind(carrier[0] if carrier else None, q850)
+        if kind is None:
+            return None
+        _note_refusal(kind)  # the built-in engine's refusals count toward the burst too
+        now = now or utcnow()
+        disposition = _CARRIER_DISPOSITIONS[kind[0]]
+
+        def apply(connection, table):
+            row = self._outbound_row(connection, table, job_id, attempt_id, now)
+            if row['answered_at'] is not None or row['ended_at'] is not None:
+                return row['id']
+            connection.execute(table.update().where(table.c.id == row['id']).values(
+                updated_at=now, disposition=disposition, ended_at=now, connected_seconds=0,
+                error_cause=_unconnected_words(disposition, carrier, q850, kind)))
+            return row['id']
+        return self._write(apply)
+
     def record_originate_response(self, event, *, now=None):
         parts = str(event.get('ActionID') or '').split(':')
         if len(parts) != 3 or parts[0] != 'faxbot':
@@ -677,16 +803,21 @@ class SipCallRecords:
         _log_gateway(event)
         if direction == 'outbound' and side == 'trunk':
             return self._record_trunk_side(event, t38, heard, now)
-        if direction == 'outbound' and not answered and cause in ('1', '21'):
-            # The carrier refused the call (SIP 404 or 403): a burst of them reads your Telnyx balance at once.
-            from .routing import telnyx_balance
-            telnyx_balance.note_refusal()
+        # A call the carrier never connected: its own answer decides (a 603 is refused, never busy), else Asterisk's.
+        # Not after Dial said answered, nor after the engine hung up first (CANCEL): that cause is not the carrier's.
+        unconnected = not answered and dial_status not in ('ANSWER', 'CANCEL')
+        carrier = _carrier_said(event) if unconnected else None
+        q850 = _q850(cause)
+        kind = _carrier_kind(carrier[0] if carrier else None, q850) if unconnected else None
+        if direction == 'outbound':
+            _note_refusal(kind)
         if answered:
             disposition = 'answered'
         else:
-            disposition = {'BUSY': 'busy', 'NOANSWER': 'no_answer', 'CONGESTION': 'congestion'}.get(
-                dial_status) or {'17': 'busy', '18': 'no_answer', '19': 'no_answer', '34': 'congestion',
-                                 '38': 'congestion', '42': 'congestion'}.get(cause, 'failed')
+            disposition = (_CARRIER_DISPOSITIONS.get(kind[0]) if kind else None) or {
+                'BUSY': 'busy', 'NOANSWER': 'no_answer', 'CONGESTION': 'congestion'}.get(dial_status) or {
+                '17': 'busy', '18': 'no_answer', '19': 'no_answer', '34': 'congestion', '38': 'congestion',
+                '42': 'congestion'}.get(cause, 'failed')
         sip_call_id = _sip_call_id(event.get('CallID64'))
         if direction == 'outbound':
             job_id, attempt_id = _identity(event.get('JobID')), _identity(event.get('AttemptID'))
@@ -703,9 +834,10 @@ class SipCallRecords:
                 if row['t38'] == 'unknown':
                     changes['t38'] = t38
                 kept = row['error_cause'] if row['fax_status'] is None else None
-                if not answered and (row['error_cause'] is None or kept in (_HEARD, _SILENT)):
-                    changes['error_cause'] = _REASON_TEXT.get({'busy': '5', 'no_answer': '3', 'congestion': '8'}.get(
-                        disposition, '0'), 'call failed')
+                if not answered and (row['error_cause'] is None or kept in (_HEARD, _SILENT) or kind):
+                    # The carrier's answer replaces the engine's words for a call it never connected, whichever
+                    # came first: 'SIP 603 Decline (cause 21)'.
+                    changes['error_cause'] = _unconnected_words(disposition, carrier, q850, kind)
                 if sip_call_id and not row['sip_call_id']:
                     changes['sip_call_id'] = sip_call_id
                 connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
@@ -784,8 +916,10 @@ class SipCallRecords:
             if row['fax_status'] is not None:
                 return row['id']  # The same result again (a report sent twice): the first one stands.
             kept = row['error_cause'] if row['fax_status'] is None else None
+            # The carrier's answer to a call it never connected says more than the engine's words.
+            words = row['error_cause'] if cause is not None and carrier_answer(dict(row)) is not None else cause
             changes = {'fax_status': 'SUCCESS' if success else 'FAILED', 'pages': _pages(pages),
-                       'remote_station_id': station or row['remote_station_id'], 'error_cause': cause}
+                       'remote_station_id': station or row['remote_station_id'], 'error_cause': words}
             connection.execute(table.update().where(table.c.id == row['id']).values(updated_at=now, **changes))
             self._settle_engine(connection, table, row['id'], _kept_heard(kept), now)
             return row['id']
@@ -1142,6 +1276,34 @@ def _on_inbound_call(event):
                                    number=_number(event.get('Caller')))
 
 
+def _on_call_unanswered(event):
+    """Recorded at once, in AMI order, so the OriginateResponse that follows reads it (carrier_sentence_for)."""
+    records = _current
+    if records is None:
+        return
+    try:
+        records.record_unanswered(event)
+    except Exception:
+        logging.getLogger(__name__).warning('A SIP call record could not be saved.')
+
+
+def carrier_sentence_for(attempt_id):
+    """The sentence for a built-in engine call the carrier never connected, from its call record (its
+    FaxCallUnanswered event): refused, not reachable as dialled, no answer, carrier unavailable or busy; None
+    when the carrier said nothing Faxbot can read, or the record cannot be read."""
+    records = _current
+    if records is None:
+        return None
+    try:
+        rows = records.for_attempt(attempt_id)
+    except SipCallRecordError:
+        return None
+    found = carrier_answer(rows[-1]) if rows else None
+    if found is None:
+        return None
+    return _DISPOSITION_TEXT['busy'] if found[0] == CARRIER_BUSY else carrier_sentence(rows[-1])
+
+
 def _on_engine_call(event):
     records = _current
     if records is None:
@@ -1197,6 +1359,10 @@ def attach(ami_client, engine):
     ami_client.on_originate_response(_on_originate_response)
     ami_client.on_fax_result(_on_fax_result)
     ami_client.on_inbound_call(_on_inbound_call)
+    # A built-in engine call the carrier never connected, with the carrier's own answer.
+    on_unanswered = getattr(ami_client, 'on_call_unanswered', None)
+    if on_unanswered is not None:
+        on_unanswered(_on_call_unanswered)
     # Calls the SSL Fax engine (HylaFAX+) placed or answered through the trunk.
     ami_client.on_engine_call(_on_engine_call)
     on_missed = getattr(ami_client, 'on_engine_missed', None)

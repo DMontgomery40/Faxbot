@@ -340,6 +340,90 @@ def test_calls_that_never_connected_read_as_one_sentence(records, reason, senten
     assert sip_calls.originate_summary({**event, 'Response': 'Success'}) is None
 
 
+@pytest.mark.parametrize('sip, cause, disposition, sentence', [
+    ('SIP 603 Decline', '21', 'failed',
+     'Your carrier refused the call (SIP 603); check its permissions for the country.'),
+    ('SIP 403 Forbidden', '21', 'failed',
+     'Your carrier refused the call (SIP 403); check its permissions for the country.'),
+    ('SIP 404 Not Found', '1', 'failed',
+     'Your carrier could not reach the number as dialled (SIP 404); check the number.'),
+    ('SIP 484 Address Incomplete', '28', 'failed',
+     'Your carrier could not reach the number as dialled (SIP 484); check the number.'),
+    ('SIP 480 Temporarily Unavailable', '19', 'no_answer',
+     'The number was unavailable or did not answer (SIP 480); try again later.'),
+    ('SIP 486 Busy Here', '17', 'busy', 'The number was busy.'),
+    ('SIP 503 Service Unavailable', '34', 'congestion',
+     'Your carrier could not take the call (SIP 503); try again later.'),
+    # An Asterisk image older than the API (no Sip64): the Q.850 cause alone.
+    (None, '21', 'failed', 'Your carrier refused the call (cause 21); check its permissions for the country.'),
+    # Nothing the carrier said: Asterisk's OriginateResponse decides, as before.
+    (None, '', 'failed', 'The call did not connect.'),
+    (None, '16', 'failed', 'The call did not connect.'),
+])
+def test_a_builtin_engine_call_the_carrier_never_connected_reads_the_carriers_answer(records, monkeypatch, sip, cause,
+                                                                                      disposition, sentence):
+    """The built-in engine's call never reaches faxbot-send when the carrier turns it away, so its hang-up handler
+    reports the carrier's answer (FaxCallUnanswered) before Asterisk's OriginateResponse, which says only that the
+    call failed ("The call did not connect.", Reason 1, for a 603 Decline before this)."""
+    import base64
+    monkeypatch.setattr(sip_calls, '_current', records)
+    records.record_submission(submission(), now=NOW)
+    unanswered = {'Event': 'UserEvent', 'UserEvent': 'FaxCallUnanswered', 'JobID': JOB, 'AttemptID': ATTEMPT,
+                  'Cause': cause, 'Sip64': base64.b64encode(sip.encode()).decode() if sip else ''}
+    sip_calls._on_call_unanswered(unanswered)
+    event = {'Response': 'Failure', 'Reason': '1', 'ActionID': f'faxbot:{JOB}:{ATTEMPT}'}
+    records.record_originate_response(event, now=NOW + timedelta(seconds=30))
+    [record] = records.for_attempt(ATTEMPT)
+    assert record['disposition'] == disposition and record['summary'] == sentence and record['verdict'] is None
+    # The fax's own sentence (main._handle_originate_response) is the same.
+    assert (sip_calls.carrier_sentence_for(ATTEMPT) or sip_calls.originate_summary(event)) == sentence
+    assert len(sentence) <= 80
+
+
+def test_carrier_refusals_on_either_engine_count_toward_the_telnyx_balance_burst(records, monkeypatch):
+    """An account Telnyx turned off refuses every call (routing/telnyx_balance.note_refusal): a refused or not-found
+    answer counts on the built-in engine's calls as on the SSL Fax engine's; no answer or busy does not."""
+    import base64
+    from app.routing import telnyx_balance
+    noted = []
+    monkeypatch.setattr(telnyx_balance, 'note_refusal', lambda now=None: noted.append(True))
+
+    def unanswered(attempt, sip, cause):
+        return {'JobID': JOB, 'AttemptID': attempt, 'Cause': cause, 'Sip64': base64.b64encode(sip.encode()).decode()}
+    records.record_unanswered(unanswered(ATTEMPT, 'SIP 603 Decline', '21'), now=NOW)
+    records.record_unanswered(unanswered('c' * 32, 'SIP 404 Not Found', '1'), now=NOW)
+    records.record_unanswered(unanswered('d' * 32, 'SIP 480 Temporarily Unavailable', '19'), now=NOW)
+    records.record_unanswered(unanswered('e' * 32, 'SIP 486 Busy Here', '17'), now=NOW)
+    assert len(noted) == 2
+    # The SSL Fax engine's unanswered call refused by the carrier counts the same way.
+    records.record_engine_call({'Direction': 'out', 'Side': 'engine', 'JobID': JOB, 'AttemptID': 'f' * 32,
+                                'Answered': '', 'Cause': '21', 'DialStatus': 'CHANUNAVAIL',
+                                'Sip64': base64.b64encode(b'SIP 603 Decline').decode()}, now=NOW)
+    assert len(noted) == 3
+
+
+def test_the_builtin_engines_calls_carry_the_hang_up_handler_that_reports_an_unconnected_call():
+    """Pushed through the Originate's variables, its commas escaped so AMI does not split them; the dialplan's
+    handler reports only a call that never reached faxbot-send."""
+    from pathlib import Path
+    from app.ami import UNANSWERED_HANDLER, _validate_headers
+    assert UNANSWERED_HANDLER == 'CHANNEL(hangup_handler_push)=faxbot-send-unanswered\\,s\\,1'
+    _validate_headers({'Variable': 'JOBID=' + JOB + ',' + UNANSWERED_HANDLER})
+    dialplan = (Path(__file__).resolve().parents[2] / 'asterisk/etc/asterisk/extensions.conf').read_text()
+    handler = dialplan.split('[faxbot-send-unanswered]', 1)[1].split('\n[', 1)[0]
+    steps = [line.strip() for line in handler.splitlines() if line.strip() and not line.startswith(';')]
+    assert steps == [
+        'exten => s,1,GotoIf($["${FAXBOT_ANSWERED}" != ""]?done)',
+        'same => n,Gosub(faxbot-carrier-answer,s,1)',
+        'same => n,UserEvent(FaxCallUnanswered,JobID:${JOBID},AttemptID:${FAXATTEMPT},Cause:${HANGUPCAUSE},'
+        'Sip64:${FAXBOT_SIP64})',
+        'same => n(done),Return()']
+    # faxbot-send marks the call answered first thing after its own result handler, so an answered call is skipped.
+    send = [line.strip() for line in dialplan.split('[faxbot-send]', 1)[1].split('\n[', 1)[0].splitlines()
+            if line.strip()]
+    assert send[1] == 'same => n,Set(FAXBOT_ANSWERED=${EPOCH})'
+
+
 def test_sent_and_received_calls_read_as_confirmed_pages(records):
     records.record_submission(submission(), now=NOW)
     records.record_fax_result(fax_result(), now=NOW + timedelta(seconds=74))

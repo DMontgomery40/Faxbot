@@ -398,6 +398,15 @@ _NATIVE_NO_DATA = {'Event': 'UserEvent', 'UserEvent': 'FaxResult', 'Status': 'FA
      'The other fax machine answered but the fax did not finish.'),
     ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '5'}, 'failed',
      'The number was busy.'),
+    # The carrier refused the call (its hang-up handler's FaxCallUnanswered came first): never "did not connect".
+    ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '1',
+                                    'Unanswered': {'Cause': '21',
+                                                   'Sip64': base64.b64encode(b'SIP 603 Decline').decode()}},
+     'failed', 'Your carrier refused the call (SIP 603); check its permissions for the country.'),
+    ('_handle_originate_response', {'Event': 'OriginateResponse', 'Response': 'Failure', 'Reason': '1',
+                                    'Unanswered': {'Cause': '1',
+                                                   'Sip64': base64.b64encode(b'SIP 404 Not Found').decode()}},
+     'failed', 'Your carrier could not reach the number as dialled (SIP 404); check the number.'),
     ('_handle_fax_result', {**_NATIVE_NO_DATA, 'Status': 'SUCCESS', 'Pages': '2'}, 'success', None),
 ])
 async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(database, tmp_path, monkeypatch,
@@ -427,6 +436,12 @@ async def test_native_trunk_result_explains_a_failed_fax_in_one_sentence(databas
     monkeypatch.setattr(main, '_deliveries', lambda: delivery)
     monkeypatch.setattr(OutboundStore, 'fallback_policy', None)
     fields = {**event, 'JobID': job, 'AttemptID': attempt, 'ActionID': f'faxbot:{job}:{attempt}'}
+    unanswered = fields.pop('Unanswered', None)
+    if unanswered is not None:
+        from api.app import sip_calls
+        records = sip_calls.SipCallRecords(database)
+        monkeypatch.setattr(sip_calls, '_current', records)
+        records.record_unanswered({**unanswered, 'JobID': job, 'AttemptID': attempt})
     getattr(main, handler)(fields)
     assert delivery.get(job)['state'] == state
     with database.connect() as connection:
