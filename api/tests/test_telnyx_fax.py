@@ -636,3 +636,38 @@ def test_while_telnyx_is_stopped_a_fax_goes_by_the_next_route_and_says_why(balan
     assert no_route_sentence(lambda key: 'Telnyx trunk', [('sip', 'account_stopped')]) == (
         'No account your rules allow can send this fax now: Telnyx trunk is stopped because Telnyx has turned your '
         'account off. It waits for you in Sent; nothing was sent.')
+
+
+@pytest.mark.parametrize('key, source', [('sip', "Telnyx's published price, read 3 October 2026"),
+                                         ('telnyx_fax', "Telnyx Fax API's published price, read 13 October 2026")])
+def test_a_telnyx_account_with_no_saved_card_is_priced_by_telnyxs_published_price(database, key, source):  # noqa: F811
+    """Live, 13 October 2026: a Telnyx trunk and a Telnyx Fax API account with no rate card saved in Faxbot read "none
+    of your routes had a price", so cost routing was blind, though Telnyx publishes both prices (telnyx.com/pricing/
+    elastic-sip: $0.005 a minute in the US, 60/60; telnyx.com/pricing/fax: $0.007 a page plus that trunk usage; both
+    read again on 13 October 2026). The published card prices them and the sentence names it; a price you enter
+    wins."""
+    from types import SimpleNamespace
+    from api.app.routing.costs import RateCard, parse_amount
+    from api.app.routing.pricing import price
+    from api.app.routing.store import RouteStore
+    from api.app.schema import upgrade_schema
+    upgrade_schema(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    humblefax = RateCard(None, 'humblefax', 'outbound', 'HumbleFax', 'USD', 0, 0, 0, 60, 0, None,
+                         datetime(2026, 10, 9), parse_amount('10', whole_digits=4))
+    routes.replace_cards([humblefax])  # cards saved in Faxbot, none for Telnyx
+    values = SimpleNamespace(fax_default_country='US', sip_trunk_preset='telnyx', sip_t38_enabled=True,
+                             plan_budgets='', time_zone='', provider_accounts={})
+    now = datetime(2026, 10, 13, 18)
+    found = price(routes, values, key, '+12025550123', 2, now=now)
+    # About 31 seconds for two typical pages: one billed minute, and the Fax API's two pages.
+    assert found.micros == (5_000 if key == 'sip' else 5_000 + 2 * 7_000) and found.currency == 'USD'
+    assert source in found.sentence
+    # The price you enter for the account wins, and no longer says it is Telnyx's.
+    identity = 'sip-telnyx' if key == 'sip' else 'telnyx_fax'
+    yours = RateCard(None, identity, 'outbound', 'Yours', 'USD', parse_amount('0.004'),
+                     parse_amount('0.006' if key == 'telnyx_fax' else '0'), 0, 60, 60, None, datetime(2026, 10, 13))
+    routes.replace_cards([humblefax, yours])
+    entered = price(routes, values, key, '+12025550123', 2, now=now)
+    assert entered.micros == (4_000 if key == 'sip' else 4_000 + 2 * 6_000)
+    assert 'published price' not in entered.sentence

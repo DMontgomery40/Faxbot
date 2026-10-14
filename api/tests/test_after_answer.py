@@ -259,6 +259,15 @@ async def test_with_a_trunk_the_cloud_routes_are_skipped_and_the_trunk_sends(dat
     monkeypatch.setattr(transport, 'ensure_route_artifact', lambda revision, configuration, job_id: None)
     with env.engine.begin() as connection:
         after_answer.set_on(connection, TO, '2w105', now=datetime.utcnow())
+    # A trunk price you saved above the cloud accounts' (a Telnyx trunk with no saved card is priced at Telnyx's
+    # published $0.005 a minute and would rank first), so a cloud account ranks first and is skipped for the keys.
+    from api.app.routing.costs import RateCard, parse_amount
+    from api.app.routing.store import RouteStore
+    store = RouteStore(env.engine)
+    dear = RateCard(None, 'sip-telnyx', 'outbound', 'Telnyx', 'USD', parse_amount('1.00'), 0, 0, 60, 60, None,
+                    datetime(2026, 10, 13))
+    store.replace_cards([card for card in store.current_cards()
+                         if (card.provider_id, card.direction) != ('sip-telnyx', 'outbound')] + [dear])
     job = accept(env, to=TO)
     inner = Inner(env.delivery)
     assert await OutboundWorker(env.delivery, RoutedTransport(inner, direct=None)).step() is True
