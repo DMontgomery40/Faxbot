@@ -21,6 +21,8 @@ export interface HealthStatus {
   backend_healthy: boolean;
   // One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
   backend_message?: string | null;
+  // Your Telnyx balance when it is low or Telnyx has turned the account off; null otherwise.
+  carrier_balance?: { state: 'low' | 'stopped'; sentence: string } | null;
   // The provider that receives faxes ('' when receiving is off), and whether receiving can work now.
   receiving_backend?: string;
   receiving_ready?: boolean;
@@ -415,6 +417,8 @@ export interface Settings {
     // opt-in to also make light areas white (off by default; it may erase pale text).
     fax_friendly_documents?: 'where_it_saves' | 'always' | 'never';
     fax_friendly_whiten?: boolean;
+    // Warn when your Telnyx balance is below this amount; '' is a week of usual Telnyx spending, else $5.
+    telnyx_balance_warning?: string;
   };
   intake?: {
     email_enabled: boolean;

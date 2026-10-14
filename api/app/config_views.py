@@ -359,6 +359,8 @@ def project_admin_settings(snapshot: ConfigurationSnapshot, pending_fields: Iter
             # white (off by default).
             'fax_friendly_documents': values.fax_friendly_documents,
             'fax_friendly_whiten': values.fax_friendly_whiten,
+            # Warn when your Telnyx balance is below this amount; '' is a week of usual spending, else $5.
+            'telnyx_balance_warning': values.telnyx_balance_warning,
         },
         'intake': {
             'email_enabled': values.intake_email_enabled,
