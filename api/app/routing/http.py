@@ -73,7 +73,7 @@ def _background(app):
 
 def _telnyx_balance_step(engine):
     from . import telnyx_balance
-    return telnyx_balance.step(_telnyx_key, engine=engine)
+    return telnyx_balance.step(_telnyx_key, engine=engine, values=_managed_values())
 
 
 def _holds_step(delivery):

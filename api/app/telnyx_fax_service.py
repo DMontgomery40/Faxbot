@@ -112,6 +112,9 @@ BEFORE_FAX_DATA = {
     'connection_channel_limit_exceeded': LIMIT_REACHED,
     'outbound_profile_daily_spend_limit_exceeded': LIMIT_REACHED,
 }
+# Telnyx's refusals of the call itself (as a SIP 404 or 403 would be): a burst of them reads the balance.
+REFUSALS = frozenset({'receiver_unallocated_number', 'destination_invalid', 'destination_not_in_service_plan',
+                      'destination_not_in_countries_whitelist'})
 # Every sentence above; delivery history shows a reason only from such a set.
 FAILURE_SENTENCES = frozenset({*REFUSED.values(), UNREACHABLE, NOT_UPLOADED, *BEFORE_FAX_DATA.values(),
                                PARTLY_SENT, NOT_CONFIRMED})
@@ -154,6 +157,10 @@ def failure_outcome(fax: dict) -> tuple[str, str | None, bool | None]:
         # Telnyx turned the account off: its routes stop and the balance is read again (routing/telnyx_balance.py).
         from .routing import telnyx_balance
         telnyx_balance.note_disabled()
+    elif reason in REFUSALS:
+        # Telnyx refused the call as a SIP 404 or 403 would: a burst of them reads your balance at once.
+        from .routing import telnyx_balance
+        telnyx_balance.note_refusal()
     if reason in BEFORE_FAX_DATA:
         return BEFORE_FAX_DATA[reason], None, True
     return NOT_CONFIRMED, 'pages_unconfirmed', None

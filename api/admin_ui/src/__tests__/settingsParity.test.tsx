@@ -103,6 +103,20 @@ describe('Settings delivery routes', () => {
     expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', outbound_routes: 'humblefax,sip', route_min_success_percent: 90 });
   });
 
+  it('saves the Telnyx balance warning level in the words the command line uses', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} />);
+    const routes = await section('Delivery routes');
+    // `faxbot delivery providers trunk balance --warn-below` (routing/telnyx_balance.py WARNING_LABEL, WARNING_HELP).
+    const field = within(routes).getByLabelText('Warn when your Telnyx balance is below');
+    expect(routes.textContent).toContain('Leave it empty to be warned below a week of your usual Telnyx spending, '
+      + 'or $5 when Faxbot has none.');
+    fireEvent.change(field, { target: { value: '10' } });
+    apply();
+    expect(await screen.findByText('Settings saved.')).toBeTruthy();
+    expect(writes[0]).toEqual({ expected_revision_id: 'rev-a', telnyx_balance_warning: '10' });
+  });
+
   it('delivers faxes to your own numbers inside Faxbot by default and saves turning it off', async () => {
     const writes = settingsHandlers(settingsFixture());
     render(<Settings client={client()} />);

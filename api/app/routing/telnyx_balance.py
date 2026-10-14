@@ -35,6 +35,30 @@ TELNYX_ROUTES = ('telnyx_fax',)
 SKIP = 'account_stopped'
 
 
+# The setting ``telnyx_balance_warning``, in the console and ``faxbot delivery providers trunk balance --warn-below``,
+# in the same words.
+WARNING_LABEL = 'Warn when your Telnyx balance is below'
+WARNING_HELP = ('An amount such as 10, in your Telnyx currency. Leave it empty to be warned below a week of your '
+                'usual Telnyx spending, or $5 when Faxbot has none.')
+# A burst of carrier refusals (SIP 404 or 403: Q.850 cause 1 or 21) reads the balance at once, at most this often.
+BURST = 3
+BURST_WINDOW = timedelta(minutes=5)
+
+
+def normalize_warning(value):
+    """'' or a positive amount with at most two decimals ('10.00'); raises ValueError in plain words."""
+    text = str(value or '').strip().lstrip('$')
+    if not text:
+        return ''
+    try:
+        amount = Decimal(text)
+    except (InvalidOperation, ValueError):
+        raise ValueError('Enter an amount such as 10, or leave it empty.') from None
+    if not amount.is_finite() or amount <= 0 or amount > 100000 or amount != amount.quantize(Decimal('0.01')):
+        raise ValueError('Enter an amount above 0 and up to 100000, with at most two decimals, or leave it empty.')
+    return f'{amount:.2f}'
+
+
 class BalanceUnavailable(RuntimeError):
     """The balance could not be read now; one plain sentence, never a secret."""
 
@@ -125,22 +149,44 @@ def note_disabled(now=None):
 
 def clear():
     """No Telnyx key any more: nothing to say."""
-    global _state, _due, _daily
+    global _state, _due, _daily, _warning, _burst_at
     with _lock:
-        _state, _due, _daily = State(), None, None
+        _state, _due, _daily, _warning, _burst_at = State(), None, None, None, None
+        _refusals.clear()
 
 
 _due = None
 # Your usual Telnyx spending a day, as the last background check read it, for readers without the database.
 _daily = None
+# The warning level you set (``telnyx_balance_warning``), in micros; None: a week of usual spending, else $5.
+_warning = None
+# Carrier refusals seen lately, and when a burst of them last read the balance.
+_refusals = []
+_burst_at = None
 
 
-def step(api_key, *, engine=None, client_factory=None, now=None):
+def note_refusal(now=None):
+    """A call the carrier refused (SIP 404 or 403). ``BURST`` of them within ``BURST_WINDOW`` read the balance at
+    once (an account Telnyx turned off refuses every call), at most once per ``BURST_WINDOW``."""
+    global _due, _burst_at
+    now = now or _now()
+    with _lock:
+        _refusals[:] = [moment for moment in _refusals if now - moment < BURST_WINDOW] + [now]
+        if len(_refusals) >= BURST and (_burst_at is None or now - _burst_at >= BURST_WINDOW):
+            _due, _burst_at = None, now
+            _refusals.clear()
+            return True
+    return False
+
+
+def step(api_key, *, engine=None, client_factory=None, now=None, values=None):
     """The background check: read the balance when it is due (every ``INTERVAL``, or at once after
     ``note_disabled``). Returns False (the caller's repeat waits its interval)."""
-    global _due, _daily
+    global _due, _daily, _warning
     now = now or _now()
     key = api_key() if callable(api_key) else api_key
+    if values is not None:
+        _warning = configured_micros(values)
     if not key:
         clear()
         return False
@@ -185,6 +231,15 @@ def usual_daily_micros(engine, now=None):
     return -(-int(total) // SPEND_DAYS)
 
 
+def configured_micros(values):
+    """The warning level you set, in micros, or None for the default."""
+    try:
+        text = normalize_warning(getattr(values, 'telnyx_balance_warning', '') or '')
+    except ValueError:
+        return None
+    return _micros(text) if text else None
+
+
 def warning_micros(engine=None, now=None):
     """The credit below which Faxbot warns: a week of your usual Telnyx spending, else ``DEFAULT_WARNING``."""
     daily = usual_daily_micros(engine, now)
@@ -210,13 +265,16 @@ def status(engine=None, now=None, state=None):
             f'Telnyx has turned your account off{told}, so faxes cannot be sent or received through Telnyx. Faxbot '
             'sends by your other routes until you add funds in the Telnyx portal under Billing.')}
     daily = usual_daily_micros(engine, now) if engine is not None else _daily
-    threshold = DEFAULT_WARNING if daily is None else max(daily * 7, 1)
+    chosen = _warning
+    threshold = chosen if chosen is not None else DEFAULT_WARNING if daily is None else max(daily * 7, 1)
     if balance.available_micros >= threshold:
         return None
     if daily:
         days = balance.available_micros // daily
         span = 'less than a day' if days < 1 else f'about {days} day{"s" if days != 1 else ""}'
         how = f'{span} of your usual faxing'
+    elif chosen is not None:
+        how = f'below the {money_text(threshold, balance.currency)} you chose to be warned at'
     else:
         how = f'below the {money_text(threshold, balance.currency)} Faxbot warns at'
     return {'state': 'low', 'available': available, 'read_at': read_at, 'sentence': (

@@ -415,6 +415,8 @@ export interface Settings {
     // opt-in to also make light areas white (off by default; it may erase pale text).
     fax_friendly_documents?: 'where_it_saves' | 'always' | 'never';
     fax_friendly_whiten?: boolean;
+    // Warn when your Telnyx balance is below this amount; '' is a week of usual Telnyx spending, else $5.
+    telnyx_balance_warning?: string;
   };
   intake?: {
     email_enabled: boolean;
