@@ -452,3 +452,187 @@ def test_the_published_card_prices_pages_and_minutes_with_its_source():
     assert attempt_cost(card, seconds=95, pages=3, delivered=True) == 2 * 5_000 + 3 * 7_000
     # An unknown call length is an unknown cost, never zero minutes.
     assert attempt_cost(card, seconds=None, pages=3, delivered=True) is None
+
+
+# Your Telnyx balance (routing/telnyx_balance.py) ---------------------------------------------------------------
+# Live, 13 October 2026: Telnyx turned the account off at -$1.38; calls to the numbers got SIP 404 and a Fax API send
+# failed "account_disabled", while the board and health read green. Every answer below is a synthetic Telnyx reply.
+
+@pytest.fixture
+def balance_state():
+    from api.app.routing import telnyx_balance
+    telnyx_balance.clear()
+    yield telnyx_balance
+    telnyx_balance.clear()
+
+
+def balance_reply(balance, available, *, status=200, asked=None):
+    def handler(request):
+        if asked is not None:
+            asked.append((request.url.path, request.headers.get('authorization')))
+        return httpx.Response(status, json={'data': {'record_type': 'balance', 'balance': balance,
+                                                     'credit_limit': '0.00', 'available_credit': available,
+                                                     'currency': 'USD'}})
+    return lambda: httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_balance_below_a_week_of_usual_faxing_warns_in_one_sentence(balance_state, monkeypatch):
+    asked = []
+    now = datetime(2026, 10, 13, 20)
+    balance_state.step(lambda: 'synthetic-key', client_factory=balance_reply('3.10', '3.10', asked=asked), now=now)
+    assert asked == [('/v2/balance', 'Bearer synthetic-key')]
+    # $0.775 a day of Telnyx faxing over the last four weeks: $3.10 is about 4 days, under a week's $5.43.
+    monkeypatch.setattr(balance_state, 'usual_daily_micros', lambda engine, now=None: 775_000)
+    found = balance_state.status(engine=object(), now=now)
+    assert found['state'] == 'low' and found['available'] == {'amount': '3.10', 'currency': 'USD'}
+    assert found['sentence'] == ('Your Telnyx balance is $3.10, about 4 days of your usual faxing. When it reaches $0, '
+                                 'Telnyx stops your calls in both directions. Add funds in the Telnyx portal under '
+                                 'Billing.')
+    # With no record of usual spending, Faxbot warns below $5; at or above it there is nothing to say.
+    monkeypatch.setattr(balance_state, 'usual_daily_micros', lambda engine, now=None: None)
+    assert balance_state.status(engine=object(), now=now)['sentence'].startswith(
+        'Your Telnyx balance is $3.10, below the $5.00 Faxbot warns at.')
+    balance_state.record(balance_state.fetch('k', client_factory=balance_reply('25.00', '25.00')))
+    assert balance_state.status(engine=object(), now=now) is None and not balance_state.stopped()
+    # The next reading waits its interval; no key clears what was said.
+    balance_state.step(lambda: 'synthetic-key', client_factory=balance_reply('0', '0', asked=asked),
+                       now=now + timedelta(minutes=5))
+    assert len(asked) == 1
+    balance_state.step(lambda: '', now=now + timedelta(minutes=20))
+    assert balance_state.status() is None
+
+
+def test_no_credit_or_account_disabled_stops_telnyx_routes_and_says_so(balance_state):
+    balance_state.record(balance_state.fetch('k', client_factory=balance_reply('-1.38', '-1.38')))
+    assert balance_state.stopped()
+    assert balance_state.status()['sentence'] == (
+        'Telnyx has turned your account off (your balance is -$1.38), so faxes cannot be sent or received through '
+        'Telnyx. Faxbot sends by your other routes until you add funds in the Telnyx portal under Billing.')
+    balance_state.clear()
+    # A Fax API send Telnyx failed as account_disabled: a certain failure before any page, and the routes stop at once.
+    sentence, category, before = telnyx.failure_outcome({'failure_reason': 'account_disabled', 'page_count': 0})
+    assert (sentence, category, before) == (telnyx.ACCOUNT_DISABLED, None, True)
+    assert balance_state.stopped() and balance_state.status()['state'] == 'stopped'
+    # The balance is read again at once, and credit available again clears it.
+    asked = []
+    balance_state.step(lambda: 'k', client_factory=balance_reply('20.00', '20.00', asked=asked))
+    assert asked and not balance_state.stopped()
+
+
+def test_the_warning_level_you_set_replaces_the_default_and_refuses_what_is_not_an_amount(balance_state):
+    from types import SimpleNamespace
+    from api.app.config_values import ConfigurationValues
+    assert ConfigurationValues.from_environment({'FAX_TELNYX_BALANCE_WARNING': '$10'}).telnyx_balance_warning == '10.00'
+    for refused in ('ten', '0', '-5', '10.005'):
+        with pytest.raises(ValueError):
+            balance_state.normalize_warning(refused)
+    now = datetime(2026, 10, 13, 20)
+    balance_state.step(lambda: 'k', client_factory=balance_reply('8.00', '8.00'), now=now,
+                       values=SimpleNamespace(telnyx_balance_warning='10'))
+    assert balance_state.status(now=now)['sentence'] == (
+        'Your Telnyx balance is $8.00, below the $10.00 you chose to be warned at. When it reaches $0, Telnyx stops '
+        'your calls in both directions. Add funds in the Telnyx portal under Billing.')
+    # Empty goes back to the default: $8.00 is above the $5 Faxbot warns at with no record of usual spending.
+    balance_state.step(lambda: 'k', client_factory=balance_reply('8.00', '8.00'), now=now + timedelta(minutes=20),
+                       values=SimpleNamespace(telnyx_balance_warning=''))
+    assert balance_state.status(now=now) is None
+
+
+def test_a_burst_of_carrier_refusals_reads_the_balance_at_once_at_most_every_five_minutes(balance_state, database,  # noqa: F811
+                                                                                          monkeypatch):
+    """An account Telnyx turned off refuses every call (SIP 404 or 403, Q.850 cause 1 or 21): three such refusals
+    within five minutes, on the trunk's own calls or the Telnyx Fax API's, read the balance at once."""
+    from api.app import sip_calls
+    from api.app.schema import upgrade_schema
+    asked = []
+    now = datetime(2026, 10, 13, 20)
+    reply = balance_reply('-1.38', '-1.38', asked=asked)
+    balance_state.step(lambda: 'k', client_factory=balance_reply('30.00', '30.00'), now=now)
+    later = now + timedelta(minutes=2)
+    clock = [later]
+    monkeypatch.setattr(balance_state, '_now', lambda: clock[0])
+    upgrade_schema(database)
+    records = sip_calls.SipCallRecords(database)
+    for index in range(2):
+        attempt = f'{index + 1:032x}'
+        records.record_engine_call({'Direction': 'out', 'Side': 'engine', 'JobID': 'a' * 32, 'AttemptID': attempt,
+                                    'Answered': '', 'Cause': '21', 'DialStatus': 'CHANUNAVAIL'}, now=later)
+    balance_state.step(lambda: 'k', client_factory=reply, now=later)
+    assert asked == []  # two refusals are not a burst; the next reading waits its 15 minutes
+    telnyx.failure_outcome({'failure_reason': 'receiver_unallocated_number', 'page_count': 0})
+    balance_state.step(lambda: 'k', client_factory=reply, now=later)
+    assert len(asked) == 1 and balance_state.stopped()
+    # More refusals within five minutes of that reading do not read it again; after five minutes they do.
+    clock[0] = later + timedelta(minutes=1)
+    for _ in range(3):
+        balance_state.note_refusal()
+    balance_state.step(lambda: 'k', client_factory=reply, now=clock[0])
+    assert len(asked) == 1
+    clock[0] = later + timedelta(minutes=6)
+    for _ in range(3):
+        balance_state.note_refusal()
+    balance_state.step(lambda: 'k', client_factory=reply, now=clock[0])
+    assert len(asked) == 2
+
+
+def test_faxbot_sets_and_shows_the_balance_warning_in_the_consoles_words(balance_state):
+    """`faxbot delivery providers trunk balance` writes the setting the console's "Warn when your Telnyx balance is
+    below" field writes, and says the same sentence the Overview does."""
+    import json as jsonlib
+    from pathlib import Path
+    from typer.testing import CliRunner
+    from app.cli.main import app as cli_app
+    from app.routing.telnyx_balance import WARNING_HELP, WARNING_LABEL
+    written = []
+    sentence = ('Your Telnyx balance is $8.00, below the $10.00 you chose to be warned at. When it reaches $0, Telnyx '
+                'stops your calls in both directions. Add funds in the Telnyx portal under Billing.')
+
+    def handler(request):
+        if request.method == 'PUT':
+            written.append(jsonlib.loads(request.content))
+            return httpx.Response(200, json={'changed': True})
+        if request.url.path == '/admin/settings':
+            return httpx.Response(200, json={'_meta': {'desired_revision_id': 'rev-a', 'env_managed': []},
+                                             'routing': {'telnyx_balance_warning': '10.00'}})
+        return httpx.Response(200, json={'carrier_balance': {'state': 'low', 'sentence': sentence}})
+    client = httpx.Client(base_url='https://testserver', transport=httpx.MockTransport(handler))
+    result = CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', 'synthetic-key', 'delivery',
+                                          'providers', 'trunk', 'balance', '--warn-below', '10'],
+                                obj={'client_factory': lambda address, timeout: (client, False)},
+                                env={'COLUMNS': '220'})
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert written == [{'telnyx_balance_warning': '10.00', 'expected_revision_id': 'rev-a'}]
+    assert result.stdout.splitlines() == [f'{WARNING_LABEL}: 10.00.', sentence]
+    console = (Path(__file__).resolve().parents[1] / 'admin_ui/src/components/delivery/DeliverySettings.tsx').read_text()
+    assert f"'{WARNING_LABEL}'" in console and WARNING_HELP.split(' Leave')[0] in console
+    refused = CliRunner().invoke(cli_app, ['--url', 'https://testserver', '--key', 'synthetic-key', 'delivery',
+                                           'providers', 'trunk', 'balance', '--warn-below', 'ten'],
+                                 obj={'client_factory': lambda address, timeout: (client, False)})
+    assert refused.exit_code != 0 and 'Enter an amount such as 10' in refused.stderr
+
+
+def test_while_telnyx_is_stopped_a_fax_goes_by_the_next_route_and_says_why(balance_state, database):  # noqa: F811
+    from types import SimpleNamespace
+    from api.app.routing.holds import no_route_sentence
+    from api.app.routing.plan import RoutePlanner
+    from api.app.routing.store import RouteStore
+    from api.app.schema import upgrade_schema
+    upgrade_schema(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    values = SimpleNamespace(fax_default_country='US', sip_trunk_preset='telnyx', sip_t38_enabled=True,
+                             plan_budgets='', time_zone='', provider_accounts={}, effective_outbound='sip',
+                             outbound_route_providers=('humblefax',), route_min_success_percent=80,
+                             local_delivery_enabled=False, direct_delivery_enabled=False, sip_trunk_did_list=(),
+                             sip_trunk_caller_id='', humblefax_from_number='')
+    planner = RoutePlanner(routes, direct_ready=lambda: False, local_ready=lambda: False)
+
+    def plan():
+        return planner.plan(to_number='+12025550123', bound='sip', values=values, pages=1, alternates=True)
+    assert plan().choices[0].route.key == 'sip'
+    balance_state.note_disabled()
+    stopped = plan()
+    assert [choice.route.key for choice in stopped.choices] == ['humblefax']
+    assert ('sip', 'account_stopped') in stopped.skipped
+    assert no_route_sentence(lambda key: 'Telnyx trunk', [('sip', 'account_stopped')]) == (
+        'No account your rules allow can send this fax now: Telnyx trunk is stopped because Telnyx has turned your '
+        'account off. It waits for you in Sent; nothing was sent.')

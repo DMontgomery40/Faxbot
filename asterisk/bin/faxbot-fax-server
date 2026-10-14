@@ -1,0 +1,112 @@
+#!/bin/sh
+# A fax server's call (extensions-fax-server.conf, api/app/fax_servers.py), in two steps, through SHELL:
+#
+#   faxbot-fax-server admit server=... address=... dialed=... caller=... callid64=... uniqueid=...
+#     Before answering: prints one line, send:+E164, receive:+E164 or refuse:CODE. Anything that goes wrong
+#     (no secret, Faxbot unreachable or slow, an answer it cannot read) prints refuse:503: an unknown call is
+#     never answered.
+#   faxbot-fax-server handover server=... file=... status=... pages=... uniqueid=... callid64=...
+#     Once the call ends: prints "ok", or why the hand-over failed (no_secret, refused, unreadable,
+#     unreachable, failed). The image stays where it is; Faxbot closes a call whose hand-over never came
+#     without sending its fax, and tells the fax server's contact.
+#
+# The dialplan already reduced every value to safe characters; each is checked again here before it enters the
+# JSON body. The shared secret and API address come from the environment or Faxbot's data folder and are never
+# printed.
+set -u
+
+data=${FAXBOT_DATA_DIR:-/faxdata}
+verb=${1:-}
+[ $# -gt 0 ] && shift
+server='' address='' dialed='' caller='' callid64='' uniqueid='' file='' status='' pages=''
+
+for word in "$@"; do
+  key=${word%%=*}
+  value=${word#*=}
+  case $key in
+    server) server=$(printf '%s' "$value" | tr -cd 'a-f0-9' | cut -c1-32) ;;
+    address) address=$(printf '%s' "$value" | tr -cd '0-9.' | cut -c1-15) ;;
+    dialed) dialed=$(printf '%s' "$value" | tr -cd '0-9+*#' | cut -c1-40) ;;
+    caller) caller=$(printf '%s' "$value" | tr -cd '0-9+' | cut -c1-32) ;;
+    callid64) callid64=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9+/=' | cut -c1-700) ;;
+    uniqueid) uniqueid=$(printf '%s' "$value" | tr -cd '0-9.' | cut -c1-40) ;;
+    file) case $value in "$data"/fax-server/*.tiff) file=$value ;; esac ;;
+    status) status=$(printf '%s' "$value" | tr -cd 'A-Z_' | cut -c1-32) ;;
+    pages) pages=$(printf '%s' "$value" | tr -cd '0-9' | cut -c1-4) ;;
+  esac
+done
+case $file in
+  *[!A-Za-z0-9/._-]*) file='' ;;
+esac
+
+secret=${ASTERISK_INBOUND_SECRET:-}
+if [ -z "$secret" ] && [ -f "$data/asterisk/inbound.secret" ]; then
+  secret=$(cat "$data/asterisk/inbound.secret")
+fi
+text() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }
+number() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+api=${FAXBOT_API_URL:-http://api:8080}
+
+case $verb in
+  admit)
+    if [ -z "$secret" ] || [ -z "$server" ]; then printf 'refuse:503\n'; exit 0; fi
+    body=$(printf '{"server":%s,"address":%s,"dialed":%s,"caller":%s,"callid64":%s,"uniqueid":%s}' \
+      "$(text "$server")" "$(text "$address")" "$(text "$dialed")" "$(text "$caller")" "$(text "$callid64")" \
+      "$(text "$uniqueid")")
+    # A short wait: the fax server is waiting for an answer to its call.
+    answer=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS --fail --connect-timeout 3 --max-time 8 -H @- \
+      -H 'Content-Type: application/json' --data-binary "$body" "$api/_internal/asterisk/fax-server/admit" \
+      2>/dev/null | tr -cd 'a-z0-9:+' | cut -c1-40)
+    # Only an answer of exactly that shape: send or receive with a number of 8 to 16 digits, or refuse with a code.
+    word=${answer%%:*} rest=${answer#*:} ok=no
+    case $word:$rest in
+      send:+*|receive:+*)
+        digits=${rest#+}
+        case $digits in
+          ''|*[!0-9]*) ;;
+          *) [ ${#digits} -ge 8 ] && [ ${#digits} -le 16 ] && ok=yes ;;
+        esac
+        ;;
+      refuse:[4-6][0-9][0-9]) ok=yes ;;
+    esac
+    if [ "$ok" = yes ]; then printf '%s\n' "$answer"; else printf 'refuse:503\n'; fi
+    ;;
+  handover)
+    fail() {
+      printf '%s\n' "$1"
+      printf 'faxbot-fax-server: fax server call %s was not handed to Faxbot (%s)\n' "${uniqueid:-unknown}" "$1" >&2
+      exit 1
+    }
+    [ -n "$secret" ] || fail no_secret
+    [ -n "$server" ] || fail unreadable
+    if [ -n "$file" ] && [ ! -f "$file" ]; then file=''; fi
+    body=$(printf '{"server":%s,"tiff_path":%s,"faxstatus":%s,"faxpages":%s,"uniqueid":%s,"callid64":%s}' \
+      "$(text "$server")" "$(text "$file")" "$(text "$status")" "$(number "$pages")" "$(text "$uniqueid")" \
+      "$(text "$callid64")")
+    attempt=0
+    while [ "$attempt" -lt 5 ]; do
+      attempt=$((attempt + 1))
+      code=$(printf 'X-Internal-Secret: %s\n' "$secret" | curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 5 \
+        --max-time 60 -H @- -H 'Content-Type: application/json' --data-binary "$body" \
+        "$api/_internal/asterisk/fax-server/handover" 2>/dev/null)
+      result=$?
+      if [ "$result" -eq 0 ]; then
+        case $code in
+          2??) printf 'ok\n'; exit 0 ;;
+          401|403) fail refused ;;
+          400|404|413|422) fail unreadable ;;
+          503) ;;  # Faxbot is starting, or this fax is being queued right now; the hand-over is idempotent.
+          *) fail failed ;;
+        esac
+      elif [ "$result" -ne 7 ]; then
+        fail unreachable
+      fi
+      sleep "${FAXBOT_NOTIFY_RETRY_SECONDS:-3}"
+    done
+    fail unreachable
+    ;;
+  *)
+    printf 'refuse:503\n'
+    exit 2
+    ;;
+esac

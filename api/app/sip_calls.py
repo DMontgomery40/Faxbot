@@ -677,6 +677,10 @@ class SipCallRecords:
         _log_gateway(event)
         if direction == 'outbound' and side == 'trunk':
             return self._record_trunk_side(event, t38, heard, now)
+        if direction == 'outbound' and not answered and cause in ('1', '21'):
+            # The carrier refused the call (SIP 404 or 403): a burst of them reads your Telnyx balance at once.
+            from .routing import telnyx_balance
+            telnyx_balance.note_refusal()
         if answered:
             disposition = 'answered'
         else:

@@ -178,6 +178,37 @@ def trunk_restart_engine():
     state.out().result(result, lambda out: out.line(result.get('message') or ''))
 
 
+@trunk.command('balance')
+def trunk_balance(warn_below: str = typer.Option(None, '--warn-below', metavar='AMOUNT',
+                                                 help='Warn when your Telnyx balance is below this amount, such as 10, '
+                                                      'in your Telnyx currency.'),
+                  default: bool = typer.Option(False, '--default',
+                                               help='Warn below a week of your usual Telnyx spending, or $5 when '
+                                                    'Faxbot has none.')):
+    """Your Telnyx balance warning: what Faxbot says now, and the level it warns below (the console's "Warn when your
+    Telnyx balance is below")."""
+    from ...routing.telnyx_balance import WARNING_HELP, WARNING_LABEL, normalize_warning
+    if warn_below is not None and default:
+        raise CliError('Use --warn-below or --default, not both.')
+    api = state.api()
+    if warn_below is not None or default:
+        try:
+            level = '' if default else normalize_warning(warn_below)
+        except ValueError as error:
+            raise CliError(str(error)) from None
+        write_settings(api, {'telnyx_balance_warning': level})
+    level = ((api.get('/admin/settings').get('routing') or {}).get('telnyx_balance_warning') or '')
+    balance = api.get('/admin/health-status').get('carrier_balance') or None
+    result = {'warn_below': level or None, 'carrier_balance': balance}
+
+    def human(out):
+        out.line(f'{WARNING_LABEL}: {level if level else "a week of your usual Telnyx spending, or $5"}.')
+        if not level:
+            out.line(WARNING_HELP)
+        out.line(balance['sentence'] if balance else 'Nothing to say about your Telnyx balance now.')
+    state.out().result(result, human)
+
+
 @trunk.command('mode')
 def trunk_mode(mode: str = typer.Argument(..., metavar='t38|audio',
                                           help='t38 (recommended), or audio when T.38 faxes fail on your line.')):
@@ -541,3 +572,5 @@ from .copier_extensions import extensions as _copier_extensions  # noqa: E402
 trunk.add_typer(_copier_extensions, name='copier-extensions')
 from .teams_annex import caller_check as _caller_check  # noqa: E402
 trunk.add_typer(_caller_check, name='caller-check')
+from .fax_servers import servers as _fax_servers  # noqa: E402
+trunk.add_typer(_fax_servers, name='fax-servers')

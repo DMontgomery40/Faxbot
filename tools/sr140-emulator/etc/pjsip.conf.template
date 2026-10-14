@@ -1,0 +1,76 @@
+; The SR140 stand-in's SIP side, filled in by run.sh at start. It places calls the way RightFax's Brooktrout SR140
+; does with a Primary Gateway: an INVITE straight to the gateway's address (no registration), the dialled number in
+; the Request-URI, audio first and then T.38, answering the gateway's digest challenge with the user name and password
+; Faxbot showed when the fax server was enrolled.
+[global]
+type=global
+user_agent=SR140-standin (Faxbot gateway test)
+
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:${SR140_PORT}
+
+[faxbot-gateway-auth]
+type=auth
+auth_type=userpass
+username=${SR140_USERNAME}
+password=${SR140_PASSWORD}
+
+[faxbot-gateway]
+type=aor
+contact=sip:${GATEWAY}:${GATEWAY_PORT}
+
+[faxbot-gateway]
+type=endpoint
+transport=transport-udp
+aors=faxbot-gateway
+outbound_auth=faxbot-gateway-auth
+context=sr140-in
+disallow=all
+allow=ulaw,alaw
+t38_udptl=yes
+t38_udptl_ec=redundancy
+t38_udptl_maxdatagram=400
+direct_media=no
+rtp_symmetric=yes
+from_user=sr140
+
+; The same gateway with a wrong password: Faxbot must refuse every call (the safety check).
+[faxbot-gateway-wrong-auth]
+type=auth
+auth_type=userpass
+username=${SR140_USERNAME}
+password=not-the-password-${SR140_PORT}
+
+[faxbot-gateway-wrong]
+type=aor
+contact=sip:${GATEWAY}:${GATEWAY_PORT}
+
+[faxbot-gateway-wrong]
+type=endpoint
+transport=transport-udp
+aors=faxbot-gateway-wrong
+outbound_auth=faxbot-gateway-wrong-auth
+context=sr140-in
+disallow=all
+allow=ulaw,alaw
+t38_udptl=yes
+direct_media=no
+from_user=sr140
+
+; And with no credentials at all.
+[faxbot-gateway-none]
+type=aor
+contact=sip:${GATEWAY}:${GATEWAY_PORT}
+
+[faxbot-gateway-none]
+type=endpoint
+transport=transport-udp
+aors=faxbot-gateway-none
+context=sr140-in
+disallow=all
+allow=ulaw,alaw
+t38_udptl=yes
+direct_media=no
+from_user=sr140

@@ -122,7 +122,7 @@ fi
 # Asterisk" or "python -m app.sip_trunk write"); it replaces the older
 # SIP_USERNAME/SIP_PASSWORD/SIP_SERVER settings when present.
 trunk_conf=${FAXBOT_TRUNK_CONF:-$shared/pjsip.conf}
-mkdir -p "$data_dir/inbound"
+mkdir -p "$data_dir/inbound" "$data_dir/fax-server"
 rm -f "$shared/pjsip.conf.started"
 if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
   temporary=$(mktemp "$out_dir/.pjsip.conf.XXXXXX")
@@ -141,6 +141,22 @@ if [ -f "$trunk_conf" ] && [ ! -L "$trunk_conf" ]; then
     edit "$out_dir/pjsip.conf" -e "s/@FAXBOT_LAN_ADDRESS@/$FAXBOT_PHONE_SYSTEM_ADDRESS/g"
   else
     edit "$out_dir/pjsip.conf" -e '/@FAXBOT_LAN_ADDRESS@/d'
+  fi
+  # Fax servers that send through Faxbot (docker-compose.fax-server.yml, fax_servers.py) call their own transport
+  # on the address Faxbot is published on in your network, at the port published there; without that file these
+  # lines are dropped and no fax server can reach Faxbot.
+  if [ -n "${FAXBOT_FAX_SERVER_ADDRESS:-}" ]; then
+    [[ "$FAXBOT_FAX_SERVER_ADDRESS" =~ ^$octet\.$octet\.$octet\.$octet$ ]] || refuse 'Unsupported fax server address'
+    fax_server_port=${FAXBOT_FAX_SERVER_PORT:-5060}
+    [[ "$fax_server_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$fax_server_port >= 1 && 10#$fax_server_port <= 65535 )) \
+      || refuse 'Unsupported fax server port'
+    edit "$out_dir/pjsip.conf" -e "s/@FAXBOT_FAX_SERVER_ADDRESS@/$FAXBOT_FAX_SERVER_ADDRESS/g" \
+      -e "s/@FAXBOT_FAX_SERVER_PORT@/$((10#$fax_server_port))/g"
+    # Their media uses the published range (another overlay sets it, such as docker-compose.fax-ports.yml).
+    [ -n "${FAXBOT_MEDIA_PORTS:-}" ] \
+      || printf '%s\n' 'Fax servers need a published media range (FAXBOT_MEDIA_PORTS); their faxes will fail without one.' >&2
+  else
+    edit "$out_dir/pjsip.conf" -e '/@FAXBOT_FAX_SERVER_ADDRESS@/d' -e '/@FAXBOT_FAX_SERVER_PORT@/d'
   fi
 elif [ -n "${SIP_USERNAME:-}${SIP_PASSWORD:-}${SIP_SERVER:-}" ]; then
   [ -n "${SIP_USERNAME:-}" ] && [ -n "${SIP_PASSWORD:-}" ] && [ -n "${SIP_SERVER:-}" ] \
@@ -241,6 +257,8 @@ if [ "$(id -u)" = 0 ] && getent passwd asterisk >/dev/null 2>&1; then
     -exec chgrp asterisk {} + -exec chmod 0640 {} +
   # Received faxes: Asterisk writes them; Faxbot (root) reads them.
   chown asterisk:asterisk "$data_dir/inbound"
+  # Faxes from fax servers that send through Faxbot (fax_servers.py): Asterisk writes them; Faxbot reads them.
+  chown asterisk:asterisk "$data_dir/fax-server"
 fi
 
 # This Asterisk shares Faxbot's data folder, so Faxbot may restart it (over the

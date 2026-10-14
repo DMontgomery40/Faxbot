@@ -2,7 +2,7 @@
 // could not read, the engine banner, the held-fax decisions through the existing holds API, the big-send bars, and
 // the one shared poll (paused while hidden, never overlapping, backing off when busy without signing out).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { delay, http, HttpResponse } from 'msw';
 import AdminAPIClient, { AdminAPIError } from '../api/client';
 import type { OutboundNow, OutboundNowReply } from '../api/outboundTypes';
@@ -157,6 +157,17 @@ describe('the outbound board on Overview', () => {
     const banner = screen.getByTestId('outbound-engine');
     expect(banner.textContent).toContain('New faxes over your phone line go as audio, because the last three calls failed the other way.');
     expect(banner.textContent).toContain('Faxbot switches back by itself when a test call gets through.');
+  });
+
+  it('says when Telnyx has stopped your calls, or your Telnyx balance is low, and nothing when it is fine', async () => {
+    const stopped = 'Telnyx has turned your account off (your balance is -$1.38), so faxes cannot be sent or received '
+      + 'through Telnyx. Faxbot sends by your other routes until you add funds in the Telnyx portal under Billing.';
+    await renderBoard({ ...busyBoard(), carrier_balance: { state: 'stopped', sentence: stopped,
+      available: { amount: '-1.38', currency: 'USD' }, read_at: earlier(60) } });
+    expect(screen.getByTestId('outbound-carrier-balance').textContent).toBe(stopped);
+    cleanup();
+    await renderBoard({ ...busyBoard(), carrier_balance: null });
+    expect(screen.queryByTestId('outbound-carrier-balance')).toBeNull();
   });
 
   it('lists what is sending with its page, route, engine and ticking time on the line', async () => {

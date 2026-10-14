@@ -1,0 +1,23 @@
+# A throwaway stand-in for OpenText RightFax's Brooktrout SR140, for testing Faxbot as a fax server's SIP/T.38
+# gateway (fax_servers.py). It runs Faxbot's own Asterisk image with its own small configuration, on the host's
+# network, so the gateway sees this host's real address. Run it on a Linux host on the same network as the Faxbot
+# under test, never on the Faxbot host itself (Docker would replace the source address there). See README.md.
+services:
+  sr140:
+    image: ${SR140_IMAGE:-faxbot-sr140-standin:local}
+    build:
+      context: ../../asterisk
+    network_mode: host
+    entrypoint: ["/bin/sh", "/emulator/run.sh"]
+    user: root
+    environment:
+      - GATEWAY=${GATEWAY:?Set GATEWAY to the address of Faxbot on your network}
+      - GATEWAY_PORT=${GATEWAY_PORT:-5060}
+      - SR140_USERNAME=${SR140_USERNAME:?Set SR140_USERNAME to the user name Faxbot showed}
+      - SR140_PASSWORD=${SR140_PASSWORD:?Set SR140_PASSWORD to the password Faxbot showed}
+      - SR140_PORT=${SR140_PORT:-5090}
+    volumes:
+      - ./run.sh:/emulator/run.sh:ro
+      - ./etc:/emulator/etc:ro
+      - ./fax:/fax
+    restart: "no"
