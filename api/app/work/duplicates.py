@@ -110,6 +110,33 @@ def repair_note(organization, pages_held):
     return f'{_first_pages(pages_held)} completed directly by {organization}; the whole document is emailed instead.'
 
 
+def received_repair_reason(organization, pages_held, total_pages):
+    """Received's sentence for a repaired call's first pages: where the whole fax is."""
+    return (f'{_first_pages(pages_held)} completed directly by {organization}; the whole fax ({total_pages} pages) is '
+            'in Received.')
+
+
+def completed_by_repair(connection, engine, inbound_ids):
+    """{received fax: (the whole fax it went into, Received's sentence)} for the first pages of each repaired call
+    among ``inbound_ids`` whose whole fax is filed; {} before revision 0046. The first pages stay as they arrived
+    (their record and history are kept); Received only says where the whole fax is."""
+    tables = _tables(engine)
+    identities = [identity for identity in inbound_ids if identity]
+    if tables is None or not identities:
+        return {}
+    repairs = tables['direct_call_repairs']
+    found = {}
+    for row in connection.execute(sa.select(repairs.c.inbound_id, repairs.c.peer_id, repairs.c.message_id,
+                                            repairs.c.pages_held, repairs.c.total_pages).where(
+            repairs.c.role == 'receiver', repairs.c.state == 'completed', repairs.c.inbound_id.in_(identities),
+            repairs.c.message_id.is_not(None))).all():
+        document = _filed(connection, tables, row.peer_id, row.message_id)
+        if document and document != row.inbound_id:
+            found[row.inbound_id] = (document, received_repair_reason(
+                _organization(connection, tables, row.peer_id), row.pages_held, row.total_pages))
+    return found
+
+
 def _outstanding(tables, inbound_id):
     """Its Work item is not done (and was never folded, so a person's reopening stands), or its email waits."""
     items, events, intake = tables['work_items'], tables['work_events'], tables['intake_items']

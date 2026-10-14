@@ -1246,7 +1246,7 @@ async def get_health_status(request: Request):
         store = _configuration_manager().store
         now = datetime.utcnow()
         with store.engine.connect() as connection:
-            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now)
+            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now, jobs=store.jobs)
         # Faxes ready to go that wait for room on their number or the trunk (Overview: "Waiting for a free line").
         jobs['waiting_for_line'] = _waiting_for_line(store, now)
         readiness = _readiness_status(request)
@@ -1880,7 +1880,8 @@ def _send_by_view(row):
 
 def _admin_fax_view(row):
     fields = ('id', 'status', 'backend', 'pages', 'created_at', 'updated_at',
-              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason',
+              'settled_cant_tell')
     return {**{name: row[name] for name in fields},
             'to_number': mask_phone(row['to_number']), 'error': sanitize_error(row['error'])}
 
@@ -2341,7 +2342,8 @@ def _engine_down_refuses(plan):
 def _accepted_job_response(access, actor, job_id):
     row = access.queries.job(actor, job_id)
     fields = ('id', 'status', 'pages', 'backend', 'provider_sid', 'created_at', 'updated_at',
-              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason')
+              'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason',
+              'settled_cant_tell')
     return FaxJobOut(**{name: row[name] for name in fields}, to=row['to_number'], error=sanitize_error(row['error']))
 
 
@@ -2731,6 +2733,8 @@ class InboundFaxOut(BaseModel):
     diversion_text: Optional[str] = None
     # A receiving rule marked the fax urgent.
     urgent: bool = False
+    # The first pages of a broken call a partner completed directly: the received fax holding the whole fax.
+    completed_in: Optional[str] = None
 
 
 class InboundEarlierFailure(BaseModel):

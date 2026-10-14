@@ -15,5 +15,7 @@ class FaxJobOut(BaseModel):
     dispatch_mode: Optional[str] = None
     delivery_version: Optional[int] = None
     reconciliation_reason: Optional[str] = None
+    # Failed because a person settled it as can't tell: it may have arrived (Sent shows "Can't tell").
+    settled_cant_tell: bool = False
     created_at: datetime
     updated_at: datetime

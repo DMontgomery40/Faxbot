@@ -253,9 +253,14 @@ def test_today_groups_failures_by_how_they_ended(desk):
     desk.set(done, state='success', updated_at=NOW - timedelta(minutes=1))
     yesterday = desk.accept(to='+12025550197', at=NOW - timedelta(days=1))
     desk.set(yesterday, state='failed', updated_at=NOW - timedelta(days=1), error=endings['busy'])
+    # A person settled one as can't tell: failed for the API, but it may have arrived, so it is counted on its own,
+    # never as failed today.
+    from api.app.outbound_store import CANT_TELL
+    unknown = desk.accept(to='+12025550196')
+    desk.set(unknown, state='failed', updated_at=NOW - timedelta(minutes=2), error=CANT_TELL)
 
     today = desk.look()['today']
-    assert today['accepted'] == 8 and today['delivered'] == 1 and today['failed'] == 7
+    assert today['accepted'] == 9 and today['delivered'] == 1 and today['failed'] == 7 and today['cant_tell'] == 1
     assert today['failures'][0] == {'key': 'busy', 'label': 'The line was busy', 'count': 2}
     assert {item['key']: item['count'] for item in today['failures']} == {
         'busy': 2, 'no_answer': 1, 'not_fax': 1, 'no_speed': 1, 'rejected': 1, 'other': 1}
@@ -633,7 +638,7 @@ def test_a_big_day_loads_a_bounded_number_of_rows_and_counts_stay_right(desk):
     everyone = desk.look(desk.olive)
     assert desk.board.rows_read <= 1000, desk.board.rows_read
     assert everyone['today'] == {'since': '2026-10-03T00:00:00Z', 'accepted': 7030, 'delivered': 5000, 'failed': 30,
-                                 'failures': [{'key': 'other', 'label': 'Another problem (see Sent)', 'count': 30}]}
+                                 'cant_tell': 0, 'failures': [{'key': 'other', 'label': 'Another problem (see Sent)', 'count': 30}]}
     assert everyone['waiting']['count'] == 2000 and everyone['waiting']['more'] == 1800
     assert sum(reason['count'] for reason in everyone['waiting']['reasons']) == 200
     assert len(everyone['waiting']['items']) == 20
@@ -773,11 +778,14 @@ def test_needs_you_uncertain_follows_open_certainty_items_whatever_the_delivery_
     old = desk.accept(desk.alice, to=NUMBER, at=NOW - timedelta(days=2))
     desk.set(old, state='failed', updated_at=NOW - timedelta(days=2), error='A person answered.')
     _certainty(desk, old, at=NOW - timedelta(days=2))
-    # A person settled "can't tell": the delivery stays uncertain, but nothing is left to settle.
+    # A person settled "can't tell": nothing is left to settle, and settling ended the delivery as can't tell
+    # (outbound_store.settle_uncertain_on), never failed today.
+    from api.app.outbound_store import CANT_TELL
     settled = desk.accept(desk.alice, to=OTHER)
     claim = desk.claim(settled)
     assert desk.store.begin_submission(claim, now=NOW) and desk.store.record_uncertain(claim, now=NOW)
     _certainty(desk, settled, state='settled', outcome='unknown', category='transport_ambiguous')
+    desk.set(settled, state='failed', updated_at=NOW, error=CANT_TELL)
     # Uncertain a moment ago, before the certainty worker filed its item: shown with the delivery's own sentence.
     fresh = desk.accept(desk.bob, to=THIRD)
     claim = desk.claim(fresh)
@@ -792,8 +800,9 @@ def test_needs_you_uncertain_follows_open_certainty_items_whatever_the_delivery_
     assert needs[fresh]['kind'] == 'uncertain' and needs[fresh]['sentence'] == (
         'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
     sentences_filled(board)
-    # Today's counts stay as they were: the old failure is not today's, and nothing new failed today.
-    assert board['today']['failed'] == 0 and board['today']['accepted'] == 2
+    # Today's counts stay as they were: the old failure is not today's, nothing new failed today, and the fax settled
+    # as can't tell is counted on its own.
+    assert board['today']['failed'] == 0 and board['today']['accepted'] == 2 and board['today']['cant_tell'] == 1
     # Each sender sees only their own.
     assert set(items(desk.look(desk.alice), 'needs_you')) == {old}
     assert desk.look(desk.alice)['needs_you']['count'] == 1

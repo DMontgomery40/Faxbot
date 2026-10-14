@@ -45,6 +45,8 @@ export interface DeliveryMetadata {
   dispatch_mode?: string | null;
   delivery_version?: number | null;
   reconciliation_reason?: string | null;
+  // Failed because a person settled it as can't tell: it may have arrived.
+  settled_cant_tell?: boolean;
 }
 
 export interface FaxSendResult extends DeliveryMetadata {
@@ -609,6 +611,8 @@ export interface InboundFax {
   // The server's sentence about them, in the installation's time zone. The console builds its own from
   // earlier_failures in the viewer's (earlierFailuresText) and shows this only from a server without them.
   earlier_failures_text?: string | null;
+  // The first pages of a broken call a partner completed directly: the received fax holding the whole fax.
+  completed_in?: string | null;
 }
 
 // GET /admin/forwarded-trust: certificate authorities you trust for forwarded calls (STIR/SHAKEN STI-CAs).

@@ -682,8 +682,9 @@ class CertaintyService:
                 details['continuation'] = pages_text(prepared.first_page, prepared.last_page)
                 self._continuations().record_on(connection, prepared, actor_id=actor.principal_id, actor_name=name,
                                                 item_id=item_id, reason=reason, now=now)
-            # Delivered or not delivered ends the fax's own delivery in this same transaction, so its number is no
-            # longer held for an unknown result (defect 45). Can't tell leaves it waiting for review.
+            # Every decision ends the fax's own delivery in this same transaction, so its number is no longer held
+            # for an unknown result (defect 45) and it no longer reads as in progress; can't tell ends as failed with
+            # its own sentence, never as delivered.
             from ..outbound_store import settle_uncertain_on
             released = settle_uncertain_on(connection, self.store.deliveries, self.store.jobs,
                                            self.store.delivery_events, row['job_id'], attempt_id=row['attempt_id'],

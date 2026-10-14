@@ -110,7 +110,16 @@ function statusLabel(state: string): string {
     ?? state.replace(/_/g, ' ').replace(/^./, character => character.toUpperCase());
 }
 
+// A fax a person settled as can't tell is failed for the API, but it may have arrived: Sent never calls it a bare
+// "Failed", which would invite sending it again. The command line uses the same words (cli/commands/fax.py).
+export const CANT_TELL_LABEL = "Can't tell";
+
+export function jobStatusLabel(job: FaxJob): string {
+  return job.settled_cant_tell ? CANT_TELL_LABEL : statusLabel(deliveryState(job));
+}
+
 export function deliveryNotice(job: FaxJob): string | null {
+  if (job.settled_cant_tell) return job.error || null;
   if (deliveryState(job) === 'held' || job.dispatch_mode === 'held') {
     return 'This test fax is held and will not be sent.';
   }
@@ -648,8 +657,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                       </TableCell>
                       <TableCell>
                         <Chip
-                          label={statusLabel(deliveryState(job))}
-                          color={getStatusColor(deliveryState(job))}
+                          label={jobStatusLabel(job)}
+                          color={job.settled_cant_tell ? 'warning' : getStatusColor(deliveryState(job))}
                           size="small"
                           variant="outlined"
                           sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' } }}
@@ -659,7 +668,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         </Typography>}
                         {togetherLine(job.together) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}
                           data-testid="job-together">{togetherLine(job.together)}</Typography>}
-                        {job.error && (
+                        {job.error && !job.settled_cant_tell && (
                           // The whole sentence, wrapped between words; never cut mid-word.
                           <Typography
                             variant="caption"
@@ -760,8 +769,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   primary="Status"
                   secondary={
                     <Chip
-                      label={statusLabel(deliveryState(detailJob))}
-                      color={getStatusColor(deliveryState(detailJob))}
+                      label={jobStatusLabel(detailJob)}
+                      color={detailJob.settled_cant_tell ? 'warning' : getStatusColor(deliveryState(detailJob))}
                       size="small"
                       variant="outlined"
                     />
@@ -908,7 +917,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   secondary={formatDate(detailJob.updated_at)}
                 />
               </ListItem>
-              {detailJob.error && (
+              {detailJob.error && !detailJob.settled_cant_tell && (
                 <>
                   <Divider />
                   <ListItem>
