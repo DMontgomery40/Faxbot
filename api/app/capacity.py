@@ -295,6 +295,20 @@ class Capacity:
         # Faxes the recipient's schedule holds, and until when the claim leaves each alone (naive UTC).
         self.held = {}
 
+    def warm(self):
+        """Reflect, with plain reads, the tables the claim reads after this one: the schedule reader's and the
+        sending rules' decisions table. The claim calls it before it takes the write lock, so even its first claim
+        holds that lock only for its own reads and writes (a first claim once reflected more than 300 statements'
+        worth of tables inside it). Each is reflected once per engine; a failure leaves it to the claim, as before."""
+        self._scheduler()
+        if getattr(self, '_decision_table', False) is not False:
+            return  # reflected already: no connection at all
+        try:
+            with self.engine.connect() as connection:
+                self._decisions(connection)
+        except sa.exc.SQLAlchemyError:
+            pass
+
     # The recipient's schedule (routing/schedule.py) --------------------------------------------
     def _scheduler(self, connection=None):
         """The schedule reader, or None when it cannot be read: the claim then ignores schedules."""
