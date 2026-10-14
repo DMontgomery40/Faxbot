@@ -12,8 +12,10 @@ The invariant:
 
 The real outbound workers (two at once where contention is the point), the real route choice over two configured
 SIP accounts (tests/test_joint_optimizer.py's installation), real page preparation and lease renewal; preparation is
-made longer than the lease by holding it open, as a large fax's measuring and encoding does. Database lock faults
-are builder WAL's (brief 103). SQLite and PostgreSQL. Synthetic numbers and documents; nothing is dialed.
+made longer than the lease by holding it open, as a large fax's measuring and encoding does. Leases run on the test's
+clock (tests/lease_clock_support.py): a held-open preparation moves it past a lease while the heartbeats renew, so a
+slow runner delays these tests but never runs a lease out. Database lock faults are builder WAL's (brief 103). SQLite
+and PostgreSQL. Synthetic numbers and documents; nothing is dialed.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import sqlalchemy as sa
 from api.app.outbound_worker import OutboundWorker
 from api.app.routing import selections
 from api.tests.combinations_support import Case, database, record  # noqa: F401 - fixture
+from api.tests.lease_clock_support import LeaseClock
 from api.tests.test_joint_optimizer import NUMBER, joint, transport, write_document  # noqa: F401 - fixture
 from api.tests.test_rules_delivery import ANNE, accept, holds, publish, rule
 
@@ -33,20 +36,26 @@ GROUP = '5 long preparation x contention x lease renewal x fallback'
 INVARIANT = ('no fax starves; never submitted twice; attempt bound to its account; definite failure before data '
              'moves on, uncertain never resent')
 CHEAPEST = {'cheapest_reliable': ['sip', 'sip-pages']}
-LEASE = 2  # seconds: a short lease, as tests/test_joint_optimizer.py takes it
+LEASE = 2  # seconds of the lease clock: a short lease, as tests/test_joint_optimizer.py takes it
 LONGER_THAN_A_LEASE = 2.6
 
 
+@pytest.fixture(autouse=True)
+def leases(joint, monkeypatch):
+    joint.leases = LeaseClock(joint, monkeypatch)
+    return joint.leases
+
+
 def slow(env, seconds=LONGER_THAN_A_LEASE, sweeps=None):
-    """The real routed transport, with preparation held open for ``seconds`` (longer than one lease), during which
-    another worker's sweep for expired leases runs (``sweeps`` collects what it recovered)."""
+    """The real routed transport, with preparation held open for ``seconds`` of the lease clock (longer than one
+    lease), after which another worker's sweep for expired leases runs (``sweeps`` collects what it recovered)."""
     routed = transport(env)
     prepare = routed.prepare
 
     def held_open(claim):
         @asynccontextmanager
         async def preparing():
-            await asyncio.sleep(seconds)
+            await env.leases.outlive(seconds, lease=LEASE)
             if sweeps is not None:
                 sweeps.append(await asyncio.to_thread(env.delivery.recover_expired))
             async with prepare(claim) as operation:

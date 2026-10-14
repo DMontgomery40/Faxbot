@@ -656,8 +656,9 @@ class OutboundStore:
     def capacity(self, connection=None):
         """Room for calls (``capacity.py``), or None before the tables it reads exist.
 
-        Inside the claim's locked transaction pass its ``connection`` so the first
-        reflection reads through it and opens no second connection.
+        The claim reflects it before it takes the write lock. Inside a locked
+        transaction pass its ``connection``, so a reflection that still has to
+        happen there reads through it and opens no second connection.
         """
         if getattr(self, '_capacity', None) is None:
             try:
@@ -701,6 +702,13 @@ class OutboundStore:
         if not self._any(ready):
             return None
         costs = self._call_costs()
+        # The capacity tables are reflected here, once, with plain reads: never inside the write lock below, where
+        # every other writer would wait for them, and never on a second connection while the lock is held.
+        capacity = self.capacity()
+        if capacity is not None:
+            capacity.warm()
+        # Without a given ``now`` the lease runs from the moment the claim is written (``_claim_row_on``).
+        fresh = now is None
         with self.configuration._locked() as connection:
             now = datetime.utcnow() if now is None else now
             values = self._active_values(connection)
@@ -708,7 +716,7 @@ class OutboundStore:
                 return None
             capacity = self.capacity(connection)
             together = self._claim_together_on(connection, owner, now, lease_seconds, capacity=capacity,
-                                               values=values, costs=costs)
+                                               values=values, costs=costs, fresh=fresh)
             if together is not None:
                 return together
             from .batching.store import waiting_ids
@@ -730,7 +738,7 @@ class OutboundStore:
                                          .limit(1)).mappings().one_or_none()
             if row is None:
                 return None
-            return self._claim_row_on(connection, row, owner, now, lease_seconds)
+            return self._claim_row_on(connection, row, owner, now, lease_seconds, fresh=fresh)
 
     def _hold_gate(self, now, connection=None):
         """Faxes held by sending rules (``routing.holds.blocking``), or None before the holds table exists."""
@@ -751,7 +759,7 @@ class OutboundStore:
         from .routing.holds import blocking
         return blocking(tables, now)
 
-    def _claim_row_on(self, connection, row, owner, now, lease_seconds):
+    def _claim_row_on(self, connection, row, owner, now, lease_seconds, *, fresh=False):
         binding = connection.execute(sa.select(self.configuration.job_bindings).where(
             self.configuration.job_bindings.c.id == row['id'])).mappings().one_or_none()
         if binding is None:
@@ -766,7 +774,12 @@ class OutboundStore:
         sequence = connection.scalar(sa.select(sa.func.max(self.attempts.c.sequence)).where(
             self.attempts.c.job_id == row['id'])) or 0
         attempt, token = uuid4().hex, uuid4().hex
-        expiry = now + timedelta(seconds=lease_seconds)
+        # ``fresh``: the lease starts now, as the claim is written, not when the claim's transaction began. The
+        # claim's own reads before this point (a loaded database held one claim's lock for 11 s) must not use the
+        # lease up: a claim whose lease ended before its worker got it is refused at every step and nothing is
+        # sent. A ``now`` the caller gave (tests, replays) is kept as given.
+        start = max(now, datetime.utcnow()) if fresh else now
+        expiry = start + timedelta(seconds=lease_seconds)
         connection.execute(self.attempts.insert().values(id=attempt, job_id=row['id'],
             sequence=sequence + 1, profile_id=profile.id, phase='preparing', created_at=now))
         self._update(connection, row, now, state='preparing', attempt_id=attempt,
@@ -802,7 +815,8 @@ class OutboundStore:
         return {number: kept[(revision, number)][1] for number in numbers
                 if kept.get((revision, number), (0, None))[1] is not None}
 
-    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None):
+    def _claim_together_on(self, connection, owner, now, lease_seconds, *, capacity=None, values=None, costs=None,
+                           fresh=False):
         """Claim the first due group of waiting faxes as one call; a group of one goes on its own."""
         from .batching import store as batching
         t = self._batching(connection)
@@ -821,7 +835,8 @@ class OutboundStore:
             return None  # the group waits, still together, until its number (and the trunk) have room
         claims, joined = [], []
         for member in group:
-            claim = self._claim_row_on(connection, self._row(connection, member['id']), owner, now, lease_seconds)
+            claim = self._claim_row_on(connection, self._row(connection, member['id']), owner, now, lease_seconds,
+                                       fresh=fresh)
             if claim is None:
                 batching.separate_on(connection, t, member['id'], now)
                 continue
