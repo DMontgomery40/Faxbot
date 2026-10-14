@@ -728,3 +728,86 @@ def test_the_console_fixture_has_every_field_the_api_returns(database, tmp_path)
     if os.environ.get('FAXBOT_WRITE_BOARD_FIXTURE') == '1':
         CONSOLE_FIXTURE.write_text(json.dumps(board, indent=2, sort_keys=True) + '\n')
     assert _keys(json.loads(CONSOLE_FIXTURE.read_text())) == _keys(board)
+
+
+# -- uncertain faxes follow Sent's settling list (certainty_items) -----------------------------------------------------
+
+def _certainty(desk, job, *, state='open', outcome=None, category='person_answered', at=None):
+    """A certainty item for the fax's attempt, as the certainty worker files it and a person settles it."""
+    at = at or NOW - timedelta(minutes=10)
+    with desk.engine.begin() as connection:
+        attempt = connection.scalar(sa.text('SELECT attempt_id FROM outbound_deliveries WHERE id = :id'), {'id': job})
+        if attempt is None or connection.scalar(sa.text('SELECT count(*) FROM certainty_items WHERE attempt_id = :id'),
+                                                {'id': attempt}):
+            # One item per attempt: a later item on the same fax is another attempt's.
+            attempt = uuid4().hex
+            sequence = connection.scalar(sa.text('SELECT count(*) FROM outbound_attempts WHERE job_id = :job'),
+                                         {'job': job}) + 1
+            connection.execute(sa.text(
+                "INSERT INTO outbound_attempts (id, job_id, sequence, phase, created_at, submitted_at, completed_at) "
+                "VALUES (:id, :job, :sequence, 'failed', :at, :at, :at)"),
+                {'id': attempt, 'job': job, 'sequence': sequence, 'at': at})
+            connection.execute(sa.text('UPDATE outbound_deliveries SET attempt_id = :attempt WHERE id = :id'),
+                               {'attempt': attempt, 'id': job})
+        connection.execute(sa.text(
+            'INSERT INTO certainty_items (id, job_id, attempt_id, category, reference, state, outcome, settled_at, '
+            'version, created_at, updated_at) VALUES (:id, :job, :attempt, :category, :reference, :state, :outcome, '
+            ':settled, 1, :at, :at)'),
+            {'id': uuid4().hex, 'job': job, 'attempt': attempt, 'category': category,
+             'reference': uuid4().hex[:8].upper(), 'state': state, 'outcome': outcome,
+             'settled': at if state == 'settled' else None, 'at': at})
+
+
+def test_needs_you_uncertain_follows_open_certainty_items_whatever_the_delivery_state(desk):
+    from api.app.work.certainty_service import category_text
+    # An open item on a fax that failed two days ago, before today's counts: shown with the item's own reason.
+    old = desk.accept(desk.alice, to=NUMBER, at=NOW - timedelta(days=2))
+    desk.set(old, state='failed', updated_at=NOW - timedelta(days=2), error='A person answered.')
+    _certainty(desk, old, at=NOW - timedelta(days=2))
+    # A person settled "can't tell": the delivery stays uncertain, but nothing is left to settle.
+    settled = desk.accept(desk.alice, to=OTHER)
+    claim = desk.claim(settled)
+    assert desk.store.begin_submission(claim, now=NOW) and desk.store.record_uncertain(claim, now=NOW)
+    _certainty(desk, settled, state='settled', outcome='unknown', category='transport_ambiguous')
+    # Uncertain a moment ago, before the certainty worker filed its item: shown with the delivery's own sentence.
+    fresh = desk.accept(desk.bob, to=THIRD)
+    claim = desk.claim(fresh)
+    assert desk.store.begin_submission(claim, now=NOW) and desk.store.record_uncertain(claim, now=NOW)
+
+    board = desk.look(desk.olive)
+    needs = items(board, 'needs_you')
+    assert set(needs) == {old, fresh} and board['needs_you']['count'] == 2
+    assert needs[old] == {**needs[old], 'kind': 'uncertain', 'actions': ['settle'],
+                          'sentence': category_text('person_answered'),
+                          'since': (NOW - timedelta(days=2)).isoformat() + 'Z'}
+    assert needs[fresh]['kind'] == 'uncertain' and needs[fresh]['sentence'] == (
+        'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
+    sentences_filled(board)
+    # Today's counts stay as they were: the old failure is not today's, and nothing new failed today.
+    assert board['today']['failed'] == 0 and board['today']['accepted'] == 2
+    # Each sender sees only their own.
+    assert set(items(desk.look(desk.alice), 'needs_you')) == {old}
+    assert desk.look(desk.alice)['needs_you']['count'] == 1
+    assert set(items(desk.look(desk.bob), 'needs_you')) == {fresh}
+
+
+def test_an_open_item_on_a_fax_that_failed_today_still_counts_as_failed_today(desk):
+    job = desk.accept(to=NUMBER)
+    desk.set(job, state='failed', updated_at=NOW - timedelta(minutes=5), error='Something else went wrong.')
+    _certainty(desk, job, category='partly_sent')
+    board = desk.look()
+    assert items(board, 'needs_you')[job]['sentence'] == (
+        'The call failed part way through, so some pages may have arrived.')
+    assert board['today']['failed'] == 1 and board['needs_you']['count'] == 1
+
+
+def test_only_the_faxs_latest_certainty_item_counts(desk):
+    reopened, closed = desk.accept(to=NUMBER), desk.accept(to=OTHER)
+    for job in (reopened, closed):
+        desk.set(job, state='failed', updated_at=NOW - timedelta(minutes=30))
+    _certainty(desk, reopened, state='settled', outcome='unknown', at=NOW - timedelta(minutes=20))
+    _certainty(desk, reopened, category='result_lost', at=NOW - timedelta(minutes=5))
+    _certainty(desk, closed, category='result_lost', at=NOW - timedelta(minutes=20))
+    _certainty(desk, closed, state='settled', outcome='unknown', at=NOW - timedelta(minutes=5))
+    board = desk.look()
+    assert set(items(board, 'needs_you')) == {reopened} and board['needs_you']['count'] == 1

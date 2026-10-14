@@ -1,5 +1,7 @@
 // The one poll of the live outbound board (GET /outbound/now) per tab, shared by Overview and Sent.
-// It asks only while the tab is visible, never starts a request before the last one ended, and backs off when the
+// It reads once when it starts, even in a hidden tab (a console opened behind other windows shows the board when it
+// is brought forward), then asks again only while the tab is visible. It never starts a request before the last one
+// ended, and backs off when the
 // server is busy (429 or 503, honouring Retry-After) without treating that as a signed-out session (#83, D3).
 // Every request signs in, which writes the session's last use, so it asks every 5 seconds only while faxes are
 // sending or waiting and every 15 seconds otherwise; after a decision on a held fax it asks at once.
@@ -52,6 +54,8 @@ export class OutboundPoller {
   private failures = 0;
   // Not permitted, or no board on this server: it never asks again.
   private stopped = false;
+  // The first reading was asked for; until then a hidden tab still reads once.
+  private asked = false;
   private unwatch: (() => void) | null = null;
 
   constructor(private readonly deps: PollerDeps) {}
@@ -95,9 +99,9 @@ export class OutboundPoller {
     this.timer = null;
   }
 
-  // Shown: poll when due. Hidden: nothing waits to run.
+  // Shown, or no reading asked for yet: poll when due. Hidden after that: nothing waits to run.
   private wake = () => {
-    if (!this.deps.visible()) {
+    if (!this.deps.visible() && this.asked) {
       this.cancel();
       return;
     }
@@ -123,7 +127,8 @@ export class OutboundPoller {
   }
 
   private async poll() {
-    if (this.inFlight || this.stopped || this.listeners.size === 0 || !this.deps.visible()) return;
+    if (this.inFlight || this.stopped || this.listeners.size === 0 || (this.asked && !this.deps.visible())) return;
+    this.asked = true;
     this.inFlight = true;
     let wait = OUTBOUND_POLL.activeMs;
     try {
