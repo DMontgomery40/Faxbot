@@ -293,25 +293,16 @@ class Board:
 
     def _uncertain(self, connection):
         """Faxes waiting for a person to settle an uncertain outcome, as SQL, exactly as Sent's settling list has them
-        (``certainty_items``): the fax's latest item is open, whatever its delivery's state now; or its delivery is
-        uncertain and the certainty worker has not filed an item yet. A fax whose latest item is settled ("can't
-        tell" included) is done, though its delivery stays uncertain."""
+        (``outbound_summary.needs_settling``; the Overview's attention count uses the same rule)."""
         t = self._tables(connection)
-        d, items = t['outbound_deliveries'], t.get('certainty_items')
-        if items is None:
-            return d.c.state == 'reconciliation_required'
-        return sa.or_(self._open_item(connection).exists(), sa.and_(
-            d.c.state == 'reconciliation_required', ~sa.select(items.c.id).where(items.c.job_id == d.c.id).exists()))
+        from .outbound_summary import needs_settling
+        return needs_settling(t['outbound_deliveries'], t.get('certainty_items'))
 
     def _open_item(self, connection):
         """The fax's latest certainty item while it is open (correlated to the delivery row)."""
         t = self._tables(connection)
-        d, items = t['outbound_deliveries'], t['certainty_items']
-        later = items.alias('later')
-        return sa.select(items.c.category, items.c.created_at).where(
-            items.c.job_id == d.c.id, items.c.state == 'open',
-            ~sa.select(later.c.id).where(later.c.job_id == items.c.job_id,
-                                         later.c.created_at > items.c.created_at).exists())
+        from .outbound_summary import open_certainty_item
+        return open_certainty_item(t['outbound_deliveries'], t['certainty_items'])
 
     def _category(self, connection, now):
         """Each delivery's place on the board, as SQL: sending, needs_you, waiting, delivered, cant_tell, failed or

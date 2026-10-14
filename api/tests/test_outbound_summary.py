@@ -77,3 +77,41 @@ def test_failure_window_uses_terminal_delivery_update_in_last_24_hours(database,
         result = counts(connection, tables)
     assert result == {'queued': 0, 'in_progress': 0, 'recent_failures': 2,
                       'held': 0, 'reconciliation_required': 1}
+
+
+def _item(connection, tables, job, *, state='open', at=NOW):
+    """A certainty item on a new attempt of ``job``, open or settled as can't tell."""
+    attempt = uuid4().hex
+    connection.execute(tables['outbound_attempts'].insert().values(
+        id=attempt, job_id=job, sequence=connection.scalar(sa.select(sa.func.count()).select_from(
+            tables['outbound_attempts']).where(tables['outbound_attempts'].c.job_id == job)) + 1,
+        phase='uncertain', created_at=at, submitted_at=at))
+    connection.execute(tables['certainty_items'].insert().values(
+        id=uuid4().hex, job_id=job, attempt_id=attempt, category='transport_ambiguous',
+        reference=uuid4().hex[:8].upper(), state=state, outcome='unknown' if state == 'settled' else None,
+        settled_at=at if state == 'settled' else None, version=1, created_at=at, updated_at=at))
+
+
+def test_uncertain_results_count_as_sents_settling_list_has_them(database, tables):
+    """With certainty items, an uncertain result counts while a person still has it to settle (the board's rule)."""
+    from api.app.outbound_summary import certainty_items, dashboard_counts
+    with database.begin() as connection:
+        for state in ('reconciliation_required', 'reconciliation_required', 'failed', 'failed'):
+            seed(connection, tables, state)
+        jobs = connection.execute(sa.select(tables['outbound_deliveries'].c.id, tables['outbound_deliveries'].c.state)
+                                  .order_by(tables['outbound_deliveries'].c.state)).all()
+        settled, unfiled = [job for job, state in jobs if state == 'reconciliation_required']
+        failed_open, failed_reopened = [job for job, state in jobs if state == 'failed']
+        _item(connection, tables, settled, state='settled')           # can't tell, settled before it moved the fax
+        _item(connection, tables, failed_open)                        # open on a failed delivery
+        _item(connection, tables, failed_reopened, state='settled', at=NOW - timedelta(hours=1))
+        _item(connection, tables, failed_reopened, at=NOW)            # its latest item is open again
+        items = certainty_items(connection)
+        result = dashboard_counts(connection, tables['outbound_deliveries'], now=NOW, items=items)
+        # unfiled: uncertain, and the certainty worker has not filed an item yet.
+        assert result['reconciliation_required'] == 3
+        assert dashboard_counts(connection, tables['outbound_deliveries'], now=NOW, items=items,
+                                job_ids=[settled, failed_open])['reconciliation_required'] == 1
+        # Without the table, the delivery state as before.
+        assert counts(connection, tables)['reconciliation_required'] == 2
+    assert unfiled

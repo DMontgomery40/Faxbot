@@ -829,3 +829,24 @@ def test_only_the_faxs_latest_certainty_item_counts(desk):
     _certainty(desk, closed, state='settled', outcome='unknown', at=NOW - timedelta(minutes=5))
     board = desk.look()
     assert set(items(board, 'needs_you')) == {reopened} and board['needs_you']['count'] == 1
+
+
+def test_health_status_counts_the_same_uncertain_faxes_as_the_board(client):
+    """Overview's Needs attention (GET /admin/health-status) and the board's Needs you agree on uncertain results."""
+    from app.routing.background import installation_engine
+    jobs = [_send(client, ADMIN, f'+1202555080{index}') for index in range(4)]
+    engine = installation_engine(client.app)[0]
+    desk = SimpleNamespace(engine=engine)
+    with engine.begin() as connection:
+        for job, state in zip(jobs, ('reconciliation_required', 'reconciliation_required', 'failed', 'success')):
+            connection.execute(sa.text("UPDATE outbound_deliveries SET state = :state, dispatch_mode = 'normal' "
+                                       'WHERE id = :id'), {'state': state, 'id': job})
+    _certainty(desk, jobs[0], state='settled', outcome='unknown')    # settled as can't tell long ago
+    _certainty(desk, jobs[2])                                         # open on a failed delivery
+    # jobs[1]: uncertain, no item filed yet.
+    board = client.get('/outbound/now', headers=ADMIN).json()
+    uncertain = {item['id'] for item in board['needs_you']['items'] if item['kind'] == 'uncertain'}
+    assert uncertain == {jobs[1], jobs[2]}
+    health = client.get('/admin/health-status', headers=ADMIN)
+    assert health.status_code == 200, health.text
+    assert health.json()['jobs']['reconciliation_required'] == len(uncertain) == 2
