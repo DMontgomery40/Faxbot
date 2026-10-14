@@ -4364,6 +4364,7 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `analog-line`: An analog phone line through a gateway:...
 * `copier-extensions`: Copiers that register to Faxbot as their...
 * `caller-check`: The caller-verification stamp on received...
+* `fax-servers`: Fax servers, such as RightFax, that send...
 
 ##### `faxbot delivery providers trunk status`
 
@@ -5095,6 +5096,131 @@ $ faxbot delivery providers trunk caller-check set [OPTIONS] [NUMBER]...
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk fax-servers`
+
+Fax servers, such as RightFax, that send their faxes through Faxbot: Faxbot takes each whole fax and sends it on by your routes and rules.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List your fax servers, where each may...
+* `add`: Let a fax server send through Faxbot.
+* `change`: Change where a fax server may send, its...
+* `remove`: Stop a fax server sending through Faxbot...
+* `faxes`: List the faxes your fax servers handed to...
+
+###### `faxbot delivery providers trunk fax-servers list`
+
+List your fax servers, where each may send, and its limits.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk fax-servers add`
+
+Let a fax server send through Faxbot. Its password is printed once: enter the user name and password on the
+fax server, then press Apply on the trunk page (faxbot delivery providers trunk apply) so the fax engine loads
+it.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers add [OPTIONS] {name} {address}
+```
+
+**Arguments**:
+
+* `name`: The fax server, such as RightFax.  [required]
+* `address`: Its one address on your network, such as 192.168.1.40.  [required]
+
+**Options**:
+
+* `--countries US,CA`: Countries it may send to (two-letter codes). Faxbot&#x27;s dialing rules still apply. Default: your own country.
+* `--per-hour <int>`: Most faxes it may send in an hour (default 60).
+* `--per-day <int>`: Most faxes it may send in a day (default 500).
+* `--dial-prefix DIGITS`: An outside-line prefix it puts before every number, such as 9; Faxbot removes it.
+* `--email <str>`: Who is told when one of its faxes is not delivered.
+* `--webhook URL`: Your system that is told when one of its faxes is not delivered.
+* `--mailbox <str>`: The mailbox its faxes are sent from, by ID.
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk fax-servers change`
+
+Change where a fax server may send, its limits, its prefix or who is told about failures.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers change [OPTIONS] {server}
+```
+
+**Arguments**:
+
+* `server`: The fax server, by its name, address or ID.  [required]
+
+**Options**:
+
+* `--countries US,CA`: Countries it may send to, replacing the list.
+* `--per-hour <int>`: Most faxes it may send in an hour.
+* `--per-day <int>`: Most faxes it may send in a day.
+* `--dial-prefix DIGITS`: Its outside-line prefix, such as 9.
+* `--email <str>`: Who is told when one of its faxes is not delivered.
+* `--webhook URL`: Your system that is told when one of its faxes is not delivered.
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk fax-servers remove`
+
+Stop a fax server sending through Faxbot and revoke its sending key.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers remove [OPTIONS] {server}
+```
+
+**Arguments**:
+
+* `server`: The fax server, by its name, address or ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+###### `faxbot delivery providers trunk fax-servers faxes`
+
+List the faxes your fax servers handed to Faxbot, and what became of each.
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk fax-servers faxes [OPTIONS] [server]
+```
+
+**Arguments**:
+
+* `server`: Only this fax server, by its name, address or ID.
+
+**Options**:
+
+* `--limit <int range>`: How many, newest first.  [default: 50; 1&lt;=x&lt;=500]
 * `--help`: Show this message and exit.
 
 #### `faxbot delivery providers accounts`

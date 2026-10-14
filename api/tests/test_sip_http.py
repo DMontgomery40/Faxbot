@@ -319,7 +319,13 @@ def test_each_route_declares_the_permission_the_console_relies_on():
                         # copier fax's received record is that fax's own read check, as its detail.
                         ('POST', '/admin/sip/copiers/extensions'): [('providers:write', False)],
                         ('POST', '/admin/sip/copiers/extensions/{copier_id}/remove'): [('providers:write', False)],
-                        ('GET', '/admin/sip/copiers/received/{inbound_id}'): []}
+                        ('GET', '/admin/sip/copiers/received/{inbound_id}'): [],
+                        # Fax servers that send through Faxbot (RightFax/SR140): read and change with the trunk.
+                        ('GET', '/admin/sip/fax-servers'): [('providers:read', False)],
+                        ('POST', '/admin/sip/fax-servers'): [('providers:write', False)],
+                        ('PUT', '/admin/sip/fax-servers/{server_id}'): [('providers:write', False)],
+                        ('POST', '/admin/sip/fax-servers/{server_id}/remove'): [('providers:write', False)],
+                        ('GET', '/admin/sip/fax-servers/calls'): [('providers:read', False)]}
 
 
 def test_console_save_then_apply_writes_the_new_trunk(bare_client, isolated_installation):

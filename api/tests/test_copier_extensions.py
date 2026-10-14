@@ -255,9 +255,9 @@ async def test_the_fax_engine_is_asked_to_call_only_the_copiers_own_extension():
             await client.originate_copier('f' * 32, endpoint, path)
 
 
-def test_0085_is_the_head_and_its_downgrade_keeps_copiers(database):  # noqa: F811
+def test_0085_validates_and_its_downgrade_keeps_copiers(database):  # noqa: F811
     schema.upgrade_schema(database)
-    assert schema_copier_extensions.REVISION == '0085_copier_extensions' == schema.HEAD
+    assert schema_copier_extensions.REVISION == '0085_copier_extensions' == schema.COPIER_EXTENSIONS
     assert schema.PARTNER_ADMISSION == '0084_partner_admission'
     assert schema_copier_extensions.TABLES <= schema.STRICT_TABLES and schema_copier_extensions.TABLES <= _tables(database)
     _downgrade(database, '0084_partner_admission')

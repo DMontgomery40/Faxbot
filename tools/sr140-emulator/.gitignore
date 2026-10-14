@@ -1,0 +1,3 @@
+# What a test run leaves behind.
+fax/results.log
+fax/*.call

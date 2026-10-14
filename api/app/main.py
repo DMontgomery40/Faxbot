@@ -96,6 +96,7 @@ from .public_test_lines_http import router as test_lines_router
 from .routing.after_answer_http import router as routing_after_answer_router
 from .routing.analog_http import router as routing_analog_router
 from .copiers_http import router as copiers_router
+from .fax_servers_http import internal as fax_servers_internal, router as fax_servers_router
 from .inbound.caller_check_http import router as caller_check_router
 from .routing.route_families_http import router as route_families_router
 from .receive_readiness_http import router as receive_readiness_router
@@ -272,6 +273,8 @@ app.include_router(test_lines_router)
 app.include_router(routing_after_answer_router)
 app.include_router(routing_analog_router)
 app.include_router(copiers_router)
+app.include_router(fax_servers_router)
+app.include_router(fax_servers_internal)
 app.include_router(caller_check_router)
 app.include_router(route_families_router)
 app.include_router(receive_readiness_router)

@@ -1400,12 +1400,33 @@ def copier_sections(values, copiers=None) -> str:
     return copier_extensions.render(copiers)
 
 
-def rendered_configuration(values, peers=None, copiers=None) -> str:
+def fax_server_sections(values, servers=None) -> str:
+    """The fax servers' sections for pjsip.conf (fax_servers.py), '' for none. ``servers`` None reads them from
+    Faxbot's database; when it cannot be read the file is written without them (logged), so no fax server can
+    send until the next write."""
+    import sqlalchemy as sa
+    from . import fax_servers
+    from .routing.database import DeliveryStoreError
+    if servers is None:
+        from .ami import _database
+        engine = _database()
+        if engine is None:
+            return ''
+        try:
+            servers = fax_servers.servers(engine)
+        except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
+            logging.getLogger(__name__).warning('Fax servers could not be read for pjsip.conf (%s).', error)
+            servers = []
+    return fax_servers.render(servers)
+
+
+def rendered_configuration(values, peers=None, copiers=None, servers=None) -> str:
     """pjsip.conf exactly as Faxbot writes it: the trunks, then any partners' peer fax calls, then any copier
-    extensions. Whether Asterisk runs the current settings is decided against this same text
-    (``engine_uses_current``, sip_http's applied check)."""
+    extensions, then any fax servers that send through Faxbot. Whether Asterisk runs the current settings is decided
+    against this same text (``engine_uses_current``, sip_http's applied check)."""
     text = render_pjsip(values)
-    for extra in (peer_sections(values, peers), copier_sections(values, copiers)):
+    for extra in (peer_sections(values, peers), copier_sections(values, copiers),
+                  fax_server_sections(values, servers)):
         if extra:
             text = text + '\n\n' + extra
     return text
