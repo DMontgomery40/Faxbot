@@ -1050,14 +1050,18 @@ def test_the_trunks_hang_up_handler_reports_in_its_own_event_and_writes_nothing_
     steps = [line.strip() for line in out.splitlines() if line.strip().startswith('same =>')]
     dial = next(index for index, line in enumerate(steps) if ',Dial(PJSIP/' in line)
     after = steps[dial + 1:steps.index('same => n(hangup),Hangup()')]
-    assert after == [
-        'same => n,GotoIf($["${DIALSTATUS}" = "ANSWER"]?hangup)',
+    assert after == ['same => n,GotoIf($["${DIALSTATUS}" = "ANSWER"]?hangup)',
+                     'same => n,Gosub(faxbot-carrier-answer,s,1)']
+    answer = dialplan.split('[faxbot-carrier-answer]', 1)[1].split('\n[', 1)[0]
+    assert [line.strip() for line in answer.splitlines() if line.strip() and not line.startswith(';')] == [
+        'exten => s,1,Set(FAXBOT_SIP64=)',
         'same => n,Set(FAXBOT_LEGS=${HANGUPCAUSE_KEYS()})',
         'same => n(leg),Set(FAXBOT_LEG=${SHIFT(FAXBOT_LEGS)})',
-        'same => n,GotoIf($["${FAXBOT_LEG}" = ""]?hangup)',
+        'same => n,GotoIf($["${FAXBOT_LEG}" = ""]?done)',
         'same => n,GotoIf($["${FAXBOT_LEG:0:6}" != "PJSIP/"]?leg)',
         'same => n,Set(FAXBOT_SIP=${HANGUPCAUSE(${FAXBOT_LEG},tech)})',
-        'same => n,Gosub(faxbot-b64,s,1(FAXBOT_SIP64,FAXBOT_SIP))']
+        'same => n,Gosub(faxbot-b64,s,1(FAXBOT_SIP64,FAXBOT_SIP))',
+        'same => n(done),Return()']
     # The call's own hang-up still comes before the refusal path, so a placed call never falls into it.
     assert steps.index('same => n(hangup),Hangup()') < steps.index(
         'same => n(refuse),Log(WARNING,The fax engine dialed a call Faxbot did not ask for and it was refused.)')
