@@ -93,7 +93,10 @@ export interface OutboundNow {
   sending: { count: number; items: SendingItem[] };
   waiting: { count: number; more: number; reasons: WaitingReason[]; items: WaitingItem[] };
   needs_you: { count: number; items: NeedsYouItem[] };
-  today: { since: string; accepted: number; delivered: number; failed: number; failures: FailureReason[] };
+  // cant_tell: faxes a person settled as can't tell today; never counted in failed.
+  today: {
+    since: string; accepted: number; delivered: number; failed: number; cant_tell?: number; failures: FailureReason[];
+  };
   lines: OutboundLine[];
   engine: OutboundEngine | null;
   groups: OutboundGroup[];

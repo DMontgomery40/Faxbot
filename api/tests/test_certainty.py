@@ -470,6 +470,20 @@ def test_cant_tell_ends_the_fax_as_it_may_have_arrived_never_as_delivered(lane):
     [settled] = [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
     assert json.loads(settled['details'])['outcome'] == 'unknown'
     assert lane.item_for('fax-a')['state'] == 'settled' and lane.item_for('fax-a')['outcome'] == 'unknown'
+    # Sent and the command line read it as "Can't tell" (settled_cant_tell), and the Overview's recent failures
+    # leave it out: it is counted on its own.
+    from api.app.access.queries import delivery_fields
+    from api.app.outbound_summary import dashboard_counts
+    with lane.engine.connect() as connection:
+        counts = dashboard_counts(connection, lane.certainty.deliveries, now=record['updated_at'],
+                                  jobs=lane.certainty.jobs)
+        phase = connection.execute(sa.select(lane.certainty.attempts.c.phase).where(
+            lane.certainty.attempts.c.id == record['attempt_id'])).scalar()
+    assert (counts['recent_failures'], counts['recent_cant_tell']) == (0, 1)
+    row = {'delivery_state': record['state'], 'dispatch_mode': 'normal', 'delivery_version': record['version'],
+           'error': job[1], 'attempt_phase': phase}
+    assert delivery_fields(row)['settled_cant_tell'] is True
+    assert delivery_fields({**row, 'error': 'The line was busy.'})['settled_cant_tell'] is False
     assert lane.delivery.claim('worker').job_id == 'fax-b'
     assert lane.job_count() == 2  # nothing was sent again
 

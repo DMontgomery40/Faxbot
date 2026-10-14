@@ -43,6 +43,8 @@ export interface DeliveryMetadata {
   dispatch_mode?: string | null;
   delivery_version?: number | null;
   reconciliation_reason?: string | null;
+  // Failed because a person settled it as can't tell: it may have arrived.
+  settled_cant_tell?: boolean;
 }
 
 export interface FaxSendResult extends DeliveryMetadata {

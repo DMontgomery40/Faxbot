@@ -1723,6 +1723,20 @@ def test_a_recovered_fax_shows_when_it_arrived_and_that_it_was_brought_in_later(
     assert status_label({'status': 'SUCCESS'}) == 'Delivered'
 
 
+def test_a_fax_settled_as_cant_tell_reads_cant_tell_with_its_sentence_as_in_the_console():
+    """Failed for the API, but it may have arrived: never a bare "Failed" (JobsList jobStatusLabel,
+    sentRoute.test.tsx)."""
+    from app.cli.commands.fax import _fax_fields, delivery_notice, status_label
+    from app.outbound_store import CANT_TELL
+    job = {'id': 'c' * 32, 'to_number': '+15550100002', 'status': 'failed', 'delivery_state': 'failed',
+           'error': CANT_TELL, 'settled_cant_tell': True}
+    assert status_label(job) == "Can't tell" and delivery_notice(job) == CANT_TELL
+    fields = dict(_fax_fields(job))
+    assert (fields['Status'], fields['Delivery'], fields['Problem']) == ("Can't tell", CANT_TELL, None)
+    assert status_label({**job, 'settled_cant_tell': False}) == 'Failed'
+    assert delivery_notice({**job, 'settled_cant_tell': False}) is None
+
+
 def test_an_uncertain_sent_fax_says_what_to_check_for_the_route_that_carried_it():
     """As Sent says it (JobsList deliveryNotice, sentRoute.test.tsx): the server's route-aware sentence, else one
     true for any route."""

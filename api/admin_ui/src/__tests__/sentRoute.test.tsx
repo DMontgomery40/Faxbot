@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FaxJob } from '../api/types';
-import { deliveryNotice, routeText } from '../components/JobsList';
+import { CANT_TELL_LABEL, deliveryNotice, jobStatusLabel, routeText } from '../components/JobsList';
 
 const uncertain = (overrides: Partial<FaxJob> = {}): FaxJob => ({
   id: 'c'.repeat(32), to_number: '+15550100002', status: 'in_progress', backend: 'humblefax',
@@ -23,6 +23,21 @@ describe('Sent: a fax whose result is uncertain', () => {
     expect(deliveryNotice(uncertain({ dispatch_mode: 'legacy' }))).toBe('Imported fax with no delivery record; check '
       + 'with the recipient, or in your provider account if a fax service sent it.');
     expect(deliveryNotice(uncertain({ delivery_state: 'success' }))).toBeNull();
+  });
+});
+
+describe('Sent: a fax a person settled as can\'t tell', () => {
+  // outbound_store.CANT_TELL; the command line uses the same label and sentence (cli/commands/fax.py).
+  const sentence = "Settled as can't tell: it may have arrived, so check before sending again.";
+  const settled = uncertain({ status: 'failed', delivery_state: 'failed', error: sentence, settled_cant_tell: true });
+
+  it('reads "Can\'t tell" with the settled sentence, never a bare "Failed"', () => {
+    expect(CANT_TELL_LABEL).toBe("Can't tell");
+    expect(jobStatusLabel(settled)).toBe("Can't tell");
+    expect(deliveryNotice(settled)).toBe(sentence);
+    // A fax that really failed still reads Failed, with no notice.
+    expect(jobStatusLabel({ ...settled, settled_cant_tell: false })).toBe('Failed');
+    expect(deliveryNotice({ ...settled, settled_cant_tell: false })).toBeNull();
   });
 });
 
