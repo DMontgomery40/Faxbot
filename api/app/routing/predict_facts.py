@@ -346,6 +346,12 @@ def _tables(engine):
     return found
 
 
+# Routes priced by their shipped published card while no card is saved in Faxbot for them (a saved card, the price
+# you entered, always wins). Telnyx publishes both: its trunk at telnyx.com/pricing/elastic-sip and its Fax API at
+# telnyx.com/pricing/fax (read again 13 October 2026). Any other route with no saved card stays unknown, as before.
+PUBLISHED_DEFAULTS = ('sip-telnyx', 'telnyx_fax')
+
+
 def stored_card(engine, route_key, preset=''):
     """The route's current sending card as saved in Faxbot, found as ``RouteStore.card_for`` finds it; None if none."""
     from .store import RouteStore
@@ -664,18 +670,26 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     if engine is not None:
         from .database import DeliveryStoreError
         try:
-            # The saved cards are authoritative: a card the administrator removed is not brought back here.
+            # A card saved in Faxbot (the price you entered, or the shipped one as it was stored) prices the route.
+            # Without one, a route in PUBLISHED_DEFAULTS is priced by its published card below (13 October 2026: a
+            # Telnyx trunk and a Telnyx Fax account with no saved card read "none of your routes had a price").
             if account != route_key:
                 card = stored_card(engine, account)
-            card, saved = card or stored_card(engine, route_key, preset), True
+            card = card or stored_card(engine, route_key, preset)
+            saved = card is not None or identity not in PUBLISHED_DEFAULTS
         except (DeliveryStoreError, sa.exc.SQLAlchemyError) as error:
             # The saved cards could not be read: the shipped card, and the cause logged. Anything else is a bug
             # and raises.
             import logging
             logging.getLogger(__name__).warning('Saved rate cards could not be read: %s', error)
             card = None
+    published = None
     if card is None and not saved:
         card = _card_for(data['cards'], identity) or (_card_for(data['cards'], 'sip') if route_key == 'sip' else None)
+        if card is not None and engine is not None and card.source_url:
+            # Said with the price: whose published price it is and when Faxbot read it.
+            from .tollfree import day_text
+            published = f"{label}'s published price, read {day_text(card.captured_on)}"
     terms, refusal = terms_for(identity, where, card, data, label=label)
     origin = None
     if refusal is None and (card is None or not card.flat_plan):
@@ -734,5 +748,7 @@ def facts_for(route_key, destination, *, now=None, engine=None, values=None, dat
     if route_key != 'sip' and link.rate is None:
         link = replace(link, typical_note=UNKNOWN_SPEED)
     currency = card.currency if card is not None else 'USD'
+    if terms is None or not terms.published or terms.card is not card or origin is not None or learned:
+        published = None
     return RouteFacts(route_key, label, where, terms, link, plan, currency, missing, refused=refusal is not None,
-                      origin=origin, learned=learned, at=moment)
+                      origin=origin, learned=learned, at=moment, published=published)
