@@ -8,7 +8,7 @@ error correction) are declared here, not learned from a real machine. Nothing is
 the fax image each call would send. SQLite and PostgreSQL.
 """
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 from pathlib import Path
 
@@ -104,15 +104,17 @@ def joint(database, tmp_path, monkeypatch):
     # Defect 75: how many accounts are measured never depends on how fast the machine runs. CI once took the claim's
     # whole 20 s measuring budget before measuring began ("0 of 2"). Measuring starts at the moment the fax was
     # claimed (its own lease, not the wall clock since), and no time passes while it measures unless a test moves
-    # the clock itself (the deadline test does).
+    # the clock itself (the deadline test does). The claim reads its own clock: its lease starts as the claim is
+    # written (outbound_store._claim_row_on), which is the moment it was claimed. A moment read here, before the
+    # claim waited for the lock, once left a 2 s lease already over when a loaded runner handed the claim back.
     from api.app.routing import joint as joint_module
     claimed_at, claim = {}, env.delivery.claim
 
     def claim_at_a_known_moment(owner, **kwargs):
-        kwargs.setdefault('now', datetime.utcnow())
         found = claim(owner, **kwargs)
+        lease = timedelta(seconds=kwargs.get('lease_seconds', 30))
         for member in found.everyone if found is not None else ():
-            claimed_at[member.attempt_id] = kwargs['now']
+            claimed_at[member.attempt_id] = member.expires_at - lease
         return found
     monkeypatch.setattr(env.delivery, 'claim', claim_at_a_known_moment)
     deadline_for = joint_module.deadline_for
@@ -480,9 +482,13 @@ async def test_a_preparation_longer_than_its_lease_still_sends_once_on_its_first
         joint, monkeypatch, caplog, renewed):
     """The live case (a 26-page fax to the UK, 30 s of encoding at high load): preparation outlives one lease. The
     worker renews the lease while it prepares, so another worker's sweep recovers nothing and attempt 1 sends,
-    exactly once. Without renewal (the control) the attempt is given up, said once in the log, and nothing sent."""
+    exactly once. Without renewal (the control) the attempt is given up, said once in the log, and nothing sent.
+    The lease runs on the test's clock (tests/lease_clock_support.py): preparation takes 2.6 s of it, and a slow
+    runner never runs the lease out on its own."""
     import logging
     from api.app.outbound_store import OutboundStore
+    from api.tests.lease_clock_support import LeaseClock
+    leases = LeaseClock(joint, monkeypatch)
     publish(joint, {'format': 1, 'routes': [rule('r-cheap', {'cheapest_reliable': ['sip', 'sip-pages']})]})
     job = accept(joint, to=NUMBER, pages=2)
     write_document(joint, job)
@@ -497,7 +503,7 @@ async def test_a_preparation_longer_than_its_lease_still_sends_once_on_its_first
 
         @asynccontextmanager
         async def slow():
-            await asyncio.sleep(2.6)  # longer than the 2-second lease below
+            await leases.outlive(2.6, lease=2, renewed=renewed)  # longer than the 2-second lease below
             swept.append(await asyncio.to_thread(joint.delivery.recover_expired))
             async with prepare(claim) as operation:
                 yield operation

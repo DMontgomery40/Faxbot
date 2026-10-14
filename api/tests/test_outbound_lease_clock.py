@@ -12,6 +12,10 @@ from api.tests.test_schema import database
 from api.app import outbound_store
 from api.app.outbound_store import DeliveryConflict
 
+# Real seconds the helper waits for a worker before calling it stuck. It bounds a hang, not a lease: every lease here
+# runs on the test's clock. A first claim on a loaded CI PostgreSQL once took 11.4 s after the lock was let go.
+STUCK_SECONDS = 60
+
 
 @pytest.fixture
 def lease_clock(monkeypatch):
@@ -35,7 +39,8 @@ def after_lock_wait(configuration, clock, operation, *, deadline=None, released=
     """Advance the lease clock only after a worker requests the real database lock.
 
     Thread startup and the idle precheck may take any part of the watchdog budget;
-    they do not consume the lease. The watchdog detects a stuck worker, not expiry.
+    they do not consume the lease. The watchdog (``STUCK_SECONDS``) detects a stuck
+    worker, not expiry.
     """
     requested = threading.Event()
     progress = threading.Event()
@@ -57,7 +62,7 @@ def after_lock_wait(configuration, clock, operation, *, deadline=None, released=
             with configuration._locked():
                 future = executor.submit(run)
                 future.add_done_callback(lambda completed: progress.set())
-                assert progress.wait(10), 'Worker neither requested the database lock nor finished.'
+                assert progress.wait(STUCK_SECONDS), 'Worker neither requested the database lock nor finished.'
                 if future.done():
                     # Report a failed precheck's real exception instead of hiding it behind a timeout.
                     future.result()
@@ -71,7 +76,7 @@ def after_lock_wait(configuration, clock, operation, *, deadline=None, released=
                     clock.advance_to(clock.utcnow() + timedelta(seconds=1.2))
                 if released is not None:
                     released.append(clock.utcnow())
-            return future.result(timeout=10)
+            return future.result(timeout=STUCK_SECONDS)
     finally:
         sa.event.remove(configuration.engine, 'before_cursor_execute', lock_statement)
 
@@ -110,6 +115,57 @@ def test_new_claim_has_live_lease_after_lock_wait(installation, lease_clock):
     # The 1 s lease starts after the clock advances 1.2 s during the lock wait.
     # Capturing time before taking the lock would produce an already-expired claim.
     assert claim.expires_at > released[0]
+
+
+def test_new_claims_lease_starts_when_the_claim_is_written(installation, lease_clock, monkeypatch):
+    """The claim's own reads inside the lock (once 4.8 s on SQLite and 11.4 s on PostgreSQL in CI) take longer than
+    its 1 s lease here. The lease still starts as the claim is written, so its worker gets a live claim."""
+    configuration, delivery, _ = installation
+    identity = accept(installation)
+    context = configuration._outbound_context
+
+    def slow_reads(connection, job_id):
+        lease_clock.advance_to(lease_clock.utcnow() + timedelta(seconds=1.5))
+        return context(connection, job_id)
+
+    monkeypatch.setattr(configuration, '_outbound_context', slow_reads)
+    started = lease_clock.utcnow()
+    claim = delivery.claim('worker', lease_seconds=1)
+    assert claim.job_id == identity
+    assert lease_clock.utcnow() > started + timedelta(seconds=1)  # the reads outlasted a lease begun at the lock
+    assert claim.expires_at > lease_clock.utcnow()
+    assert delivery.renew_lease(claim, lease_seconds=1) is True  # still its worker's, not given up
+    assert delivery.recover_expired() == 0
+
+
+def test_a_first_claim_reflects_no_tables_inside_its_write_lock(installation, monkeypatch):
+    """Every other writer waits while a claim holds the lock: a first claim reflected 300 catalog statements' worth
+    of capacity and schedule tables there. They are reflected before the lock, with plain reads."""
+    from api.app import capacity
+    from api.app.routing import schedule
+    configuration, delivery, _ = installation
+    monkeypatch.setattr(capacity, '_CACHE', {})
+    monkeypatch.setattr(schedule, '_CACHE', {})
+    accept(installation)
+    statements = []
+
+    def record(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    sa.event.listen(configuration.engine, 'before_cursor_execute', record)
+    try:
+        claim = delivery.claim('worker')
+    finally:
+        sa.event.remove(configuration.engine, 'before_cursor_execute', record)
+    assert claim is not None
+    [locked] = [index for index, statement in enumerate(statements)
+                if statement == 'BEGIN IMMEDIATE' or 'pg_advisory_xact_lock' in statement]
+    catalog = ('sqlite_master', 'sqlite_temp_master', 'pg_catalog', 'information_schema')
+    reflected = [statement for statement in statements
+                 if statement.upper().startswith('PRAGMA') or any(name in statement for name in catalog)]
+    assert reflected  # this claim was the first: it did reflect the tables, before the lock
+    inside = [statement for statement in statements[locked:] if statement in reflected]
+    assert inside == []
 
 
 @pytest.mark.parametrize('state', ['preparing', 'submitting'])
