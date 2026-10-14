@@ -342,6 +342,28 @@ def test_a_fax_that_is_not_delivered_tells_the_server_contact_once(sip_client, m
     assert (view['state'], view['notice']) == ('failed', 'uncertain')
 
 
+def test_a_fax_the_carrier_refused_tells_the_server_contact_the_carriers_answer(sip_client):
+    """The fax's own outcome sentence, so a refusal by the trunk carrier (a country its account may not call) reads
+    as that in the notice and the calls list, never as a busy line."""
+    from app import sip_calls
+    server = _enrol(sip_client)
+    assert _admit_http(sip_client, server, 'r1').text == f'send:{OUTSIDE}'
+    job = _handover(sip_client, server, 'r1', _tiff('1791100000.2.tiff')).json()['queued']
+    refused = sip_calls.carrier_sentence({'direction': 'outbound', 'disposition': 'failed',
+                                          'error_cause': 'SIP 603 Decline (cause 21)'})
+    engine = _engine()
+    from app.main import app
+    values = app.state.configuration_runtime.manager.store.read().active.values
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'failed' WHERE id = :id"), {'id': job})
+        connection.execute(sa.text('UPDATE fax_jobs SET error = :error WHERE id = :id'), {'id': job, 'error': refused})
+    told = []
+    fax_servers.settle(engine, values, email=lambda values, address, body: (told.append(body), ('sent', 'ok'))[1])
+    assert refused in told[0]['sentence'] and 'busy' not in told[0]['sentence']
+    [view] = sip_client.get('/admin/sip/fax-servers/calls', headers=_b()).json()['calls']
+    assert view['state'] == 'failed' and view['sentence'] == f'Faxbot could not deliver it: {refused}'
+
+
 def test_an_uncertain_outcome_and_a_lost_hand_over_are_told_and_never_resent(sip_client):
     server = _enrol(sip_client)
     engine = _engine()

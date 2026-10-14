@@ -690,13 +690,15 @@ def _handle_originate_response(event):
     if len(parts) != 3 or parts[0] != 'faxbot':
         return
     try:
-        if batching_results.apply_originate_failure(_deliveries(), event,
-                                                    failure_sentence=sip_calls.originate_summary(event)):
+        # The carrier's own answer when it turned the call away (refused, not reachable as dialled, no answer),
+        # recorded from the dialplan's FaxCallUnanswered just before this event; else Asterisk's reason.
+        sentence = sip_calls.carrier_sentence_for(parts[2]) or sip_calls.originate_summary(event)
+        if batching_results.apply_originate_failure(_deliveries(), event, failure_sentence=sentence):
             return
         # The call was never placed: nothing reached a fax machine.
         retry_when_busy(lambda: _observe_native(
             parts[1], parts[2], 'failed', 'sip', event_key='ami-originate-failure',
-            error=sip_calls.originate_summary(event), before_data=True),
+            error=sentence, before_data=True),
             what=f'the result of fax {parts[1]} (attempt {parts[2]})', idempotent=True)
     except Exception as error:
         _result_unsaved(error, parts[1], parts[2])

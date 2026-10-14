@@ -90,7 +90,7 @@ LATER = ('faster', 'reliable', 'cheaper')
 TABLES = ('outbound_deliveries', 'fax_jobs', 'outbound_attempts', 'delivery_attempt_costs', 'delivery_destinations',
           'access_resources', 'access_principals', 'access_state', 'outbound_events', 'outbound_holds',
           'dialing_guard_holds', 'outbound_batch_members', 'fax_engine_calls', 'sip_call_records',
-          'fax_job_bindings', 'provider_profiles')
+          'fax_job_bindings', 'provider_profiles', 'certainty_items', 'access_assignments', 'access_key_grants')
 REQUIRED = ('outbound_deliveries', 'fax_jobs', 'outbound_attempts', 'access_resources', 'access_principals',
             'access_state', 'outbound_events', 'fax_job_bindings', 'provider_profiles', 'delivery_destinations')
 
@@ -148,7 +148,8 @@ class Fax:
 @dataclass(frozen=True)
 class Count:
     """How many faxes share one place on the board: their container, whether a key sent them, where they are now
-    (``Board._category``), and whether they were accepted today and changed today."""
+    (``Board._category``), how they ended (``Board._outcome``: delivered, failed or none yet), and whether they were
+    accepted today and changed today."""
     parent: str | None
     enabled: bool
     via_key: bool
@@ -156,6 +157,7 @@ class Count:
     today: bool
     finished: bool
     count: int
+    outcome: str = 'none'
 
 
 class DatabaseBusy(RuntimeError):
@@ -289,10 +291,33 @@ class Board:
         self.rows_read += len(rows)
         return rows
 
+    def _uncertain(self, connection):
+        """Faxes waiting for a person to settle an uncertain outcome, as SQL, exactly as Sent's settling list has them
+        (``certainty_items``): the fax's latest item is open, whatever its delivery's state now; or its delivery is
+        uncertain and the certainty worker has not filed an item yet. A fax whose latest item is settled ("can't
+        tell" included) is done, though its delivery stays uncertain."""
+        t = self._tables(connection)
+        d, items = t['outbound_deliveries'], t.get('certainty_items')
+        if items is None:
+            return d.c.state == 'reconciliation_required'
+        return sa.or_(self._open_item(connection).exists(), sa.and_(
+            d.c.state == 'reconciliation_required', ~sa.select(items.c.id).where(items.c.job_id == d.c.id).exists()))
+
+    def _open_item(self, connection):
+        """The fax's latest certainty item while it is open (correlated to the delivery row)."""
+        t = self._tables(connection)
+        d, items = t['outbound_deliveries'], t['certainty_items']
+        later = items.alias('later')
+        return sa.select(items.c.category, items.c.created_at).where(
+            items.c.job_id == d.c.id, items.c.state == 'open',
+            ~sa.select(later.c.id).where(later.c.job_id == items.c.job_id,
+                                         later.c.created_at > items.c.created_at).exists())
+
     def _category(self, connection, now):
         """Each delivery's place on the board, as SQL: sending, needs_you, waiting, delivered, failed or other.
 
-        A ready fax with an open sending-rule hold the claim respects (``routing.holds.blocking``) needs a person.
+        An uncertain outcome a person has not settled needs a person first (``_uncertain``). A ready fax with an
+        open sending-rule hold the claim respects (``routing.holds.blocking``) needs a person too.
         """
         t = self._tables(connection)
         d, holds = t['outbound_deliveries'], t.get('outbound_holds')
@@ -302,13 +327,25 @@ class Board:
             held = sa.and_(state == 'ready', d.c.id.in_(sa.select(holds.c.job_id).where(
                 holds.c.state == 'open', sa.or_(holds.c.kind != 'window', holds.c.release_at.is_(None),
                                                 holds.c.release_at > now))))
-        return sa.case((state.in_(SENDING), 'sending'), (state.in_(('reconciliation_required', 'held')), 'needs_you'),
-                       (held, 'needs_you'), (state.in_(QUEUED), 'waiting'), (state == 'success', 'delivered'),
-                       (state == 'failed', 'failed'), else_='other')
+        return sa.case((self._uncertain(connection), 'needs_you'), (state.in_(SENDING), 'sending'),
+                       (state == 'held', 'needs_you'), (held, 'needs_you'), (state.in_(QUEUED), 'waiting'),
+                       (state == 'success', 'delivered'), (state == 'failed', 'failed'), else_='other')
+
+    def _outcome(self, connection):
+        """How the delivery ended, as SQL: delivered, failed or none yet (today's counts go by this, wherever the fax
+        sits on the board)."""
+        state = self._tables(connection)['outbound_deliveries'].c.state
+        return sa.case((state == 'success', 'delivered'), (state == 'failed', 'failed'), else_='none')
 
     def _window(self, connection, since):
-        d = self._tables(connection)['outbound_deliveries']
-        return sa.or_(d.c.state.in_(ACTIVE), d.c.created_at >= since, d.c.updated_at >= since)
+        """Deliveries the board counts: active, accepted or changed today, or with an uncertain outcome to settle,
+        however old."""
+        t = self._tables(connection)
+        d = t['outbound_deliveries']
+        window = [d.c.state.in_(ACTIVE), d.c.created_at >= since, d.c.updated_at >= since]
+        if t.get('certainty_items') is not None:
+            window.append(self._open_item(connection).exists())
+        return sa.or_(*window)
 
     def _counts(self, connection, since, now):
         """How many faxes there are in each place, by container, submitter, accepted today and finished today, counted
@@ -316,17 +353,18 @@ class Board:
         t = self._tables(connection)
         d, r = t['outbound_deliveries'], t['access_resources']
         category = self._category(connection, now).label('category')
+        outcome = self._outcome(connection).label('outcome')
         via_key = sa.case((d.c.principal_scope.like('key:%'), 1), else_=0).label('via_key')
         today = sa.case((d.c.created_at >= since, 1), else_=0).label('today')
         finished = sa.case((d.c.updated_at >= since, 1), else_=0).label('finished')
         rows = self._fetch(connection, sa.select(
-            r.c.parent_id.label('parent'), r.c.enabled, via_key, category, today, finished,
+            r.c.parent_id.label('parent'), r.c.enabled, via_key, category, outcome, today, finished,
             sa.func.count().label('count'))
             .select_from(d.outerjoin(r, sa.and_(r.c.fax_job_id == d.c.id, r.c.kind == 'outbound')))
             .where(self._window(connection, since))
-            .group_by(r.c.parent_id, r.c.enabled, via_key, category, today, finished))
+            .group_by(r.c.parent_id, r.c.enabled, via_key, category, outcome, today, finished))
         return [Count(row['parent'], row['enabled'] == 1, bool(row['via_key']), row['category'], bool(row['today']),
-                      bool(row['finished']), int(row['count'])) for row in rows]
+                      bool(row['finished']), int(row['count']), row['outcome']) for row in rows]
 
     def _faxes(self, connection, since, now):
         """The faxes the board lists, each read once: sending, needing a person, the first ``REASONED`` waiting in
@@ -345,7 +383,15 @@ class Board:
                    d.c.principal_scope, j.c.to_number, j.c.pages, j.c.backend, j.c.error,
                    r.c.id.label('resource'), r.c.parent_id.label('parent'), r.c.enabled,
                    dest.c.display_name.label('recipient'), a.c.submitted_at, a.c.phase, a.c.error_category,
-                   profile.c.provider_id.label('route_provider'), category.label('category')]
+                   profile.c.provider_id.label('route_provider'), category.label('category'),
+                   self._uncertain(connection).label('uncertain')]
+        if t.get('certainty_items') is not None:
+            # The open item's own reason and time, as Sent's settling list shows them.
+            item = self._open_item(connection).order_by(None)
+            columns += [item.with_only_columns(t['certainty_items'].c.category).limit(1).scalar_subquery()
+                        .label('certainty_category'),
+                        item.with_only_columns(t['certainty_items'].c.created_at).limit(1).scalar_subquery()
+                        .label('certainty_since')]
         urgent = j.c.urgent if 'urgent' in j.c else sa.literal(0)
         columns.append(urgent.label('urgent'))
         source = (d.join(j, j.c.id == d.c.id)
@@ -361,7 +407,7 @@ class Board:
             # Queue order: urgent faxes first, then oldest first (``capacity.Capacity.next_ready`` decides the rest).
             base.where(category == 'waiting').order_by(sa.func.coalesce(urgent, 0).desc(), d.c.created_at, d.c.id)
             .limit(REASONED),
-            base.where(category == 'failed', d.c.updated_at >= since).order_by(d.c.updated_at.desc(), d.c.id)
+            base.where(d.c.state == 'failed', d.c.updated_at >= since).order_by(d.c.updated_at.desc(), d.c.id)
             .limit(FAILED_READ),
         ]
         grants, ceilings = t.get('access_assignments'), t.get('access_key_grants')
@@ -385,11 +431,15 @@ class Board:
                   row['recipient'], row['pages'], row['created_at'], row['updated_at'], row['route_provider'],
                   row['backend'], section=row['category'],
                   via_key=str(row['principal_scope'] or '').startswith('key:'), row=dict(row))
-        if fax.state == 'reconciliation_required':
+        if row['uncertain']:
             from .access.queries import delivery_fields
-            fax.kind, fax.since = 'uncertain', fax.updated_at
-            fax.sentence = delivery_fields({**fax.row, 'delivery_state': fax.state,
-                                            'delivery_version': row['version']})['reconciliation_reason']
+            from .work.certainty_service import category_text
+            fax.kind, fax.since = 'uncertain', row.get('certainty_since') or fax.updated_at
+            if row.get('certainty_category'):
+                fax.sentence = category_text(row['certainty_category'])
+            else:
+                fax.sentence = delivery_fields({**fax.row, 'delivery_state': 'reconciliation_required',
+                                                'delivery_version': row['version']})['reconciliation_reason']
         elif fax.state == 'held':
             fax.kind, fax.since, fax.sentence = 'other', fax.updated_at, HELD_TEST_FAX
         return fax
@@ -399,7 +449,7 @@ class Board:
         from .rules.text import WAITS
         t = self._tables(connection)
         holds, guard = t.get('outbound_holds'), t.get('dialing_guard_holds')
-        held = {fax.id: fax for fax in faxes if fax.section == 'needs_you' and fax.state == 'ready'}
+        held = {fax.id: fax for fax in faxes if fax.section == 'needs_you' and fax.state == 'ready' and not fax.kind}
         for fax in held.values():
             fax.kind, fax.since, fax.sentence = 'other', fax.updated_at, WAITS
         if holds is None or not held:
@@ -756,8 +806,10 @@ def _turned_down():
         from . import sinch_service, sip_calls
         from .humblefax_service import _FAILURES
         humble = {words[0]: sentence for words, sentence in _FAILURES}
+        # The trunk carrier's own refusal, or a number it could not reach as dialled (sip_calls.carrier_sentence).
         _TURNED_DOWN = frozenset({*sinch_service.REFUSED.values(), sinch_service.CALL_ERRORS[34],
-                                  humble['invalid'], sip_calls.CLEARED})
+                                  humble['invalid'], sip_calls.CLEARED,
+                                  *sip_calls.carrier_sentences(sip_calls.CARRIER_REFUSED, sip_calls.CARRIER_NOT_FOUND)})
     return _TURNED_DOWN
 
 
@@ -775,8 +827,9 @@ def visible_counts(found, scope):
     mine = [count for count in found.counts if count.enabled and count.parent in scope.containers]
     for fax in found.faxes:
         if fax.resource in scope.faxes and fax.enabled and fax.parent not in scope.containers:
+            outcome = {'success': 'delivered', 'failed': 'failed'}.get(fax.state, 'none')
             mine.append(Count(fax.parent, True, fax.via_key, fax.section, fax.created_at >= found.since,
-                              fax.updated_at >= found.since, 1))
+                              fax.updated_at >= found.since, 1, outcome))
     return mine
 
 
@@ -792,8 +845,9 @@ def view(found, scope, *, mask, sentence_for=None):
     counts = visible_counts(found, scope)
     not_checked = set(found.not_checked)
 
-    def total(category=None, *, today=None, finished=None):
+    def total(category=None, *, outcome=None, today=None, finished=None):
         return sum(count.count for count in counts if (category is None or count.category == category)
+                   and (outcome is None or count.outcome == outcome)
                    and (today is None or count.today == today) and (finished is None or count.finished == finished))
 
     def base(fax):
@@ -844,7 +898,7 @@ def view(found, scope, *, mask, sentence_for=None):
                 'actions': actions(fax), 'until': iso(fax.until)}
 
     # How today's failures ended: the latest FAILED_READ were read one by one; any older ones are "other".
-    failed_today = total('failed', finished=True)
+    failed_today = total(outcome='failed', finished=True)
     failures = {key: 0 for key, _ in FAILURES}
     for fax in mine:
         if fax.state == 'failed' and fax.updated_at >= found.since:
@@ -865,10 +919,13 @@ def view(found, scope, *, mask, sentence_for=None):
 
         def part(category):
             return sum(count.count for count in members if count.category == category)
+
+        def ended(outcome):
+            return sum(count.count for count in members if count.outcome == outcome)
         group_items.append({
             'who': f'{name} (API key)' if via_key and name != 'Installation key' else name, 'total': size,
-            'delivered': part('delivered'), 'sending': part('sending'), 'waiting': part('waiting'),
-            'needs_you': part('needs_you'), 'failed': part('failed')})
+            'delivered': ended('delivered'), 'sending': part('sending'), 'waiting': part('waiting'),
+            'needs_you': part('needs_you'), 'failed': ended('failed')})
     group_items.sort(key=lambda item: (-item['total'], item['who']))
 
     waiting_count = total('waiting')
@@ -884,7 +941,7 @@ def view(found, scope, *, mask, sentence_for=None):
                     'items': [waiting_item(fax) for fax in waiting[:LIST_LIMIT]]},
         'needs_you': {'count': total('needs_you'), 'items': [need_item(fax) for fax in needs[:LIST_LIMIT]]},
         'today': {'since': iso(found.since), 'accepted': total(today=True),
-                  'delivered': total('delivered', finished=True), 'failed': failed_today,
+                  'delivered': total(outcome='delivered', finished=True), 'failed': failed_today,
                   'failures': _counted([{'key': key, 'label': labels[key], 'count': count}
                                         for key, count in failures.items() if count],
                                        [key for key, _ in FAILURES])},
