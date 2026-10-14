@@ -640,8 +640,10 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
+        # A call the carrier answered with a final refusal (603, 404 and the like) was never connected either.
         if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
-                                          sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
+                                          sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE) \
+                or sip_calls.carrier_answer(row) is not None:
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
@@ -655,6 +657,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         if found in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer', 'remote_fax_failed',
                      sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE):
             sentence = sip_calls.verdict_sentence(found)
+        # A call the carrier never connected: the carrier's own answer (refused, no such number as dialled, no
+        # answer, carrier unavailable), never the engine's "busy" for every such ending. It still ended before
+        # any fax data, so the next route may take it and a strict route's fax waits, as for busy.
+        if sip_calls.carrier_answer(row) is not None:
+            sentence = sip_calls.carrier_sentence(row) or hylafax_engine.BUSY
         # A person or a voice line answered: the fax fails and takes no other route by itself.
         category = sip_calls.category_for(found)
     if status == hylafax_engine.UNCERTAIN:

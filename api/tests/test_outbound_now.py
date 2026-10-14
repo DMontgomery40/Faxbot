@@ -273,6 +273,15 @@ def test_failure_keys_extend_the_busy_hour_classifier():
     assert outbound_now.failure_key(category=sip_calls.PERSON_ANSWERED) == 'not_fax'
     assert outbound_now.failure_key(sentence=sip_calls.CLEARED) == 'rejected'
     assert outbound_now.failure_key(sentence=None) == 'other'
+    # The trunk carrier's own answer to a call it never connected: a refusal or a number it could not reach is
+    # turned down (even when the call record says busy), never busy; no answer stays no answer.
+    refused = {'direction': 'outbound', 'disposition': 'failed', 'error_cause': 'SIP 603 Decline (cause 21)'}
+    missing = {**refused, 'error_cause': 'SIP 404 Not Found (cause 1)'}
+    unreached = {**refused, 'disposition': 'no_answer', 'error_cause': 'SIP 480 Temporarily Unavailable (cause 19)'}
+    for record in (refused, missing, {**refused, 'error_cause': 'call failed (cause 21)'}):
+        assert outbound_now.failure_key(sentence=sip_calls.carrier_sentence(record), disposition='busy') == 'rejected'
+    assert outbound_now.failure_key(sentence=sip_calls.carrier_sentence(unreached), disposition='no_answer') == (
+        'no_answer')
 
 
 def test_a_submitter_with_five_faxes_today_gets_a_progress_line(desk):

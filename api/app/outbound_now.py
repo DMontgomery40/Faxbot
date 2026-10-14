@@ -748,8 +748,10 @@ def _turned_down():
         from . import sinch_service, sip_calls
         from .humblefax_service import _FAILURES
         humble = {words[0]: sentence for words, sentence in _FAILURES}
+        # The trunk carrier's own refusal, or a number it could not reach as dialled (sip_calls.carrier_sentence).
         _TURNED_DOWN = frozenset({*sinch_service.REFUSED.values(), sinch_service.CALL_ERRORS[34],
-                                  humble['invalid'], sip_calls.CLEARED})
+                                  humble['invalid'], sip_calls.CLEARED,
+                                  *sip_calls.carrier_sentences(sip_calls.CARRIER_REFUSED, sip_calls.CARRIER_NOT_FOUND)})
     return _TURNED_DOWN
 
 
