@@ -549,6 +549,12 @@ export default function OutboundBoard({ client, onOpenSentFax, onNavigate }: {
         </Box>
         {!board || !shown ? <NoReading view={view} /> : (
           <>
+            {board.carrier_balance && (
+              <Alert severity={board.carrier_balance.state === 'stopped' ? 'error' : 'warning'}
+                sx={{ mb: 2, borderRadius: 2 }} data-testid="outbound-carrier-balance">
+                <Typography variant="body2">{board.carrier_balance.sentence}</Typography>
+              </Alert>
+            )}
             {board.engine && (
               <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }} data-testid="outbound-engine">
                 <Typography variant="body2">{board.engine.sentence}</Typography>

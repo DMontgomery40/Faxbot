@@ -452,3 +452,95 @@ def test_the_published_card_prices_pages_and_minutes_with_its_source():
     assert attempt_cost(card, seconds=95, pages=3, delivered=True) == 2 * 5_000 + 3 * 7_000
     # An unknown call length is an unknown cost, never zero minutes.
     assert attempt_cost(card, seconds=None, pages=3, delivered=True) is None
+
+
+# Your Telnyx balance (routing/telnyx_balance.py) ---------------------------------------------------------------
+# Live, 13 October 2026: Telnyx turned the account off at -$1.38; calls to the numbers got SIP 404 and a Fax API send
+# failed "account_disabled", while the board and health read green. Every answer below is a synthetic Telnyx reply.
+
+@pytest.fixture
+def balance_state():
+    from api.app.routing import telnyx_balance
+    telnyx_balance.clear()
+    yield telnyx_balance
+    telnyx_balance.clear()
+
+
+def balance_reply(balance, available, *, status=200, asked=None):
+    def handler(request):
+        if asked is not None:
+            asked.append((request.url.path, request.headers.get('authorization')))
+        return httpx.Response(status, json={'data': {'record_type': 'balance', 'balance': balance,
+                                                     'credit_limit': '0.00', 'available_credit': available,
+                                                     'currency': 'USD'}})
+    return lambda: httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_a_balance_below_a_week_of_usual_faxing_warns_in_one_sentence(balance_state, monkeypatch):
+    asked = []
+    now = datetime(2026, 10, 13, 20)
+    balance_state.step(lambda: 'synthetic-key', client_factory=balance_reply('3.10', '3.10', asked=asked), now=now)
+    assert asked == [('/v2/balance', 'Bearer synthetic-key')]
+    # $0.775 a day of Telnyx faxing over the last four weeks: $3.10 is about 4 days, under a week's $5.43.
+    monkeypatch.setattr(balance_state, 'usual_daily_micros', lambda engine, now=None: 775_000)
+    found = balance_state.status(engine=object(), now=now)
+    assert found['state'] == 'low' and found['available'] == {'amount': '3.10', 'currency': 'USD'}
+    assert found['sentence'] == ('Your Telnyx balance is $3.10, about 4 days of your usual faxing. When it reaches $0, '
+                                 'Telnyx stops your calls in both directions. Add funds in the Telnyx portal under '
+                                 'Billing.')
+    # With no record of usual spending, Faxbot warns below $5; at or above it there is nothing to say.
+    monkeypatch.setattr(balance_state, 'usual_daily_micros', lambda engine, now=None: None)
+    assert balance_state.status(engine=object(), now=now)['sentence'].startswith(
+        'Your Telnyx balance is $3.10, below the $5.00 Faxbot warns at.')
+    balance_state.record(balance_state.fetch('k', client_factory=balance_reply('25.00', '25.00')))
+    assert balance_state.status(engine=object(), now=now) is None and not balance_state.stopped()
+    # The next reading waits its interval; no key clears what was said.
+    balance_state.step(lambda: 'synthetic-key', client_factory=balance_reply('0', '0', asked=asked),
+                       now=now + timedelta(minutes=5))
+    assert len(asked) == 1
+    balance_state.step(lambda: '', now=now + timedelta(minutes=20))
+    assert balance_state.status() is None
+
+
+def test_no_credit_or_account_disabled_stops_telnyx_routes_and_says_so(balance_state):
+    balance_state.record(balance_state.fetch('k', client_factory=balance_reply('-1.38', '-1.38')))
+    assert balance_state.stopped()
+    assert balance_state.status()['sentence'] == (
+        'Telnyx has turned your account off (your balance is -$1.38), so faxes cannot be sent or received through '
+        'Telnyx. Faxbot sends by your other routes until you add funds in the Telnyx portal under Billing.')
+    balance_state.clear()
+    # A Fax API send Telnyx failed as account_disabled: a certain failure before any page, and the routes stop at once.
+    sentence, category, before = telnyx.failure_outcome({'failure_reason': 'account_disabled', 'page_count': 0})
+    assert (sentence, category, before) == (telnyx.ACCOUNT_DISABLED, None, True)
+    assert balance_state.stopped() and balance_state.status()['state'] == 'stopped'
+    # The balance is read again at once, and credit available again clears it.
+    asked = []
+    balance_state.step(lambda: 'k', client_factory=balance_reply('20.00', '20.00', asked=asked))
+    assert asked and not balance_state.stopped()
+
+
+def test_while_telnyx_is_stopped_a_fax_goes_by_the_next_route_and_says_why(balance_state, database):  # noqa: F811
+    from types import SimpleNamespace
+    from api.app.routing.holds import no_route_sentence
+    from api.app.routing.plan import RoutePlanner
+    from api.app.routing.store import RouteStore
+    from api.app.schema import upgrade_schema
+    upgrade_schema(database)
+    routes = RouteStore(database, sip_preset=lambda: 'telnyx')
+    values = SimpleNamespace(fax_default_country='US', sip_trunk_preset='telnyx', sip_t38_enabled=True,
+                             plan_budgets='', time_zone='', provider_accounts={}, effective_outbound='sip',
+                             outbound_route_providers=('humblefax',), route_min_success_percent=80,
+                             local_delivery_enabled=False, direct_delivery_enabled=False, sip_trunk_did_list=(),
+                             sip_trunk_caller_id='', humblefax_from_number='')
+    planner = RoutePlanner(routes, direct_ready=lambda: False, local_ready=lambda: False)
+
+    def plan():
+        return planner.plan(to_number='+12025550123', bound='sip', values=values, pages=1, alternates=True)
+    assert plan().choices[0].route.key == 'sip'
+    balance_state.note_disabled()
+    stopped = plan()
+    assert [choice.route.key for choice in stopped.choices] == ['humblefax']
+    assert ('sip', 'account_stopped') in stopped.skipped
+    assert no_route_sentence(lambda key: 'Telnyx trunk', [('sip', 'account_stopped')]) == (
+        'No account your rules allow can send this fax now: Telnyx trunk is stopped because Telnyx has turned your '
+        'account off. It waits for you in Sent; nothing was sent.')

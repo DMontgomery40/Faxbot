@@ -62,9 +62,18 @@ def _background(app):
                                               warning='Carrier call charges are temporarily unavailable.')),
             ('faxbot-route-fallback', repeat(fallback.step, interval=3.0, initial_delay=3.0,
                                              warning='Fax route fallback is temporarily unavailable.')),
+            # Your Telnyx balance: low or stopped (telnyx_balance.py); it reads the balance every 15 minutes, and at
+            # once after Telnyx reports an account turned off.
+            ('faxbot-telnyx-balance', repeat(lambda: _telnyx_balance_step(engine), interval=60.0, initial_delay=40.0,
+                                             warning='Your Telnyx balance could not be checked.')),
             # Time windows your rules hold faxes for open by themselves; this marks them released for the history.
             ('faxbot-route-holds', repeat(_holds_step(delivery), interval=30.0, initial_delay=10.0,
                                           warning='Held faxes could not be checked.'))]
+
+
+def _telnyx_balance_step(engine):
+    from . import telnyx_balance
+    return telnyx_balance.step(_telnyx_key, engine=engine)
 
 
 def _holds_step(delivery):

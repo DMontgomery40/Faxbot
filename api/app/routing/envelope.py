@@ -30,8 +30,9 @@ TABLES = ('fax_job_rule_decisions', 'delivery_rule_choices', 'outbound_holds')
 RELAY = 'relay'
 # Why an allowed account was not used for one attempt (``delivery_rule_choices.skipped``).
 # ``needs_patient``: a FHIR server that needs the patient's details, for a fax without them (digital/routes.py).
+# ``account_stopped``: Telnyx has turned the account off (no credit left, or ``account_disabled``; telnyx_balance.py).
 SKIPS = ('turned_off', 'not_ready', 'busy', 'over_cap', 'unknown_cost', 'spending_limit', 'unavailable', 'tried',
-         'needs_patient', 'not_served', 'digits', 'power')
+         'needs_patient', 'not_served', 'digits', 'power', 'account_stopped')
 
 
 _REFLECTED = WeakKeyDictionary()

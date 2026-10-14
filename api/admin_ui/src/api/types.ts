@@ -21,6 +21,8 @@ export interface HealthStatus {
   backend_healthy: boolean;
   // One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
   backend_message?: string | null;
+  // Your Telnyx balance when it is low or Telnyx has turned the account off; null otherwise.
+  carrier_balance?: { state: 'low' | 'stopped'; sentence: string } | null;
   // The provider that receives faxes ('' when receiving is off), and whether receiving can work now.
   receiving_backend?: string;
   receiving_ready?: boolean;

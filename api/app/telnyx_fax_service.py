@@ -150,6 +150,10 @@ def failure_outcome(fax: dict) -> tuple[str, str | None, bool | None]:
     reason = str(fax.get('failure_reason') or '').strip().lower()
     if type(pages) is int and pages > 0:
         return PARTLY_SENT, 'partly_sent', False
+    if reason == 'account_disabled':
+        # Telnyx turned the account off: its routes stop and the balance is read again (routing/telnyx_balance.py).
+        from .routing import telnyx_balance
+        telnyx_balance.note_disabled()
     if reason in BEFORE_FAX_DATA:
         return BEFORE_FAX_DATA[reason], None, True
     return NOT_CONFIRMED, 'pages_unconfirmed', None
