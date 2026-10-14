@@ -143,7 +143,142 @@ def test_an_unanswered_engine_call_keeps_its_own_reason(calls):
     calls.record_engine_call(trunk_event('DISABLED'), now=NOW)
     calls.record_engine_call({**engine_event('0'), 'Answered': '', 'DialStatus': 'BUSY', 'Cause': '17'}, now=NOW)
     row = calls.for_attempt(ATTEMPT)[-1]
-    assert row['disposition'] == 'busy' and row['error_cause'] == 'busy'
+    assert row['disposition'] == 'busy' and row['error_cause'] == 'busy (cause 17)'
+
+
+# The carrier's own answer to a call it never connected ----------------------------------------------------------
+# Live over Telnyx, 13 October 2026: HylaFAX logged "Busy signal detected {E001}" within a second for every one of
+# these, and the fax read "the line was busy", while Telnyx answered 603, 404, 480 and only once 486.
+
+def carrier_event(sip=None, cause='21', dial_status='CHANUNAVAIL'):
+    """The engine channel's event for a call the carrier never connected, with the trunk's last SIP answer."""
+    event = {**engine_event('0'), 'Answered': '', 'Cause': cause, 'DialStatus': dial_status, 'CallID64': ''}
+    if sip is not None:
+        event['Sip64'] = base64.b64encode(sip.encode()).decode()
+    return event
+
+
+ENGINE_BUSY = 'Busy signal detected {E001}'
+CARRIER_CASES = [
+    # (the trunk's SIP answer, Q.850 cause, DIALSTATUS, disposition, stored cause, the fax's sentence)
+    ('SIP 603 Decline', '21', 'CHANUNAVAIL', 'failed', 'SIP 603 Decline (cause 21)',
+     'Your carrier refused the call (SIP 603); check its permissions for the country.'),
+    ('SIP 404 Not Found', '1', 'CHANUNAVAIL', 'failed', 'SIP 404 Not Found (cause 1)',
+     'Your carrier could not reach the number as dialled (SIP 404); check the number.'),
+    ('SIP 480 Temporarily Unavailable', '19', 'NOANSWER', 'no_answer', 'SIP 480 Temporarily Unavailable (cause 19)',
+     'The number was unavailable or did not answer (SIP 480); try again later.'),
+    ('SIP 486 Busy Here', '17', 'BUSY', 'busy', 'SIP 486 Busy Here (cause 17)', hylafax_engine.BUSY),
+    ('SIP 503 Service Unavailable', '34', 'CONGESTION', 'congestion', 'SIP 503 Service Unavailable (cause 34)',
+     'Your carrier could not take the call (SIP 503); try again later.'),
+    # Asterisk's DIALSTATUS never makes a refusal busy (no false busy hour for the number).
+    ('SIP 603 Decline', '21', 'BUSY', 'failed', 'SIP 603 Decline (cause 21)',
+     'Your carrier refused the call (SIP 603); check its permissions for the country.'),
+    # An Asterisk image older than the API (no Sip64): the Q.850 cause alone still names the refusal.
+    (None, '21', 'CHANUNAVAIL', 'failed', 'call failed (cause 21)',
+     'Your carrier refused the call (cause 21); check its permissions for the country.'),
+    # Nothing from the carrier (no cause, or a plain hang-up): the engine's own words and sentence stay.
+    (None, '', 'CHANUNAVAIL', 'failed', 'Busy signal detected E001', hylafax_engine.BUSY),
+    (None, '16', 'CHANUNAVAIL', 'failed', 'Busy signal detected E001', hylafax_engine.BUSY),
+]
+
+
+def unconnected_trunk_event():
+    """The trunk leg's own event for a call that never answered: no Call-ID, no sound counted."""
+    return {**trunk_event('DISABLED'), 'Cause': '21', 'CallID64': ''}
+
+
+@pytest.mark.parametrize('sip, cause, dial_status, disposition, stored, sentence', CARRIER_CASES)
+@pytest.mark.parametrize('order', ORDERS, ids='-'.join)
+def test_a_call_the_carrier_never_connected_gets_the_carriers_answer_whichever_part_arrives_first(
+        calls, monkeypatch, sip, cause, dial_status, disposition, stored, sentence, order):
+    parts = {'engine': lambda: calls.record_engine_call(carrier_event(sip, cause, dial_status), now=NOW),
+             'trunk': lambda: calls.record_engine_call(unconnected_trunk_event(), now=NOW),
+             'result': lambda: engine_side(calls, ENGINE_BUSY)}
+    for part in order:
+        parts[part]()
+    row = calls.for_attempt(ATTEMPT)[-1]
+    assert (row['disposition'], row['error_cause'], row['verdict']) == (disposition, stored, None)
+    # Recent calls reads the same sentence (busy and a silent carrier keep the call's own words).
+    assert row['summary'] == (sentence if sentence != hylafax_engine.BUSY else
+                              {'busy': 'The number was busy.', 'failed': 'The call did not connect.'}[disposition])
+    # The fax: the engine said busy; the carrier's answer decides. It failed before any fax data, so the next
+    # route may still take it, as after busy.
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(ENGINE_BUSY.encode()).decode()}
+    stores = []
+
+    class Kept(ResultStore):
+        def __init__(self):
+            super().__init__()
+            stores.append(self)
+
+        def observe(self, job_id, **fields):
+            self.before_data = fields.get('before_data')
+            return super().observe(job_id, **fields)
+    monkeypatch.setattr(sys.modules[__name__], 'ResultStore', Kept)
+    answer, observed, _ = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'ok'} and observed == [('observed', 'failed', sentence)]
+    assert stores[0].category is None and stores[0].before_data is True
+    assert len(sentence) <= 80
+
+
+def test_a_call_the_carrier_refused_is_never_called_busy(calls, monkeypatch):
+    """The live defect: Telnyx answered 603 Decline (a country the outbound profile did not allow) and the fax said
+    the line was busy."""
+    engine_side(calls, ENGINE_BUSY)
+    calls.record_engine_call(carrier_event('SIP 603 Decline'), now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(ENGINE_BUSY.encode()).decode()}
+    _, observed, _ = result_route(monkeypatch, payload, row)
+    [(_, status, sentence)] = observed
+    assert status == 'failed' and 'busy' not in sentence.lower() and 'refused' in sentence and 'SIP 603' in sentence
+
+
+def test_an_open_ending_on_a_call_the_carrier_never_connected_fails_for_certain(calls, monkeypatch):
+    """The engine's words leave it open, but the carrier answered the call with a final refusal: no call was
+    connected, so nothing was delivered."""
+    calls.record_engine_call(carrier_event('SIP 404 Not Found', cause='1'), now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'Remote hangup').decode()}
+    answer, observed, _ = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'ok'} and observed == [
+        ('observed', 'failed', 'Your carrier could not reach the number as dialled (SIP 404); check the number.')]
+
+
+@pytest.mark.parametrize('cause, dial_status', [
+    # Dial said answered (the answer time was lost): a mid-call drop is not the carrier turning the call away.
+    ('38', 'ANSWER'),
+    # The engine hung up first: the cause is the engine's, not the carrier's.
+    ('21', 'CANCEL'),
+    # A Q.850 cause alone is not proof enough that nothing was delivered.
+    ('21', 'CHANUNAVAIL'),
+])
+def test_an_open_ending_stays_uncertain_without_the_carriers_own_refusal(calls, monkeypatch, cause, dial_status):
+    """Never sent again by another route unless the carrier's final SIP answer shows the call never connected."""
+    calls.record_engine_call(carrier_event(cause=cause, dial_status=dial_status), now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    if dial_status != 'CHANUNAVAIL':
+        assert sip_calls.carrier_answer(row) is None
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'Remote hangup').decode()}
+    answer, observed, _ = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'uncertain'} and observed[0][0] == 'uncertain'
+
+
+def test_every_carrier_sentence_fits_a_faxs_error_and_a_provisional_answer_says_nothing(calls):
+    every = sip_calls.carrier_sentences(sip_calls.CARRIER_BUSY, sip_calls.CARRIER_REFUSED,
+                                        sip_calls.CARRIER_NOT_FOUND, sip_calls.CARRIER_NO_ANSWER,
+                                        sip_calls.CARRIER_UNAVAILABLE)
+    assert every and max(len(sentence) for sentence in every) <= 80
+    # A call cancelled while it rang left only a provisional answer: not the carrier's answer.
+    calls.record_engine_call(carrier_event('SIP 183 Session Progress', cause='16', dial_status='NOANSWER'), now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    assert sip_calls.carrier_answer(row) is None and row['error_cause'] == 'no answer'
+    # An answered call never reads as the carrier's refusal, whatever its cause.
+    assert sip_calls.carrier_answer({**row, 'disposition': 'answered', 'error_cause': 'SIP 603 Decline (cause 21)'}) \
+        is None
 
 
 @pytest.mark.parametrize('order', ORDERS, ids='-'.join)
@@ -907,6 +1042,29 @@ def test_the_trunks_hang_up_handler_reports_in_its_own_event_and_writes_nothing_
     engine = dialplan.split('[faxbot-engine-result]', 1)[1].split('\n[', 1)[0]
     assert 'SHARED(FAXBOT_T38' not in engine and 'SHARED(FAXBOT_RTPRX' not in engine and 'Side:engine' in engine
     assert 'GwStatus:' in engine and 'GwError:' in engine
+    # A call the carrier never connected: its last SIP answer, read on the engine's channel (the one that ran Dial)
+    # after Dial returns and before it hangs up, from the PJSIP leg only, base64 so the carrier's words cannot
+    # break the event's fields.
+    assert 'DialStatus:${DIALSTATUS},Sip64:${FAXBOT_SIP64},' in engine
+    out = dialplan.split('[faxbot-engine-out]', 1)[1].split('\n[', 1)[0]
+    steps = [line.strip() for line in out.splitlines() if line.strip().startswith('same =>')]
+    dial = next(index for index, line in enumerate(steps) if ',Dial(PJSIP/' in line)
+    after = steps[dial + 1:steps.index('same => n(hangup),Hangup()')]
+    assert after == ['same => n,GotoIf($["${DIALSTATUS}" = "ANSWER"]?hangup)',
+                     'same => n,Gosub(faxbot-carrier-answer,s,1)']
+    answer = dialplan.split('[faxbot-carrier-answer]', 1)[1].split('\n[', 1)[0]
+    assert [line.strip() for line in answer.splitlines() if line.strip() and not line.startswith(';')] == [
+        'exten => s,1,Set(FAXBOT_SIP64=)',
+        'same => n,Set(FAXBOT_LEGS=${HANGUPCAUSE_KEYS()})',
+        'same => n(leg),Set(FAXBOT_LEG=${SHIFT(FAXBOT_LEGS)})',
+        'same => n,GotoIf($["${FAXBOT_LEG}" = ""]?done)',
+        'same => n,GotoIf($["${FAXBOT_LEG:0:6}" != "PJSIP/"]?leg)',
+        'same => n,Set(FAXBOT_SIP=${HANGUPCAUSE(${FAXBOT_LEG},tech)})',
+        'same => n,Gosub(faxbot-b64,s,1(FAXBOT_SIP64,FAXBOT_SIP))',
+        'same => n(done),Return()']
+    # The call's own hang-up still comes before the refusal path, so a placed call never falls into it.
+    assert steps.index('same => n(hangup),Hangup()') < steps.index(
+        'same => n(refuse),Log(WARNING,The fax engine dialed a call Faxbot did not ask for and it was refused.)')
     # Inherited by the trunk channel, so its event names the fax and attempt.
     assert 'Set(__FAXBOT_ENGINE_JOB=${JOBID})' in dialplan and 'Set(__FAXBOT_ENGINE_ATTEMPT=${FAXATTEMPT})' in dialplan
 

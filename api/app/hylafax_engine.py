@@ -1007,8 +1007,10 @@ UNCERTAIN = 'uncertain'
 # HylaFAX's own words for a call that never became a fax, first match wins. Every
 # sentence fits the 80 characters a fax's error shows (main.py cuts longer ones).
 NOT_CONFIRMED = 'The other fax machine did not confirm the pages.'
+BUSY = 'The fax did not go through: the line was busy.'
+# Indexes matter: routing.schedule and outbound_now read entries 0 to 3 by position.
 _REASONS = (
-    (re.compile(r'busy', re.IGNORECASE), 'The fax did not go through: the line was busy.'),
+    (re.compile(r'busy', re.IGNORECASE), BUSY),
     (re.compile(r'no answer', re.IGNORECASE), 'The fax did not go through: no one answered.'),
     # Phase B training never succeeded (E105, E137, E156): no page was sent.
     (re.compile(r'fail\w* to train', re.IGNORECASE), 'The fax machines could not agree on a speed; no page was sent.'),

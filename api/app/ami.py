@@ -47,6 +47,10 @@ class AMILoginRejected(ConnectionError):
     """Asterisk answered the login with an error: the manager username or password does not match."""
 
 
+# Pushed on each built-in engine call over a trunk (extensions.conf, [faxbot-send-unanswered]).
+UNANSWERED_HANDLER = "CHANNEL(hangup_handler_push)=faxbot-send-unanswered\\,s\\,1"
+
+
 def _validate_headers(fields: Dict[str, str]):
     for key, value in fields.items():
         if (
@@ -730,6 +734,8 @@ class AMIClient:
             self._emit("FaxCopierSent", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginecall":
             self._emit("FaxEngineCall", msg)
+        elif event == "userevent" and fields.get("userevent", "").lower() == "faxcallunanswered":
+            self._emit("FaxCallUnanswered", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxenginemissed":
             self._emit("FaxEngineMissed", msg)
         elif event == "userevent" and fields.get("userevent", "").lower() == "faxscreened":
@@ -949,6 +955,10 @@ class AMIClient:
         if learned is not None and learned.changed():
             submission["Learned"] = learned.payload()  # what this call used and why (fax_call_choices)
         self._emit("Submission", submission)
+        if peer is None:
+            # A call the carrier never connected never reaches faxbot-send: this hang-up handler reports the
+            # carrier's own answer (FaxCallUnanswered). AMI splits Variable on commas, hence the escaped ones.
+            fields = {**fields, "Variable": fields["Variable"] + "," + UNANSWERED_HANDLER}
         await self._send_action(fields)
 
     def on_originate_response(self, cb: Callable[[Dict[str, str]], None]):
@@ -979,6 +989,10 @@ class AMIClient:
     def on_engine_call(self, cb: Callable[[Dict[str, str]], None]):
         """A trunk call the SSL Fax engine placed or answered (the dialplan's FaxEngineCall event)."""
         self._listen("FaxEngineCall", cb)
+
+    def on_call_unanswered(self, cb: Callable[[Dict[str, str]], None]):
+        """A built-in engine call the carrier never connected, with its own answer (sent before OriginateResponse)."""
+        self._listen("FaxCallUnanswered", cb)
 
     def on_engine_missed(self, cb: Callable[[Dict[str, str]], None]):
         """A received call none of the SSL Fax engine's free lines answered (the built-in engine took it)."""
