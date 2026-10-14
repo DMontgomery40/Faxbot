@@ -247,6 +247,26 @@ def test_an_open_ending_on_a_call_the_carrier_never_connected_fails_for_certain(
         ('observed', 'failed', 'Your carrier could not reach the number as dialled (SIP 404); check the number.')]
 
 
+@pytest.mark.parametrize('cause, dial_status', [
+    # Dial said answered (the answer time was lost): a mid-call drop is not the carrier turning the call away.
+    ('38', 'ANSWER'),
+    # The engine hung up first: the cause is the engine's, not the carrier's.
+    ('21', 'CANCEL'),
+    # A Q.850 cause alone is not proof enough that nothing was delivered.
+    ('21', 'CHANUNAVAIL'),
+])
+def test_an_open_ending_stays_uncertain_without_the_carriers_own_refusal(calls, monkeypatch, cause, dial_status):
+    """Never sent again by another route unless the carrier's final SIP answer shows the call never connected."""
+    calls.record_engine_call(carrier_event(cause=cause, dial_status=dial_status), now=NOW)
+    row = calls.for_attempt(ATTEMPT)[-1]
+    if dial_status != 'CHANUNAVAIL':
+        assert sip_calls.carrier_answer(row) is None
+    payload = {'tag': f'{JOB}.{ATTEMPT}', 'why': 'failed', 'dials': 1, 'pages': 0,
+               'status_b64': base64.b64encode(b'Remote hangup').decode()}
+    answer, observed, _ = result_route(monkeypatch, payload, row)
+    assert answer == {'status': 'uncertain'} and observed[0][0] == 'uncertain'
+
+
 def test_every_carrier_sentence_fits_a_faxs_error_and_a_provisional_answer_says_nothing(calls):
     every = sip_calls.carrier_sentences(sip_calls.CARRIER_BUSY, sip_calls.CARRIER_REFUSED,
                                         sip_calls.CARRIER_NOT_FOUND, sip_calls.CARRIER_NO_ANSWER,

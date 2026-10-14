@@ -757,9 +757,11 @@ class SipCallRecords:
         if direction == 'outbound' and side == 'trunk':
             return self._record_trunk_side(event, t38, heard, now)
         # A call the carrier never connected: its own answer decides (a 603 is refused, never busy), else Asterisk's.
-        carrier = None if answered else _carrier_said(event)
+        # Not after Dial said answered, nor after the engine hung up first (CANCEL): that cause is not the carrier's.
+        unconnected = not answered and dial_status not in ('ANSWER', 'CANCEL')
+        carrier = _carrier_said(event) if unconnected else None
         q850 = int(cause) if cause.isdigit() and 0 < len(cause) <= 3 and int(cause) else None
-        kind = None if answered else _carrier_kind(carrier[0] if carrier else None, q850)
+        kind = _carrier_kind(carrier[0] if carrier else None, q850) if unconnected else None
         if answered:
             disposition = 'answered'
         else:

@@ -640,10 +640,11 @@ async def engine_result(request: Request, payload: dict = Body(...),
         # signal, no sound back, not a fax machine): then nothing was delivered and it failed for certain.
         from . import sip_calls
         row = await _settled_call(request, attempt_id, row)
-        # A call the carrier answered with a final refusal (603, 404 and the like) was never connected either.
+        # A call the carrier answered with a final SIP refusal (603, 404 and the like) was never connected either;
+        # a Q.850 cause alone is not proof enough to send the fax again by another route.
         if (row or {}).get('verdict') in (sip_calls.NO_FAX_SIGNAL, 'no_media_back', 'no_fax_answer',
                                           sip_calls.PERSON_ANSWERED, sip_calls.CLEARED_AT_ONCE) \
-                or sip_calls.carrier_answer(row) is not None:
+                or (sip_calls.carrier_answer(row) or (None, ''))[1].startswith('SIP '):
             status, category = 'failed', None
     if status == 'failed' and category is None:
         # Nothing confirmed: the same sentence the built-in engine gives for this call, when the trunk
