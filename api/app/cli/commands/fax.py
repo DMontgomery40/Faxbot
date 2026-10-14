@@ -51,8 +51,15 @@ def _label(state):
     return STATUS_LABELS.get(state) or state.replace('_', ' ').capitalize() or '-'
 
 
+# A fax a person settled as can't tell is failed for the API, but it may have arrived: never a bare "Failed"
+# (JobsList.tsx, CANT_TELL_LABEL).
+CANT_TELL_LABEL = "Can't tell"
+
+
 def status_label(job):
     """A sent fax's state in the console's words; a fax waiting to go with others says so."""
+    if job.get('settled_cant_tell'):
+        return CANT_TELL_LABEL
     state = (job.get('delivery_state') or job.get('status') or '').lower()
     if (job.get('together') or {}).get('state') == 'waiting' and state not in {'success', 'failed', 'cancelled'}:
         return 'Waiting to go with other faxes'
@@ -61,6 +68,8 @@ def status_label(job):
 
 def delivery_notice(job):
     """The console's sentence under the state, when there is one."""
+    if job.get('settled_cant_tell'):
+        return job.get('error') or None
     state = (job.get('delivery_state') or job.get('status') or '').lower()
     if state == 'held' or job.get('dispatch_mode') == 'held':
         return 'This test fax is held and will not be sent.'
@@ -93,7 +102,8 @@ def _fax_fields(job, route=None):
     return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', status_label(job)),
             *([('Delivery', delivery_notice(job))] if delivery_notice(job) else []),
             ('Pages', job.get('pages')), *([route] if route and route[1] else []),
-            ('Provider fax ID', job.get('provider_sid')), ('Problem', job.get('error')),
+            ('Provider fax ID', job.get('provider_sid')),
+            ('Problem', None if job.get('settled_cant_tell') else job.get('error')),
             ('Accepted', local_time(job.get('created_at'))), ('Updated', local_time(job.get('updated_at')))]
 
 

@@ -46,8 +46,14 @@ def delivery_fields(row):
             reason = ('The call ended before the receiving fax machine confirmed the pages; check with the recipient '
                       'before sending this fax again.' if own else
                       'Faxbot could not confirm delivery; check your provider account before sending this fax again.')
+    # A person settled it as can't tell (outbound_store.CANT_TELL): failed for the API, but Sent and the command line
+    # call it "Can't tell", never a bare "Failed" that invites sending it again.
+    from ..outbound_store import CANT_TELL
+    cant_tell = (row['delivery_state'] == 'failed' and row.get('error') == CANT_TELL
+                 and row.get('attempt_phase', 'uncertain') == 'uncertain')
     return {'delivery_state': row['delivery_state'], 'dispatch_mode': row['dispatch_mode'],
-            'delivery_version': row['delivery_version'], 'reconciliation_reason': reason}
+            'delivery_version': row['delivery_version'], 'reconciliation_reason': reason,
+            'settled_cant_tell': cant_tell}
 
 
 class AuthorizedFaxQueries:
@@ -86,7 +92,8 @@ class AuthorizedFaxQueries:
         profile = self.configuration.profiles.alias('route_profile')
         return sa.select(*(jobs.c[name] for name in columns),
             delivery.c.state.label('delivery_state'), delivery.c.dispatch_mode,
-            delivery.c.version.label('delivery_version'), profile.c.provider_id.label('route_provider')).select_from(
+            delivery.c.version.label('delivery_version'), profile.c.provider_id.label('route_provider'),
+            attempt.c.phase.label('attempt_phase')).select_from(
                 jobs.outerjoin(delivery, delivery.c.id == jobs.c.id)
                 .outerjoin(attempt, attempt.c.id == delivery.c.attempt_id)
                 .outerjoin(binding, binding.c.id == jobs.c.id)
@@ -183,7 +190,7 @@ class AuthorizedFaxQueries:
     def counts(self, actor):
         with self._transaction() as (connection, now):
             visible = self._visible(connection, actor, now)
-            return dashboard_counts(connection, self.deliveries, now=now, job_ids=visible)
+            return dashboard_counts(connection, self.deliveries, now=now, job_ids=visible, jobs=self.jobs)
 
     def _history_on(self, connection, actor, job_id, now):
         resource = self.resources.require_outbound_on(connection, actor, job_id, 'fax:read', now=now)

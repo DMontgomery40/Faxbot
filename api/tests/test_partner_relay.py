@@ -485,6 +485,22 @@ async def test_delivered_failed_before_data_and_uncertain_receipts_and_no_resend
         a.relay.store.fax(role='sender', message_id=jobs[delivered]['message_id'])) == 'delivered'
     # Every receipt reached A once; B does not send them again.
     assert await asyncio.to_thread(b_report) == 0
+    # B's person then settles its uncertain fax as can't tell: it ends on B, but A still hears only that it may
+    # have arrived, never that no page went (which would let A's next route send a second copy).
+    from api.app.outbound_store import settle_uncertain_on
+    b_store, b_row = trio.b_delivery, trio.b_delivery.get(b_job[uncertain])
+    with b_store.configuration.engine.begin() as connection:
+        # Its result was lost (engine_results.py), so no "pages unconfirmed" category says part of it may have gone.
+        connection.execute(b_store.attempts.update().where(b_store.attempts.c.id == b_row['attempt_id']).values(
+            error_category='result_lost'))
+        assert settle_uncertain_on(connection, b_store.deliveries, b_store.configuration.jobs, b_store.events,
+                                   b_job[uncertain], attempt_id=b_row['attempt_id'], outcome='unknown',
+                                   actor='principal:owner', now=datetime.utcnow())
+    assert b_store.get(b_job[uncertain])['state'] == 'failed'
+    await asyncio.to_thread(b_report)
+    assert a.delivery.get(uncertain)['state'] == 'reconciliation_required'
+    (told,) = rows(a.engine, "SELECT state FROM relay_faxes WHERE role = 'sender' AND job_id = :j", j=uncertain)
+    assert told['state'] == 'uncertain'
 
 
 @pytest.mark.asyncio

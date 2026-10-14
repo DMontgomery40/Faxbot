@@ -426,7 +426,8 @@ def _uncertain_then_waiting(lane):
     return lane.item_for('fax-a')
 
 
-@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success')])
+@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success'),
+                                            ('unknown', 'failed')])
 def test_settling_ends_the_fax_and_frees_its_number_at_once(lane, outcome, state):
     """Defect 45 (live, 2026-10-11): a fax settled as not delivered stayed "Needs review" and held its number for
     up to 30 minutes, so the next fax to it waited. Delivered or not delivered now ends the delivery in the same
@@ -452,13 +453,39 @@ def test_settling_ends_the_fax_and_frees_its_number_at_once(lane, outcome, state
     assert lane.job_count() == 2  # nothing was sent again
 
 
-def test_cant_tell_keeps_the_fax_waiting_for_review_and_its_number_held(lane):
+def test_cant_tell_ends_the_fax_as_it_may_have_arrived_never_as_delivered(lane):
+    """Live, 13 October 2026: faxes settled "can't tell" stayed in progress and "Needs review" for good. The person's
+    decision ends the fax: failed with a sentence saying it may have arrived, its attempt still uncertain (so a
+    partner or a fax server's contact hears it may have arrived, and no route sends it again), its number free."""
+    from api.app.outbound_store import CANT_TELL
     owner = lane.operator('owner', role='role_owner')
     item = _uncertain_then_waiting(lane)
     lane.service.settle(owner, item['id'], outcome='unknown', reason='Nobody at the recipient knows', version=1)
-    assert lane.delivery.get('fax-a')['state'] == 'reconciliation_required'
-    assert not [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
-    assert lane.delivery.claim('worker') is None
+    record = lane.delivery.get('fax-a')
+    assert record['state'] == 'failed' and record['state'] != 'success'
+    with lane.engine.connect() as connection:
+        job = connection.execute(sa.select(lane.certainty.jobs.c.status, lane.certainty.jobs.c.error).where(
+            lane.certainty.jobs.c.id == 'fax-a')).one()
+    assert tuple(job) == ('failed', CANT_TELL) and len(CANT_TELL) <= 80 and 'may have arrived' in CANT_TELL
+    [settled] = [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
+    assert json.loads(settled['details'])['outcome'] == 'unknown'
+    assert lane.item_for('fax-a')['state'] == 'settled' and lane.item_for('fax-a')['outcome'] == 'unknown'
+    # Sent and the command line read it as "Can't tell" (settled_cant_tell), and the Overview's recent failures
+    # leave it out: it is counted on its own.
+    from api.app.access.queries import delivery_fields
+    from api.app.outbound_summary import dashboard_counts
+    with lane.engine.connect() as connection:
+        counts = dashboard_counts(connection, lane.certainty.deliveries, now=record['updated_at'],
+                                  jobs=lane.certainty.jobs)
+        phase = connection.execute(sa.select(lane.certainty.attempts.c.phase).where(
+            lane.certainty.attempts.c.id == record['attempt_id'])).scalar()
+    assert (counts['recent_failures'], counts['recent_cant_tell']) == (0, 1)
+    row = {'delivery_state': record['state'], 'dispatch_mode': 'normal', 'delivery_version': record['version'],
+           'error': job[1], 'attempt_phase': phase}
+    assert delivery_fields(row)['settled_cant_tell'] is True
+    assert delivery_fields({**row, 'error': 'The line was busy.'})['settled_cant_tell'] is False
+    assert lane.delivery.claim('worker').job_id == 'fax-b'
+    assert lane.job_count() == 2  # nothing was sent again
 
 
 def test_not_delivered_and_sent_again_frees_the_number_for_the_new_fax(lane):
@@ -498,7 +525,8 @@ def _settled_before_the_fix(lane, item, outcome, *, by='owner'):
     return decided
 
 
-@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success')])
+@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success'),
+                                            ('unknown', 'failed')])
 def test_a_fax_settled_before_settling_ended_it_is_ended_by_the_worker_once(lane, outcome, state):
     """Defect 73: a fax settled delivered or not delivered before #93 stayed "Needs review" and held its number,
     and nothing could end it (settling needs an open item). The certainty worker applies the person's decision as
@@ -530,18 +558,11 @@ def test_a_fax_settled_before_settling_ended_it_is_ended_by_the_worker_once(lane
     assert lane.job_count() == 2  # nothing was sent again
 
 
-def test_cant_tell_or_a_result_that_came_since_is_left_alone_by_the_worker(lane):
-    owner = lane.operator('owner', role='role_owner')
+def test_a_result_that_came_since_is_left_alone_by_the_worker(lane):
+    lane.operator('owner', role='role_owner')
     item = _uncertain_then_waiting(lane)
-    lane.service.settle(owner, item['id'], outcome='unknown', reason='Nobody at the recipient knows', version=1)
-    assert lane.certainty.end_settled(now=utcnow()) == 0
-    assert lane.delivery.get('fax-a')['state'] == 'reconciliation_required'
-    assert not [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
-    assert lane.delivery.claim('worker') is None
     # Settled not delivered before #93, then the fax service's late result said delivered: the result stands.
-    with lane.engine.begin() as connection:
-        connection.execute(lane.certainty.items.update().where(lane.certainty.items.c.id == item['id']).values(
-            outcome='not_delivered'))
+    _settled_before_the_fix(lane, item, 'not_delivered')
     record = lane.delivery.get('fax-a')
     with lane.engine.connect() as connection:
         profile = connection.execute(sa.select(lane.certainty.attempts.c.profile_id).where(

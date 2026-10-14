@@ -391,6 +391,9 @@ class AuthorizedInboundQueries:
         failures = failures_on(connection, self.store.engine, identities) if imports is not None else {}
         copies = provider_copies_on(connection, self.store.engine, identities) if imports is not None else {}
         placements = self._placements_on(connection, identities)
+        # The first pages of a broken call a partner completed directly: Received points to the whole fax.
+        from ..work.duplicates import completed_by_repair
+        repaired = completed_by_repair(connection, self.store.engine, identities)
         now = self._clock()
         result = []
         for row in rows:
@@ -398,6 +401,10 @@ class AuthorizedInboundQueries:
             record = found.get(row['id'])
             row.update(describe(row, record, now=now, failures=failures.get(row['id'], ()),
                                 provider_copy=copies.get(row['id'])))
+            whole = repaired.get(row['id'])
+            row['completed_in'] = whole[0] if whole is not None else None
+            if whole is not None and row.get('status_text') == 'Received.':
+                row['status_text'] = whole[1]
             row.update(_received_on(record, placements.get(row['id'])))
             for private in ('pdf_path', 'provider_sid'):
                 row.pop(private, None)

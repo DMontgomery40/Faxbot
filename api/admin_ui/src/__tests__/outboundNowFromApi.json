@@ -80,6 +80,7 @@
   },
   "today": {
     "accepted": 9,
+    "cant_tell": 0,
     "delivered": 1,
     "failed": 1,
     "failures": [

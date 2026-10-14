@@ -1239,6 +1239,12 @@ class RelayService:
                     'shared': shared, 'detail': f'{relay} delivered it as a local call.'}
         if state in ('failed', 'cancelled'):
             partial = any(attempt['error_category'] in ('partly_sent', 'pages_unconfirmed') for attempt in tried)
+            if any(attempt['id'] == delivery['attempt_id'] and attempt['phase'] == 'uncertain' for attempt in tried):
+                # A person settled a fax nobody could confirm (outbound_store.settle_uncertain_on): its call's own
+                # outcome is still unknown, so the partner is never told that no page went.
+                return {'status': UNCERTAIN, 'pages': None, 'seconds': None, 'charge': self._charge(fax['job_id']),
+                        'shared': shared, 'detail': f'{relay} cannot confirm whether the fax arrived. Check with the '
+                                                    'recipient before sending it again.'}
             if partial:
                 return {'status': UNCERTAIN, 'pages': None, 'seconds': None, 'charge': self._charge(fax['job_id']),
                         'shared': shared, 'detail': f"{relay}'s call ended partway, and part of the fax may have "

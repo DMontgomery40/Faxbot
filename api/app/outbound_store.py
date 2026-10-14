@@ -133,18 +133,22 @@ def _event(connection, events, job_id, kind, now, *, attempt_id=None, details=No
         details=json.dumps(details or {}, sort_keys=True, separators=(',', ':')), created_at=now))
 
 
-# What a person's settlement of an uncertain fax (work/certainty_service.settle) makes of its delivery.
-SETTLED_STATES = {'delivered': 'success', 'not_delivered': 'failed'}
+# What a person's settlement of an uncertain fax (work/certainty_service.settle) makes of its delivery. Can't tell
+# ends it too, as failed with its own sentence: it is never shown as delivered, and its attempt stays uncertain, so
+# whoever is told about it (a partner that relayed it, a fax server's contact) hears that it may have arrived.
+SETTLED_STATES = {'delivered': 'success', 'not_delivered': 'failed', 'unknown': 'failed'}
+CANT_TELL = "Settled as can't tell: it may have arrived, so check before sending again."
 
 
 def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt_id, outcome, actor, now,
                         decided_at=None):
     """End a fax waiting for review by a person's decision, in the caller's write transaction; True when it did.
 
-    Delivered makes the delivery ``success`` and not delivered makes it ``failed``, so it stops holding its number
-    (``capacity.HOLDING``) and the next fax to that number goes at once, instead of waiting out ``capacity.HOLD``
-    (defect 45). Only a delivery still waiting for review on that same attempt changes, as a compare-and-set on its
-    version: a provider result that came first, or a fax already sent again, is left as it is. The attempt keeps
+    Delivered makes the delivery ``success``; not delivered and can't tell make it ``failed`` (can't tell with the
+    sentence ``CANT_TELL``), so it stops holding its number (``capacity.HOLDING``), no longer reads as in progress,
+    and the next fax to that number goes at once, instead of waiting out ``capacity.HOLD`` (defect 45). Only a
+    delivery still waiting for review on that same attempt changes, as a compare-and-set on its version: a provider
+    result that came first, or a fax already sent again, is left as it is. The attempt keeps
     what the provider said (its phase stays ``uncertain``), so no route fallback ever picks the fax up: nothing is
     sent again unless the person asks for it. The decision is kept as an ``operator_settled`` event.
 
@@ -164,7 +168,8 @@ def settle_uncertain_on(connection, deliveries, jobs, events, job_id, *, attempt
         state=state, version=row['version'] + 1, updated_at=now, claim_expires_at=None, next_poll_at=None))
     if changed.rowcount != 1:
         return False
-    connection.execute(jobs.update().where(jobs.c.id == job_id).values(status=state, updated_at=now))
+    connection.execute(jobs.update().where(jobs.c.id == job_id).values(
+        status=state, updated_at=now, **({'error': CANT_TELL} if outcome == 'unknown' else {})))
     details = {'outcome': outcome, 'state': state, 'actor': actor}
     if decided_at is not None:
         details['ended_at'] = now.isoformat(timespec='seconds')

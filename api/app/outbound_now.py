@@ -314,14 +314,18 @@ class Board:
                                          later.c.created_at > items.c.created_at).exists())
 
     def _category(self, connection, now):
-        """Each delivery's place on the board, as SQL: sending, needs_you, waiting, delivered, failed or other.
+        """Each delivery's place on the board, as SQL: sending, needs_you, waiting, delivered, cant_tell, failed or
+        other.
 
         An uncertain outcome a person has not settled needs a person first (``_uncertain``). A ready fax with an
-        open sending-rule hold the claim respects (``routing.holds.blocking``) needs a person too.
+        open sending-rule hold the claim respects (``routing.holds.blocking``) needs a person too. A fax a person
+        settled as can't tell (``outbound_store.CANT_TELL``) is failed for the API but never counted as failed today:
+        it may have arrived (``cant_tell``, also its outcome).
         """
         t = self._tables(connection)
         d, holds = t['outbound_deliveries'], t.get('outbound_holds')
         state = d.c.state
+        cant_tell = self._cant_tell(connection)
         held = sa.false()
         if holds is not None:
             held = sa.and_(state == 'ready', d.c.id.in_(sa.select(holds.c.job_id).where(
@@ -329,13 +333,24 @@ class Board:
                                                 holds.c.release_at > now))))
         return sa.case((self._uncertain(connection), 'needs_you'), (state.in_(SENDING), 'sending'),
                        (state == 'held', 'needs_you'), (held, 'needs_you'), (state.in_(QUEUED), 'waiting'),
-                       (state == 'success', 'delivered'), (state == 'failed', 'failed'), else_='other')
+                       (state == 'success', 'delivered'), (cant_tell, 'cant_tell'), (state == 'failed', 'failed'),
+                       else_='other')
+
+    def _cant_tell(self, connection):
+        """A delivery a person settled as can't tell (``outbound_store.CANT_TELL``), as SQL."""
+        from .outbound_store import CANT_TELL
+        t = self._tables(connection)
+        d = t['outbound_deliveries']
+        job = t['fax_jobs'].alias('cant_tell_job')  # its own alias: the board's lists join fax_jobs themselves
+        return sa.and_(d.c.state == 'failed',
+                       sa.select(job.c.error).where(job.c.id == d.c.id).scalar_subquery() == CANT_TELL)
 
     def _outcome(self, connection):
-        """How the delivery ended, as SQL: delivered, failed or none yet (today's counts go by this, wherever the fax
-        sits on the board)."""
+        """How the delivery ended, as SQL: delivered, cant_tell (settled by a person; it may have arrived), failed or
+        none yet (today's counts go by this, wherever the fax sits on the board)."""
         state = self._tables(connection)['outbound_deliveries'].c.state
-        return sa.case((state == 'success', 'delivered'), (state == 'failed', 'failed'), else_='none')
+        return sa.case((state == 'success', 'delivered'), (self._cant_tell(connection), 'cant_tell'),
+                       (state == 'failed', 'failed'), else_='none')
 
     def _window(self, connection, since):
         """Deliveries the board counts: active, accepted or changed today, or with an uncertain outcome to settle,
@@ -901,7 +916,7 @@ def view(found, scope, *, mask, sentence_for=None):
     failed_today = total(outcome='failed', finished=True)
     failures = {key: 0 for key, _ in FAILURES}
     for fax in mine:
-        if fax.state == 'failed' and fax.updated_at >= found.since:
+        if fax.state == 'failed' and fax.row.get('category') != 'cant_tell' and fax.updated_at >= found.since:
             failures[fax.failure or 'other'] += 1
     failures['other'] += max(failed_today - sum(failures.values()), 0)
     labels = dict(FAILURES)
@@ -942,6 +957,7 @@ def view(found, scope, *, mask, sentence_for=None):
         'needs_you': {'count': total('needs_you'), 'items': [need_item(fax) for fax in needs[:LIST_LIMIT]]},
         'today': {'since': iso(found.since), 'accepted': total(today=True),
                   'delivered': total(outcome='delivered', finished=True), 'failed': failed_today,
+                  'cant_tell': total(outcome='cant_tell', finished=True),
                   'failures': _counted([{'key': key, 'label': labels[key], 'count': count}
                                         for key, count in failures.items() if count],
                                        [key for key, _ in FAILURES])},
