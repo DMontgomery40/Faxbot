@@ -409,10 +409,10 @@ def _watch_claims(monkeypatch):
     seen, guard = [], __import__('threading').Lock()
     original = OutboundStore._claim_row_on
 
-    def watched(self, connection, row, owner, now, lease_seconds):
+    def watched(self, connection, row, owner, now, lease_seconds, **kwargs):
         t = envelopes.tables(connection)
         still_open = [hold['kind'] for hold in hold_module.open_on(connection, t, row['id'])]
-        claim = original(self, connection, row, owner, now, lease_seconds)
+        claim = original(self, connection, row, owner, now, lease_seconds, **kwargs)
         if claim is not None:
             with guard:
                 seen.append((row['id'], still_open))
