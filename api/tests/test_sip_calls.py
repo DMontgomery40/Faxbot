@@ -380,6 +380,28 @@ def test_a_builtin_engine_call_the_carrier_never_connected_reads_the_carriers_an
     assert len(sentence) <= 80
 
 
+def test_carrier_refusals_on_either_engine_count_toward_the_telnyx_balance_burst(records, monkeypatch):
+    """An account Telnyx turned off refuses every call (routing/telnyx_balance.note_refusal): a refused or not-found
+    answer counts on the built-in engine's calls as on the SSL Fax engine's; no answer or busy does not."""
+    import base64
+    from app.routing import telnyx_balance
+    noted = []
+    monkeypatch.setattr(telnyx_balance, 'note_refusal', lambda now=None: noted.append(True))
+
+    def unanswered(attempt, sip, cause):
+        return {'JobID': JOB, 'AttemptID': attempt, 'Cause': cause, 'Sip64': base64.b64encode(sip.encode()).decode()}
+    records.record_unanswered(unanswered(ATTEMPT, 'SIP 603 Decline', '21'), now=NOW)
+    records.record_unanswered(unanswered('c' * 32, 'SIP 404 Not Found', '1'), now=NOW)
+    records.record_unanswered(unanswered('d' * 32, 'SIP 480 Temporarily Unavailable', '19'), now=NOW)
+    records.record_unanswered(unanswered('e' * 32, 'SIP 486 Busy Here', '17'), now=NOW)
+    assert len(noted) == 2
+    # The SSL Fax engine's unanswered call refused by the carrier counts the same way.
+    records.record_engine_call({'Direction': 'out', 'Side': 'engine', 'JobID': JOB, 'AttemptID': 'f' * 32,
+                                'Answered': '', 'Cause': '21', 'DialStatus': 'CHANUNAVAIL',
+                                'Sip64': base64.b64encode(b'SIP 603 Decline').decode()}, now=NOW)
+    assert len(noted) == 3
+
+
 def test_the_builtin_engines_calls_carry_the_hang_up_handler_that_reports_an_unconnected_call():
     """Pushed through the Originate's variables, its commas escaped so AMI does not split them; the dialplan's
     handler reports only a call that never reached faxbot-send."""

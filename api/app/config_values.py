@@ -328,6 +328,9 @@ class ConfigurationValues(BaseModel):
     # Monthly normal-use budgets, allowances and billing days of flat and allowance plans, one entry a route
     # ("humblefax:pages=200,faxes=50,day=1"); empty uses Faxbot's cautious defaults (routing/plan_budget.py).
     plan_budgets: str = Field('', validation_alias='FAX_PLAN_BUDGETS', max_length=2000)
+    # Warn when your Telnyx balance is below this amount, in your Telnyx currency ("10" or "10.00"); empty warns below
+    # a week of your usual Telnyx spending, or $5 when Faxbot has none (routing/telnyx_balance.py).
+    telnyx_balance_warning: str = Field('', validation_alias='FAX_TELNYX_BALANCE_WARNING', max_length=16)
     # A fax to one of the installation's own receiving numbers becomes a received fax here, with no call.
     local_delivery_enabled: bool = Field(True, validation_alias='FAX_LOCAL_DELIVERY')
     # Fax-friendly shading on documents you send (pages/friendly.py): 'where_it_saves' (the default: shaded areas
@@ -402,6 +405,12 @@ class ConfigurationValues(BaseModel):
     @classmethod
     def normalize_selector(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("telnyx_balance_warning")
+    @classmethod
+    def normalize_telnyx_balance_warning(cls, value):
+        from .routing.telnyx_balance import normalize_warning
+        return normalize_warning(value)
 
     @field_validator("plan_budgets")
     @classmethod

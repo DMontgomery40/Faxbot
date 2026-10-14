@@ -1228,6 +1228,14 @@ def _waiting_reason(store, job_id, now):
         return None
 
 
+def _carrier_balance(engine, now):
+    from .routing import telnyx_balance
+    try:
+        return telnyx_balance.status(engine, now)
+    except Exception:
+        return None
+
+
 @app.get("/admin/health-status", dependencies=[Depends(require_permission('diagnostics:read'))],
          responses=_PERMISSION_RESPONSES)
 async def get_health_status(request: Request):
@@ -1255,6 +1263,8 @@ async def get_health_status(request: Request):
             # One plain reason when sending cannot work, such as the fax engine refusing Faxbot's login.
             "backend_message": readiness.get('message'),
             "jobs": jobs,
+            # Your Telnyx balance when it is low or Telnyx has turned the account off; None otherwise.
+            "carrier_balance": _carrier_balance(store.engine, now),
             "inbound_enabled": settings.inbound_enabled,
             "api_keys_configured": bool(settings.api_key) or db_key_present,
             # Every API route needs an API key or a signed-in session.

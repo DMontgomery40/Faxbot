@@ -717,6 +717,14 @@ def line_sentence(room, preset=''):
     return f'{sentence} Faxbot places at most {limit} at once.'
 
 
+def _carrier_balance():
+    from .routing import telnyx_balance
+    try:
+        return telnyx_balance.status()
+    except Exception:
+        return None
+
+
 def failure_key(*, sentence=None, category=None, disposition=None, pages=None, cause=None):
     """How a fax failed, as one of ``FAILURES``' keys.
 
@@ -885,6 +893,8 @@ def view(found, scope, *, mask, sentence_for=None):
         'lines': found.lines or [],
         'engine': found.engine,
         'groups': group_items,
+        # Your Telnyx balance when it is low or Telnyx has turned the account off (telnyx_balance.py); else None.
+        'carrier_balance': _carrier_balance(),
     }
 
 

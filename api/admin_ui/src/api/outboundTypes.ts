@@ -87,6 +87,13 @@ export interface OutboundGroup {
   failed: number;
 }
 
+export interface CarrierBalance {
+  state: 'low' | 'stopped';
+  sentence: string;
+  available: { amount: string; currency: string } | null;
+  read_at: string | null;
+}
+
 export interface OutboundNow {
   as_of: string;
   not_checked: string[];
@@ -96,6 +103,8 @@ export interface OutboundNow {
   today: { since: string; accepted: number; delivered: number; failed: number; failures: FailureReason[] };
   lines: OutboundLine[];
   engine: OutboundEngine | null;
+  // Your Telnyx balance when it is low or Telnyx has turned the account off; null otherwise.
+  carrier_balance?: CarrierBalance | null;
   groups: OutboundGroup[];
 }
 

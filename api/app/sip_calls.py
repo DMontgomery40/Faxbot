@@ -193,6 +193,14 @@ def _q850(cause):
     return int(cause) if cause.isdecimal() and 0 < len(cause) <= 3 and int(cause) else None
 
 
+def _note_refusal(kind):
+    """The carrier refused a call it never connected (SIP 403 or 603, 404 or 484: Q.850 cause 21, 1 or 28): a burst of
+    them reads your Telnyx balance at once (routing/telnyx_balance.note_refusal), for either engine."""
+    if kind and kind[0] in (CARRIER_REFUSED, CARRIER_NOT_FOUND):
+        from .routing import telnyx_balance
+        telnyx_balance.note_refusal()
+
+
 def carrier_answer(record):
     """(kind, label) for an outbound call the carrier never connected, from its stored record ('refused', 'SIP 603');
     None for an answered call, one still in progress, or one whose carrier said nothing Faxbot can read."""
@@ -695,6 +703,7 @@ class SipCallRecords:
         kind = _carrier_kind(carrier[0] if carrier else None, q850)
         if kind is None:
             return None
+        _note_refusal(kind)  # the built-in engine's refusals count toward the burst too
         now = now or utcnow()
         disposition = _CARRIER_DISPOSITIONS[kind[0]]
 
@@ -800,6 +809,8 @@ class SipCallRecords:
         carrier = _carrier_said(event) if unconnected else None
         q850 = _q850(cause)
         kind = _carrier_kind(carrier[0] if carrier else None, q850) if unconnected else None
+        if direction == 'outbound':
+            _note_refusal(kind)
         if answered:
             disposition = 'answered'
         else:

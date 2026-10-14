@@ -548,7 +548,7 @@ def test_the_board_over_http_follows_sent_for_each_key(client):
     assert everyone.status_code == 200, everyone.text
     board = everyone.json()
     assert list(board) == ['as_of', 'not_checked', 'sending', 'waiting', 'needs_you', 'today', 'lines', 'engine',
-                           'groups']
+                           'groups', 'carrier_balance']
     assert board['not_checked'] == [] and board['as_of'].endswith('Z')
     # Sending is turned off here, so both faxes are held test faxes.
     assert set(items(board, 'needs_you')) == {theirs, ours}
