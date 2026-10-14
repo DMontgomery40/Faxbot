@@ -187,6 +187,16 @@ async def test_a_broken_call_is_completed_with_only_the_missing_pages(pair, tmp_
     assert item['source'] == 'direct'
     received = RepairStore(b_engine()).for_message('receiver', row['message_id'])
     assert received['state'] == 'completed' and received['inbound_id'] == call_fax
+    # The whole fax as filing really filed it is what the call's own pages point to in Received and fold into in
+    # Work (work/duplicates.py), never a second piece of work.
+    from api.app.work.duplicates import completed_by_repair
+    with b_engine().connect() as connection:
+        whole_fax = connection.execute(sa.text(
+            "SELECT inbound_fax_id FROM inbound_imports WHERE source = 'local' AND operation_id = :m"),
+            {'m': row['message_id']}).scalar()
+        pointed = completed_by_repair(connection, b_engine(), [call_fax])
+    assert whole_fax and whole_fax != call_fax and pointed[call_fax][0] == whole_fax
+    assert pointed[call_fax][1].endswith('; the whole fax (10 pages) is in Received.')
     with Image.open(received['assembled_path']) as whole:
         assert whole.n_frames == 10
     sent = pair['a'].store.find('outbound', row['message_id'])

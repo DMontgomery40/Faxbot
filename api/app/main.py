@@ -2721,6 +2721,8 @@ class InboundFaxOut(BaseModel):
     diversion_text: Optional[str] = None
     # A receiving rule marked the fax urgent.
     urgent: bool = False
+    # The first pages of a broken call a partner completed directly: the received fax holding the whole fax.
+    completed_in: Optional[str] = None
 
 
 class InboundEarlierFailure(BaseModel):

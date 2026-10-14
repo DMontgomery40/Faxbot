@@ -169,7 +169,8 @@ def test_a_repaired_calls_first_pages_fold_into_the_whole_document_with_the_reas
     dw.arrived('other-fax', pages=3, minutes_ago=30)
     dw.step()
     first = dw.item_for('first-pages')
-    dw.service.assign(operator(dw, 'admin', 'installation', 'role_administrator'), first['id'], 'dana', version=1)
+    admin = operator(dw, 'admin', 'installation', 'role_administrator')
+    dw.service.assign(admin, first['id'], 'dana', version=1)
     # The other fax's email already went; the first pages' email is still waiting for its retry.
     with dw.engine.begin() as connection:
         items = dw.direct['intake_items']
@@ -192,6 +193,16 @@ def test_a_repaired_calls_first_pages_fold_into_the_whole_document_with_the_reas
         'Pages 1–6 of this fax were completed directly by Lakeside; the whole document is emailed instead.')
     # A partner holding every page sends nothing more, so no whole document is filed: that fax stays as it is.
     assert dw.item_for('other-fax')['state'] == 'open' and dw.email_of('other-fax')['state'] == 'delivered'
+    # Received says so too (live, 13 October 2026: the first pages read only "Received." beside the whole fax): the
+    # first pages point to the whole fax and stay as they arrived; the whole fax and the other one read as before.
+    listed = {fax['id']: fax for fax in dw.queries.page(admin)}
+    assert listed['first-pages']['completed_in'] == 'whole-fax'
+    assert listed['first-pages']['status_text'] == (
+        'Pages 1–6 of this fax were completed directly by Lakeside; the whole fax (10 pages) is in Received.')
+    assert (listed['first-pages']['status'], listed['first-pages']['pages']) == ('received', 6)
+    assert listed['whole-fax']['completed_in'] is None and listed['other-fax']['completed_in'] is None
+    assert listed['other-fax']['status_text'] == 'Received.'
+    assert dw.queries.item(admin, 'first-pages')['completed_in'] == 'whole-fax'
 
 
 def test_without_the_direct_path_tables_nothing_is_held_or_folded(database):  # noqa: F811
