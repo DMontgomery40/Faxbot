@@ -24,13 +24,15 @@ Rules this module keeps:
   with that sentence ("Closed: the fax was delivered."). Otherwise a person
   decides: delivered, not delivered (optionally sending
   the same document again as a new fax, linked both ways), or can't tell, with
-  who decided, why, and what the checks showed then. Delivered or not
-  delivered also ends the fax's own delivery (``success`` or ``failed``) in
-  the same transaction, so its number is no longer held for an unknown result
-  (defect 45); the attempt keeps what the provider said, so no route fallback
-  sends it again. Can't tell leaves the delivery waiting for review. A fax
-  settled before that change has its delivery ended the same way by the
-  worker, once (defect 73).
+  who decided, why, and what the checks showed then. Every decision also
+  ends the fax's own delivery in the same transaction, so its number is no
+  longer held for an unknown result (defect 45) and it no longer reads as in
+  progress: delivered as ``success``, not delivered as ``failed``, and can't
+  tell as ``failed`` with its own sentence (it may have arrived; never shown
+  as delivered). The attempt keeps what the provider said, so no route
+  fallback sends it again. A fax settled before that change has its delivery
+  ended the same way by the worker, once (defect 73; can't tell since
+  13 October 2026).
   Confirming receipt with the provider's fax ID stays a separate step.
 - **Nothing reaches the recipient without a person.** The automatic checks
   only read stored records, or ask an enrolled partner once about a call
@@ -467,15 +469,15 @@ class CertaintyStore:
         return closed
 
     def end_settled(self, *, now=None, limit=100):
-        """End the delivery of each fax a person settled as delivered or not delivered before settling did that
-        itself (defect 45, #93), and that still waits for review; return how many (defect 73).
+        """End the delivery of each fax a person settled before settling did that itself (defect 45, #93; can't tell
+        until 13 October 2026), and that still waits for review; return how many (defect 73).
 
         Such a fax kept reading "Needs review" and holding its number, and nothing could end it since: settling needs
         an open item. The person's decision is applied as settling applies it now (``settle_uncertain_on``):
-        delivered ends ``success``, not delivered ``failed``, with an ``operator_settled`` event under the person who
-        decided, at the moment they decided. Only a delivery still waiting for review on the item's own attempt
-        changes, so a repeat, a result that came since or a fax already sent again changes nothing. Nothing is sent
-        again, and can't tell stays waiting for review.
+        delivered ends ``success``, not delivered and can't tell ``failed``, with an ``operator_settled`` event under
+        the person who decided, at the moment they decided. Only a delivery still waiting for review on the item's
+        own attempt changes, so a repeat, a result that came since or a fax already sent again changes nothing.
+        Nothing is sent again.
         """
         from ..outbound_store import SETTLED_STATES, settle_uncertain_on
         now = now or utcnow()

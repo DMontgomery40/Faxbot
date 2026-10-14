@@ -342,6 +342,33 @@ def test_a_fax_that_is_not_delivered_tells_the_server_contact_once(sip_client, m
     assert (view['state'], view['notice']) == ('failed', 'uncertain')
 
 
+def test_a_fax_settled_as_cant_tell_is_told_as_uncertain_never_as_not_delivered(sip_client):
+    """A person who could not tell whether the fax arrived ends it as failed (outbound_store.CANT_TELL); its call's
+    attempt stays uncertain, so the fax server's contact hears that it may have arrived, never that it was not
+    delivered (which would invite a second copy)."""
+    from app.outbound_store import CANT_TELL
+    server = _enrol(sip_client)
+    assert _admit_http(sip_client, server, 'ct1').text == f'send:{OUTSIDE}'
+    job = _handover(sip_client, server, 'ct1', _tiff('1791100000.2.tiff')).json()['queued']
+    engine = _engine()
+    from app.main import app
+    values = app.state.configuration_runtime.manager.store.read().active.values
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            "INSERT INTO outbound_attempts (id, job_id, sequence, phase, error_category, created_at) "
+            "VALUES ('attempt-ct1', :id, 1, 'uncertain', 'result_lost', :now)"), {'id': job, 'now': datetime.utcnow()})
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'failed', attempt_id = 'attempt-ct1' "
+                                   'WHERE id = :id'), {'id': job})
+        connection.execute(sa.text('UPDATE fax_jobs SET error = :error WHERE id = :id'),
+                           {'id': job, 'error': CANT_TELL})
+    told = []
+    fax_servers.settle(engine, values, email=lambda values, address, body: (told.append(body), ('sent', 'ok'))[1])
+    assert told[0]['state'] == 'uncertain' and 'may not have been delivered' in told[0]['sentence']
+    assert 'could not deliver' not in told[0]['sentence']
+    [view] = sip_client.get('/admin/sip/fax-servers/calls', headers=_b()).json()['calls']
+    assert view['state'] == 'uncertain'
+
+
 def test_an_uncertain_outcome_and_a_lost_hand_over_are_told_and_never_resent(sip_client):
     server = _enrol(sip_client)
     engine = _engine()

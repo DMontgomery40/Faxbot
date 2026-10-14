@@ -683,8 +683,14 @@ def _outcome(engine, job_id, name):
         categories = connection.execute(sa.select(attempts.c.error_category).where(
             attempts.c.job_id == job_id)).scalars().all()
         error = connection.execute(sa.select(jobs.c.error).where(jobs.c.id == job_id)).scalar()
+        # A fax a person settled while its call's outcome was unknown keeps that attempt uncertain.
+        unknown = connection.execute(sa.select(attempts.c.phase).select_from(attempts.join(
+            deliveries, deliveries.c.attempt_id == attempts.c.id)).where(deliveries.c.id == job_id)).scalar()
     if state == 'success':
         return 'delivered', 'Delivered.'
+    if state == 'failed' and unknown == 'uncertain':
+        return 'uncertain', ('Faxbot cannot confirm whether the fax arrived, so it does not send it again; check with '
+                             'the recipient first.')
     if state in ('failed', 'cancelled'):
         if any(category in ('partly_sent', 'pages_unconfirmed') for category in categories):
             return 'uncertain', ("The call ended partway, and part of the fax may have arrived. Faxbot does not send "
