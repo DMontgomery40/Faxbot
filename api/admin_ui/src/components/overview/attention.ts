@@ -155,6 +155,13 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
       add({ key: 'not-ready', group: 'serious', label: NOT_READY_TEXT[notReady], count: null, serious: true,
         destination: 'admin/health' });
     }
+    // Your Telnyx balance: low, or the account turned off (the command line says the same, cli/commands/overview.py).
+    if (status.carrier_balance?.sentence) {
+      const stopped = status.carrier_balance.state === 'stopped';
+      add({ key: 'carrier-balance', group: stopped ? 'serious' : 'check',
+        label: stopped ? 'Telnyx stopped your calls' : 'Your Telnyx balance is low', count: null,
+        detail: status.carrier_balance.sentence, serious: stopped, destination: 'admin/health' });
+    }
     if (status.jobs.reconciliation_required) {
       add({ key: 'uncertain', group: 'serious', label: 'Sent faxes with an uncertain result',
         count: status.jobs.reconciliation_required, serious: true,

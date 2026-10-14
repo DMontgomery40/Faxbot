@@ -106,6 +106,12 @@ def attention(sources):
         direction = not_ready_for(health)
         if direction:
             add('not-ready', 'serious', NOT_READY_TEXT[direction], None, 'faxbot admin health', serious=True)
+        balance = health.get('carrier_balance') or {}
+        if balance.get('sentence'):
+            # Your Telnyx balance: low, or the account turned off (the console's Overview says the same).
+            add('carrier-balance', 'serious' if balance.get('state') == 'stopped' else 'check',
+                'Telnyx stopped your calls' if balance.get('state') == 'stopped' else 'Your Telnyx balance is low',
+                None, 'faxbot admin health', serious=balance.get('state') == 'stopped', detail=balance['sentence'])
         jobs = health.get('jobs') or {}
         if jobs.get('reconciliation_required'):
             add('uncertain', 'serious', 'Sent faxes with an uncertain result', jobs['reconciliation_required'],
