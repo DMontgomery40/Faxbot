@@ -44,6 +44,10 @@ def _fax(item):
 def board_lines(board):
     """The board as lines of plain text, in the contract's order."""
     found = [f"As of {local_time(board.get('as_of'))}"]
+    # A carrier account that is low or turned off comes first, as the console's board shows it.
+    balance = board.get('carrier_balance') or {}
+    if balance.get('sentence'):
+        found.append(balance['sentence'])
     sending = board.get('sending') or {}
     found.append(f"Sending now: {sending.get('count', 0)}")
     for item in sending.get('items') or []:

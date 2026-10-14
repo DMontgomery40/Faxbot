@@ -151,3 +151,19 @@ def test_a_big_send_says_how_many_need_you(count, word):
     board = {**BOARD, 'groups': [{**BOARD['groups'][0], 'needs_you': count}]}
     result, _ = faxbot({'/outbound/now': board}, 'status')
     assert f'{count} {word} you' in result.stdout
+
+
+@pytest.mark.parametrize('state', ['stopped', 'low'])
+def test_faxbot_status_says_first_when_the_carrier_account_is_low_or_turned_off(state):
+    sentence = ('Telnyx has turned your account off (your balance is -$1.38), so faxes cannot be sent or received '
+                'through Telnyx. Faxbot sends by your other routes until you add funds in the Telnyx portal under '
+                'Billing.')
+    board = {**BOARD, 'carrier_balance': {'state': state, 'sentence': sentence,
+                                          'available': {'amount': '-1.38', 'currency': 'USD'}}}
+    result, _ = faxbot({'/outbound/now': board}, 'status')
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[1] == sentence
+    assert lines[0].startswith('As of ') and lines[2].startswith('Sending now:')
+    unchanged, _ = faxbot({'/outbound/now': {**BOARD, 'carrier_balance': None}}, 'status')
+    assert sentence not in unchanged.stdout
