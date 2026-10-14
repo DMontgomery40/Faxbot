@@ -389,8 +389,13 @@ class RoutePlanner:
         # ``digital``) a rule names are offered below as themselves, never as provider accounts.
         keys = [key for key in keys if not _is_digital(key) and not _is_relay(key)]
         candidates = []
+        from . import telnyx_balance
+        stopped = telnyx_balance.stopped()
         for key in keys:
             why = self._unusable(key, current, pinned, prices)
+            if why is None and stopped and telnyx_balance.is_telnyx_route(values, key, provider_of(key)):
+                # Telnyx turned the account off: the fax goes by the next route and says why.
+                why = telnyx_balance.SKIP
             if why is not None:
                 skipped.append((key, why))
                 continue

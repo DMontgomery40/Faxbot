@@ -1,5 +1,6 @@
 {
   "as_of": "2026-10-03T12:00:00Z",
+  "carrier_balance": null,
   "engine": {
     "audio": true,
     "fix": "Faxbot switches back by itself once your network lets fax over IP (T.38) data come back. Carrier trunk shows the network check.",

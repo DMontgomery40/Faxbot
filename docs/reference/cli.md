@@ -4347,6 +4347,7 @@ $ faxbot delivery providers trunk [OPTIONS] COMMAND [ARGS]...
 * `calls`: List recent calls on the phone line,...
 * `negotiation`: Show how fax calls on your phone line...
 * `restart-engine`: Restart the fax engine once no fax is...
+* `balance`: Your Telnyx balance warning: what Faxbot...
 * `mode`: Choose how new fax calls are sent, T.38...
 * `limits`: Show or change how many calls the trunk...
 * `presets`: List the carriers and phone systems Faxbot...
@@ -4440,6 +4441,23 @@ $ faxbot delivery providers trunk restart-engine [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+##### `faxbot delivery providers trunk balance`
+
+Your Telnyx balance warning: what Faxbot says now, and the level it warns below (the console&#x27;s &quot;Warn when your
+Telnyx balance is below&quot;).
+
+**Usage**:
+
+```console
+$ faxbot delivery providers trunk balance [OPTIONS]
+```
+
+**Options**:
+
+* `--warn-below AMOUNT`: Warn when your Telnyx balance is below this amount, such as 10, in your Telnyx currency.
+* `--default`: Warn below a week of your usual Telnyx spending, or $5 when Faxbot has none.
 * `--help`: Show this message and exit.
 
 ##### `faxbot delivery providers trunk mode`

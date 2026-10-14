@@ -63,6 +63,11 @@ export function parseRoutes(value: FormValue | undefined): string[] {
   return result;
 }
 
+// Your Telnyx balance warning, in the words `faxbot delivery providers trunk balance` uses.
+export const TELNYX_BALANCE_LABEL = 'Warn when your Telnyx balance is below';
+export const TELNYX_BALANCE_HELP = 'An amount such as 10, in your Telnyx currency. Leave it empty to be warned below a '
+  + 'week of your usual Telnyx spending, or $5 when Faxbot has none.';
+
 // Editor values for these settings, by settings patch name. The route list is
 // stored in one canonical spelling so loading alone never counts as a change.
 export function deliveryEditorValues(data: Settings): Values {
@@ -73,6 +78,7 @@ export function deliveryEditorValues(data: Settings): Values {
     values.local_delivery_enabled = data.routing.local_delivery ?? true;
     values.fax_friendly_documents = data.routing.fax_friendly_documents ?? 'where_it_saves';
     values.fax_friendly_whiten = data.routing.fax_friendly_whiten ?? false;
+    values.telnyx_balance_warning = data.routing.telnyx_balance_warning ?? '';
   }
   if (data.direct) {
     values.direct_delivery_enabled = data.direct.enabled;
@@ -254,6 +260,8 @@ export function DeliverySettingsSections({ client, settings, form, loaded, onCha
             outbound={outbound} />
           {text('Minimum delivery rate (%)', 'route_min_success_percent',
             'A route that delivers less than this share of recent faxes to a number is tried last for that number.', 'number')}
+          {/* The same words as `faxbot delivery providers trunk balance` (routing/telnyx_balance.py). */}
+          {text(TELNYX_BALANCE_LABEL, 'telnyx_balance_warning', TELNYX_BALANCE_HELP)}
           <SwitchField label="Deliver faxes to your own numbers inside Faxbot" checked={Boolean(form.local_delivery_enabled)}
             onChange={(checked) => onChange('local_delivery_enabled', checked)}
             helper={LOCAL_DELIVERY_HELP} />

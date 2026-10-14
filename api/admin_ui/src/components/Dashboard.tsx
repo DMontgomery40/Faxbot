@@ -351,6 +351,12 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
                         {health.backend_message}
                       </Typography>
                     )}
+                    {health.carrier_balance?.sentence && (
+                      <Typography variant="body2" sx={{ mt: 1 }} data-testid="carrier-balance"
+                        color={health.carrier_balance.state === 'stopped' ? 'error' : 'warning.main'}>
+                        {health.carrier_balance.sentence}
+                      </Typography>
+                    )}
                     <Box display="flex" flexDirection="column" gap={0.5} sx={{ mt: 1.5 }}>
                       <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
                         <Typography variant="body2" color="text.secondary">Sending</Typography>
