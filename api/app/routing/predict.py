@@ -273,6 +273,9 @@ class RouteFacts:
     learned: str | None = None
     # When the call would start (naive UTC): prices by time of day (``RateTerms.time_bands``) are read at it.
     at: object = None
+    # A route with no card saved in Faxbot, priced by its shipped published card: the clause naming whose published
+    # price it is and when it was read ("Telnyx's published price, read 13 October 2026").
+    published: str | None = None
 
 
 # Sentences --------------------------------------------------------------------------
@@ -708,6 +711,8 @@ def predict_from(facts, shape):
             price += f", {facts.label}'s published price for {_what(facts)} to {_where(facts.destination)}"
         elif facts.learned:
             price += f', {facts.learned}'
+        elif facts.published:
+            price += f', {facts.published}'
         if band is not None and band.label:
             price += f", {facts.label}'s {band.label} rate"
         price += _spread_price(terms, spread, shape.pages, central, micros)
