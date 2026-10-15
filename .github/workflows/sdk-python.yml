@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +30,7 @@ jobs:
   publish:
     needs: build-test
     if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

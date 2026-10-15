@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test-api-shard:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -29,7 +29,8 @@ jobs:
           POSTGRES_PASSWORD: faxbot_ci_synthetic
           POSTGRES_DB: faxbot_test
         ports:
-          - 5432:5432
+          # A random host port, so several jobs can share one self-hosted runner host.
+          - 5432
         options: >-
           --health-cmd "pg_isready -U faxbot_test -d faxbot_test"
           --health-interval 5s
@@ -50,9 +51,9 @@ jobs:
       - name: Install console dependencies for route analysis
         run: npm ci --prefix api/admin_ui --no-audit --no-fund
       - name: Install system dependencies
+        # The self-hosted runners have Ghostscript installed; a runner without it installs it.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ghostscript
+          command -v gs >/dev/null || { sudo apt-get update && sudo apt-get install -y ghostscript; }
       - name: Install Python deps
         working-directory: api
         run: |
@@ -66,7 +67,7 @@ jobs:
           FAX_DISABLED: 'true'
           FAX_DATA_DIR: './faxdata'
           DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
-          FAXBOT_SCHEMA_TEST_POSTGRES_URL: 'postgresql+psycopg2://faxbot_test:faxbot_ci_synthetic@127.0.0.1:5432/faxbot_test'
+          FAXBOT_SCHEMA_TEST_POSTGRES_URL: "postgresql+psycopg2://faxbot_test:faxbot_ci_synthetic@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/faxbot_test"
         working-directory: api
         run: |
           mkdir -p faxdata
@@ -82,7 +83,7 @@ jobs:
   test-api:
     needs: test-api-shard
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - name: Require every backend shard to pass
         env:
@@ -90,7 +91,7 @@ jobs:
         run: test "$SHARD_RESULT" = success
 
   build-admin-ui:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -109,7 +110,7 @@ jobs:
         run: npm run build
 
   check-node-mcp:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -123,7 +124,7 @@ jobs:
         run: npm --prefix node_mcp run check
 
   check-python-mcp:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -138,7 +139,7 @@ jobs:
         run: python -m pytest -q python_mcp/tests
 
   test-node-mcp:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -152,7 +153,7 @@ jobs:
         run: npm --prefix node_mcp test
 
   check-sdks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -25,7 +25,7 @@ jobs:
     needs: preview
     # Pushes to main publish and become latest; a person can also publish any branch by hand.
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     concurrency:
       # Keep every source version eligible; a shared group drops pending runs.
       group: faxbot-docs-publication-${{ github.sha }}

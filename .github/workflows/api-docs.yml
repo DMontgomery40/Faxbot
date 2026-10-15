@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, faxbot-ci]
     outputs:
       artifact_name: docs-${{ inputs.source_sha }}
     steps:
