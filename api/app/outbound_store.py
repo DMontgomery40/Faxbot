@@ -27,7 +27,7 @@ _EVENT_KINDS = frozenset({'accepted', 'legacy_migrated', 'binding_unavailable',
     'provider_observed', 'operator_identity_bound', 'route_assigned', 'route_fallback',
     'sent_together', 'batch_split', 'capacity_wait', 'route_held', 'route_released', 'route_refused',
     'repair_started', 'repair_completed', 'repair_failed', 'plan_allocation', 'route_measured',
-    'engine_requested', 'operator_settled'})
+    'engine_requested', 'operator_settled', 'recipient_named'})
 _CATEGORIES = frozenset({'transport_ambiguous', 'response_unusable', 'submission_cancelled',
     'worker_lost', 'artifact_unavailable', 'provider_unavailable', 'preparation_failed',
     'profile_mismatch', 'sid_mismatch', 'provider_failed', 'partner_not_received',
@@ -232,6 +232,65 @@ def requested_engine_on(connection, job_id):
     except (ValueError, AttributeError):
         return None
     return engine if engine in ENGINE_REQUESTS else None
+
+
+# The recipient's name the sender typed for a fax (``POST /fax`` ``recipient_name``): kept once, at acceptance, as a
+# ``recipient_named`` event in the fax's history, like the engine choice. It belongs to that fax only; saving it into
+# Recipients is a separate step. Faxes accepted without one keep no event.
+RECIPIENT_NAME_MAX = 200
+
+
+def clean_recipient_name(value):
+    """The name as kept: printable characters only, runs of spaces made one, at most ``RECIPIENT_NAME_MAX``; None
+    when nothing is left."""
+    if not isinstance(value, str):
+        return None
+    text = ' '.join(''.join(ch if ch.isprintable() else ' ' for ch in value).split())
+    return text[:RECIPIENT_NAME_MAX] or None
+
+
+def recipient_name_recorder(job_id, name):
+    """The acceptance step that keeps the recipient's name typed for this fax; None without one."""
+    name = clean_recipient_name(name)
+    if name is None:
+        return None
+
+    def record(connection, now):
+        _event(connection, _ENGINE_EVENTS, job_id, 'recipient_named', now, details={'name': name},
+               dedupe_key='recipient_named')
+    return record
+
+
+def typed_recipient_names_on(connection, job_ids):
+    """``{job_id: name}`` for the faxes among ``job_ids`` that were sent with a recipient's name typed."""
+    job_ids = list(dict.fromkeys(job_ids))
+    if not job_ids:
+        return {}
+    found = {}
+    rows = connection.execute(sa.select(_ENGINE_EVENTS.c.job_id, _ENGINE_EVENTS.c.details).where(
+        _ENGINE_EVENTS.c.kind == 'recipient_named', _ENGINE_EVENTS.c.job_id.in_(job_ids)))
+    for job_id, details in rows:
+        try:
+            name = clean_recipient_name(json.loads(details or '{}').get('name'))
+        except (ValueError, AttributeError):
+            name = None
+        if name:
+            found[job_id] = name
+    return found
+
+
+def recipient_names_on(connection, numbers):
+    """``{job_id: name}`` for the faxes in ``numbers`` (``{job_id: to_number}``): the name typed when the fax was sent,
+    else the saved Recipients name for its number. A fax with neither is left out."""
+    found = typed_recipient_names_on(connection, numbers)
+    saved = {number for job_id, number in numbers.items() if job_id not in found and number}
+    if saved:
+        destinations = sa.table('delivery_destinations', sa.column('phone_number'), sa.column('display_name'))
+        names = dict(connection.execute(sa.select(destinations.c.phone_number, destinations.c.display_name).where(
+            destinations.c.phone_number.in_(saved), destinations.c.display_name.is_not(None))).all())
+        found.update({job_id: names[number] for job_id, number in numbers.items()
+                      if job_id not in found and names.get(number)})
+    return found
 
 
 def record_acceptance(connection, tables, job_id, *, held, now, to_number=None, values=None):
