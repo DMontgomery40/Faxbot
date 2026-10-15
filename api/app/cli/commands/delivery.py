@@ -1151,14 +1151,27 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                                  route.get('time_note')):
                     if sentence:
                         out.line(f"{route['label']}: {sentence}")
-        # As Send a fax leaves it out (D23): the measured choice of a plan's fax on its pages as given, with no priced
-        # runner-up and no hold, only repeats the plan's line above ("Included in your HumbleFax plan ...").
-        selected = result.get('selected') or {}
-        if not (selected.get('in_plan') and selected.get('layout') == 'normal'
-                and not (result.get('runner_up') or {}).get('cost') and not result.get('held')):
+        if not _plan_line_says_it(result):
             out.line(result['sentence'])
         out.line(result['note'])
     state.out().result(result, human)
+
+
+def _plan_line_says_it(result):
+    """Whether the closing sentence only repeats a plan's own line ("Included in your HumbleFax plan ..."), so it is
+    left out as Send a fax leaves it out (D23): with a document, the measured choice of a plan's fax on its pages as
+    given, with no priced runner-up and no hold; by page count, a cheapest route that is a plan carrying the fax at
+    nothing extra ("HumbleFax is your only sending route: nothing extra for this fax.")."""
+    if 'selected' in result:
+        selected = result.get('selected') or {}
+        return bool(selected.get('in_plan') and selected.get('layout') == 'normal'
+                    and not (result.get('runner_up') or {}).get('cost') and not result.get('held'))
+    known = [route for route in result.get('routes') or [] if route.get('cost')]
+    if not known or len({route['cost']['currency'] for route in known}) > 1:
+        return False
+    best = min(known, key=lambda route: (float(route['cost']['amount']),
+                                         route['seconds'] if route.get('seconds') is not None else 1e9))
+    return bool(best.get('marginal')) and float(best['cost']['amount']) == 0
 
 
 @routing.command('rate-cards')

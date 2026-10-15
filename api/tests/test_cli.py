@@ -1346,6 +1346,34 @@ def test_savings_predict_with_a_document_says_a_plans_cost_once_as_send_does(mon
     assert compared in answer({'route': 'sip', 'label': 'Telnyx', 'cost': {'currency': 'USD', 'amount': '0.005'}},
                               compared)
 
+    # By page count (no document): the closing sentence names the cheapest route; for a plan carrying the fax at
+    # nothing extra it only repeats the plan's line, so it is left out, and kept when a priced route costs least.
+    def by_count(routes, sentence):
+        class Canned:
+            url = 'https://faxbot.example'
+
+            def get(self, path, **_):
+                assert path == '/routing/predict'
+                return {'to': '+19725550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': sentence,
+                        'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                        'routes': routes}
+        monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+        result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                              '+19725550123'], env={'COLUMNS': '200'})
+        assert result.exit_code == 0, result.stdout
+        return ' '.join(result.stdout.split())
+    plan = {'route': 'humblefax', 'label': 'HumbleFax', 'cost': {'currency': 'USD', 'amount': '0'}, 'marginal': True,
+            'seconds': 23.0, 'p90_seconds': None, 'basis': basis, 'coding': None, 'finish_sentence': None,
+            'time_note': None}
+    only = by_count([plan], 'HumbleFax is your only sending route: nothing extra for this fax.')
+    assert f'HumbleFax: {basis}' in only and 'only sending route' not in only
+    assert only.count('adds nothing to the bill') == 1 and 'nothing extra for this fax' not in only
+    free = {'route': 'sip', 'label': 'Telnyx', 'cost': {'currency': 'USD', 'amount': '0'}, 'marginal': False,
+            'seconds': 20.0, 'p90_seconds': None, 'basis': 'Telnyx charges nothing for calls to toll-free numbers.',
+            'coding': None, 'finish_sentence': None, 'time_note': None}
+    assert 'Telnyx would cost least: nothing for this fax.' in by_count(
+        [plan, free], 'Telnyx would cost least: nothing for this fax.')
+
 
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
 def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
