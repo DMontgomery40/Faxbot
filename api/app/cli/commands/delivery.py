@@ -1151,7 +1151,12 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                                  route.get('time_note')):
                     if sentence:
                         out.line(f"{route['label']}: {sentence}")
-        out.line(result['sentence'])
+        # As Send a fax leaves it out (D23): the measured choice of a plan's fax on its pages as given, with no priced
+        # runner-up and no hold, only repeats the plan's line above ("Included in your HumbleFax plan ...").
+        selected = result.get('selected') or {}
+        if not (selected.get('in_plan') and selected.get('layout') == 'normal'
+                and not (result.get('runner_up') or {}).get('cost') and not result.get('held')):
+            out.line(result['sentence'])
         out.line(result['note'])
     state.out().result(result, human)
 

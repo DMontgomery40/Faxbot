@@ -922,14 +922,16 @@ def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages):
     if used_pages is None:
         return None
     pages = pages if isinstance(pages, int) and pages > 0 else 1
+    if page_budget is None and fax_budget is None:
+        return (f"You've used {_plural(used_pages, 'page')} on this plan this month, and you set no normal-use budget "
+                'for it.')
     parts = []
     if page_budget is not None:
         parts.append(f'{_number(used_pages)} of the {_plural(page_budget, "page")}')
     if fax_budget is not None and used_faxes is not None:
         parts.append(f'{_number(used_faxes)} of the {_plural(fax_budget, "fax", "faxes")}')
     if not parts:
-        return (f"You've used {_plural(used_pages, 'page')} on this plan this month, and you set no normal-use budget "
-                'for it.')
+        return None
     sentence = f"You've used {' and '.join(parts)} you set as this plan's normal-use budget this month"
     past = (page_budget is not None and used_pages >= page_budget) or (
         fax_budget is not None and used_faxes is not None and used_faxes >= fax_budget)

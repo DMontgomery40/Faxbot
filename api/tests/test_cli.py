@@ -1308,6 +1308,45 @@ def test_savings_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_do
     assert human.count('9 in 10 calls like this one') == 1
 
 
+def test_savings_predict_with_a_document_says_a_plans_cost_once_as_send_does(monkeypatch, tmp_path):
+    """D23: HumbleFax past its normal-use budget carries the document. The plan's line says the cost and the budget;
+    the measured choice ("Would go through HumbleFax as 1 page: nothing extra.") is left out, as Send leaves it out,
+    and kept when it compares the plan with a priced route."""
+    from app.cli import state as cli_state
+    basis = ("Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; about 23 seconds on the "
+             "line, for typical pages at a typical fax speed. You've used 245 of the 200 pages you set as this plan's "
+             'normal-use budget this month, so Faxbot sends by your other routes first when one of them can take the '
+             'fax.')
+    selected = {'route': 'humblefax', 'label': 'HumbleFax', 'layout': 'normal', 'rendering': 'as_is', 'coding': None,
+                'original_pages': 1, 'sent_pages': 1, 'cost': None, 'in_plan': True, 'measured': True}
+
+    def answer(runner_up, sentence):
+        class Canned:
+            url = 'https://faxbot.example'
+
+            def post(self, path, **_):
+                assert path == '/routing/predict'
+                return {'to': '+19725550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': sentence,
+                        'measured_sentence': None, 'selected': selected, 'runner_up': runner_up, 'held': False,
+                        'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                        'routes': [{'route': 'humblefax', 'label': 'HumbleFax', 'cost': None, 'marginal': True,
+                                    'seconds': 23.0, 'p90_seconds': None, 'basis': basis, 'coding': None,
+                                    'finish_sentence': None, 'time_note': None, 'layout': 'normal', 'sent_pages': 1}]}
+        monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+        letter = tmp_path / 'letter.txt'
+        letter.write_text('Synthetic referral letter\n')
+        result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                              '+19725550123', '--file', str(letter)], env={'COLUMNS': '200'})
+        assert result.exit_code == 0, result.stdout
+        return ' '.join(result.stdout.split())
+    alone = answer(None, 'Would go through HumbleFax as 1 page: nothing extra.')
+    assert f'HumbleFax: {basis}' in alone and 'Would go through' not in alone
+    assert alone.count('adds nothing to the bill') == 1
+    compared = 'Would go through HumbleFax as 1 page: nothing extra instead of $0.005 through Telnyx as 1 page.'
+    assert compared in answer({'route': 'sip', 'label': 'Telnyx', 'cost': {'currency': 'USD', 'amount': '0.005'}},
+                              compared)
+
+
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
 def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
     letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')
