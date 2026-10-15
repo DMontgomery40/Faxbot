@@ -12,7 +12,7 @@ import uuid
 
 import sqlalchemy as sa
 
-from ..outbound_summary import dashboard_counts
+from ..outbound_summary import certainty_items, dashboard_counts
 from ..outbound_store import OutboundStore
 from .fax_resources import FaxAccessError
 from .types import AccessUnavailableError, InvalidTransactionError
@@ -190,7 +190,8 @@ class AuthorizedFaxQueries:
     def counts(self, actor):
         with self._transaction() as (connection, now):
             visible = self._visible(connection, actor, now)
-            return dashboard_counts(connection, self.deliveries, now=now, job_ids=visible, jobs=self.jobs)
+            return dashboard_counts(connection, self.deliveries, now=now, job_ids=visible, jobs=self.jobs,
+                                    items=certainty_items(connection))
 
     def _history_on(self, connection, actor, job_id, now):
         resource = self.resources.require_outbound_on(connection, actor, job_id, 'fax:read', now=now)

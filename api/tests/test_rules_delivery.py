@@ -548,6 +548,29 @@ def test_refusing_fails_the_fax_before_anything_is_sent(ruled):
     assert tuple(row) == ('failed', 'Refused by Ben Example: wrong recipient') and attempts == 0
 
 
+def test_a_refusal_is_shown_as_what_happened_then_who_decided():
+    """D26: the stored sentence stays "Refused by <name>: <reason>"; Sent shows the reason first, a person by name,
+    a key only as "an API key" in lists, and text that is not a refusal as it was stored."""
+    from api.app.main import sanitize_error
+    from api.app.routing.holds import shown_refusal
+    assert shown_refusal('Refused by Ben Example: Wrong number.', name='Ben Example', kind='user') == {
+        'sentence': 'Not sent: Wrong number.', 'decided_by': 'Decided by Ben Example.',
+        'decided_by_detail': 'Decided by Ben Example.'}
+    assert shown_refusal('Refused by Installation bootstrap: duplicate', name='Installation bootstrap',
+                         kind='bootstrap') == {'sentence': 'Not sent: duplicate.',
+                                               'decided_by': 'Decided through an API key.',
+                                               'decided_by_detail': 'Decided through the installation key.'}
+    # No name was recorded: the reason still leads, and no one is named.
+    assert shown_refusal('Refused by someone with Approve faxes: wrong recipient', name=None, kind=None) == {
+        'sentence': 'Not sent: wrong recipient.', 'decided_by': None, 'decided_by_detail': None}
+    assert shown_refusal('Refused by the remote fax machine', name='Ben', kind='user')['sentence'] == (
+        'Refused by the remote fax machine')
+    # Every other problem sentence is shortened between words, never mid-word, with long numbers hidden.
+    assert sanitize_error('Telnyx account disabled for a negative balance on +13035550100 and more words here',
+                          60) == 'Telnyx account disabled for a negative balance on *** and…'
+    assert sanitize_error('Short and whole.') == 'Short and whole.'
+
+
 def test_a_time_window_opens_by_itself(ruled):
     later = (datetime.utcnow() + timedelta(hours=2)).replace(second=0, microsecond=0)
     window = {'from': later.strftime('%H:%M'), 'until': (later + timedelta(hours=1)).strftime('%H:%M')}

@@ -165,6 +165,95 @@ def tried_sentence(labels):
            'nothing was sent.'
 
 
+# A refused fax, as Sent and the command line show it. The stored sentence stays as ``refuse`` wrote it
+# ("Refused by <name>: <reason>", in the hold and as the fax's error); only its showing changes. It leads with what
+# happened, names the person who decided, and says only "an API key" for a key: the key's own name is shown in the
+# fax's details, where someone may need to tell keys apart.
+REFUSED_BY = 'Refused by {name}: '
+NO_NAME = 'someone with Approve faxes'
+STORED_LIMIT = 500
+THROUGH_A_KEY = 'Decided through an API key.'
+THROUGH_THE_INSTALLATION_KEY = 'Decided through the installation key.'
+
+
+def not_sent_sentence(reason):
+    """'Not sent: <reason>.' The reason is the decider's own words; nothing here rewrites them."""
+    reason = ' '.join((reason or '').split())
+    if not reason:
+        return 'Not sent.'
+    return f'Not sent: {reason}' + ('' if reason[-1] in '.!?…' else '.')
+
+
+def decided_by(kind, name):
+    """(for a list, for the fax's details): who refused it. A person by name; the installation key and other API keys
+    never by name in a list. (None, None) when Faxbot can't tell."""
+    if kind == 'user':
+        return (f'Decided by {name}.',) * 2 if name else (None, None)
+    if kind == 'bootstrap':
+        return THROUGH_A_KEY, THROUGH_THE_INSTALLATION_KEY
+    if kind == 'integration':
+        return THROUGH_A_KEY, f'Decided through the API key ‘{name}’.' if name else THROUGH_A_KEY
+    return None, None
+
+
+def shown_refusal(stored, *, name, kind):
+    """``{'sentence', 'decided_by', 'decided_by_detail'}`` for the stored refusal sentence, decided by ``name`` (as
+    the hold kept it) whose principal is ``kind``.
+
+    The reason is what follows the stored "Refused by <name>: ". A sentence that was cut at the stored limit ends at
+    its last whole word with an ellipsis, never mid-word. Text that does not start that way is shown as stored.
+    """
+    prefix = REFUSED_BY.format(name=name or NO_NAME)
+    if not stored.startswith(prefix):
+        return {'sentence': stored, 'decided_by': None, 'decided_by_detail': None}
+    reason = stored[len(prefix):]
+    if len(stored) >= STORED_LIMIT and ' ' in reason.strip():
+        reason = reason.rstrip()
+        reason = reason[:reason.rfind(' ')].rstrip(' ,;:') + '…'
+    short, detail = decided_by(kind, name)
+    return {'sentence': not_sent_sentence(reason), 'decided_by': short, 'decided_by_detail': detail}
+
+
+def _principal_kinds_on(connection, ids):
+    principals = sa.table('access_principals', sa.column('id'), sa.column('kind'))
+    ids = [item for item in set(ids) if item]
+    if not ids:
+        return {}
+    return dict(connection.execute(sa.select(principals.c.id, principals.c.kind)
+                                   .where(principals.c.id.in_(ids))).all())
+
+
+def refusals_on(connection, errors):
+    """``{job_id: shown_refusal(...)}`` for the faxes in ``errors`` (``{job_id: its stored error}``) that someone
+    refused while the rules held them; every other fax is left out. The refusing hold is the one whose reason is the
+    fax's error (``refuse`` writes the same sentence to both)."""
+    wanted = {job: error for job, error in errors.items()
+              if isinstance(error, str) and error.startswith('Refused by ')}
+    if not wanted:
+        return {}
+    holds = sa.table('outbound_holds', sa.column('job_id'), sa.column('state'), sa.column('reason'),
+                     sa.column('decided_by_principal_id'), sa.column('decided_by_name'))
+    rows = connection.execute(sa.select(holds.c.job_id, holds.c.reason, holds.c.decided_by_principal_id,
+                                        holds.c.decided_by_name).where(
+        holds.c.job_id.in_(list(wanted)), holds.c.state == 'refused')).mappings().all()
+    decided = {}
+    for row in rows:
+        if row['reason'] == wanted[row['job_id']]:
+            decided.setdefault(row['job_id'], row)
+    kinds = _principal_kinds_on(connection, [row['decided_by_principal_id'] for row in decided.values()])
+    return {job: shown_refusal(wanted[job], name=row['decided_by_name'],
+                               kind=kinds.get(row['decided_by_principal_id'])) for job, row in decided.items()}
+
+
+def refusal_text_on(connection, job_id, error):
+    """How a fax refused while held reads wherever Faxbot tells someone about it outside the fax's details: "Not
+    sent: <reason>." and who decided, never a key's name. None for a fax nobody refused."""
+    refusal = refusals_on(connection, {job_id: error}).get(job_id)
+    if refusal is None:
+        return None
+    return ' '.join(part for part in (refusal['sentence'], refusal['decided_by']) if part)
+
+
 def hold_after_predata_on(connection, t, *, job_id, pinned, accounts, now):
     """Hold a fax whose last allowed try ended before any page (no fallback is left) instead of failing it.
 
@@ -240,8 +329,11 @@ class HoldStore:
             rows = [dict(row) for row in connection.execute(
                 query.order_by(holds.c.requested_at, holds.c.id).limit(limit)).mappings()]
             names = self._names(connection, [row['requested_by_principal_id'] for row in rows])
+            kinds = _principal_kinds_on(connection, [row['decided_by_principal_id'] for row in rows
+                                                     if row['state'] == 'refused'])
         for row in rows:
             row['sender_name'] = names.get(row['requested_by_principal_id'])
+            row['decider_kind'] = kinds.get(row['decided_by_principal_id'])
         return rows
 
     def pinned_for(self, job_id):
@@ -385,8 +477,8 @@ class HoldStore:
             delivery = self._delivery_row(connection, row['job_id'])
             if delivery is None or delivery['state'] not in WAITING:
                 raise HoldConflict('This fax is no longer waiting. Reload Sent to see what happened to it.')
-            name = actor_name or 'someone with Approve faxes'
-            sentence = f'Refused by {name}: {reason}'
+            # Stored as always; Sent and the command line show it through shown_refusal.
+            sentence = REFUSED_BY.format(name=actor_name or NO_NAME) + reason
             self._decided(connection, t, row, 'refused', actor, actor_name, now, reason=sentence)
             # Every other hold on the fax ends with it.
             holds = t['outbound_holds']
@@ -407,7 +499,11 @@ class HoldStore:
             except Exception:
                 pass
             self._audit(connection, actor, 'refuse', row, {'reason': reason})
-        return {**self._view_row(row, state='refused'), 'sentence': f'Refused. Nothing was sent. {sentence}'}
+            kind = _principal_kinds_on(connection, [getattr(actor, 'principal_id', None)]).get(
+                getattr(actor, 'principal_id', None))
+        shown = shown_refusal(sentence[:STORED_LIMIT], name=(actor_name or None) and actor_name[:200], kind=kind)
+        return {**self._view_row(row, state='refused'),
+                'sentence': ' '.join(part for part in (shown['sentence'], shown['decided_by']) if part)}
 
     def check_again(self, hold_id, *, version, actor, now=None):
         """Let the next claim try a no-route fax's accounts again; it is held again if none can take it."""
@@ -537,12 +633,20 @@ class HoldStore:
                 'pages': row.get('pages'), 'sender_name': row.get('sender_name'),
                 'requested_at': _when(row['requested_at']),
                 'until': _when(row['release_at']) if row['kind'] == 'window' else None,
-                'reason': row['reason'] or text.WAITS, 'can_decide': self.may_decide(row, actor, approver=approver),
+                'reason': _shown_reason(row), 'can_decide': self.may_decide(row, actor, approver=approver),
                 'version': row['version'], 'state': row['state']}
         if row['kind'] == 'no_route':
             view['options'] = self.options(pinned, row, accounts=accounts)
             view['not_offered'] = self.not_offered(pinned, row, accounts=accounts)
         return view
+
+
+def _shown_reason(row):
+    """Why the fax waits; for a refused one, what happened and who decided (``shown_refusal``), never a key's name."""
+    if row['state'] == 'refused' and (row['reason'] or '').startswith('Refused by '):
+        shown = shown_refusal(row['reason'], name=row.get('decided_by_name'), kind=row.get('decider_kind'))
+        return ' '.join(part for part in (shown['sentence'], shown['decided_by']) if part)
+    return row['reason'] or text.WAITS
 
 
 def _when(value):

@@ -63,6 +63,27 @@ def test_send_warns_before_a_first_fax_to_another_providers_number_and_still_sen
     assert 'recipient_warning' not in again   # faxed before: no check
 
 
+def test_the_recipient_given_to_send_shows_with_that_fax(cli, registry, tmp_path):
+    """D24: faxbot send --recipient sends the name with the fax, not only to the NPPES check; faxbot status (the
+    board and one fax), faxbot faxes sent list and show then name it. A fax sent without one shows no name."""
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic\n')
+    sent = cli.json('send', '+13035550121', note, '--queue', '--recipient', 'Faxbeep US test line')
+    assert sent['recipient'] == 'Faxbeep US test line'
+    plain = cli.json('send', '+13035550122', note, '--queue')
+    assert plain['recipient'] is None
+
+    def text(*args):
+        result = cli(*args)
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        return ' '.join(result.stdout.split())
+    assert 'Recipient Faxbeep US test line' in text('sent', 'show', sent['id'])
+    assert 'Recipient Faxbeep US test line' in text('status', sent['id'])
+    assert 'Recipient' not in text('sent', 'show', plain['id'])
+    assert '(Faxbeep US test line)' in text('sent', 'list')
+    assert '(Faxbeep US test line)' in text('status')
+
+
 def test_costs_commands_show_placement_sites_and_import_state_prices(cli, tmp_path):
     placed = cli('costs', 'recommendations', 'numbers')
     assert placed.exit_code == 0 and 'Faxbot only advises' in placed.stdout
