@@ -725,7 +725,10 @@ class Board:
             return cached
         from .access.types import ResourceRef
         with access.store.transaction() as connection:
-            moment = now or utcnow()
+            # The access layer's own clock, to the microsecond (access.http.utcnow): signing in this request stored
+            # the session's last use to the microsecond, and the access check refuses a time before it. A time
+            # cut to the whole second refused every console session (401) while API keys still worked.
+            moment = now or datetime.now(timezone.utc).replace(tzinfo=None)
             containers, faxes = access.fax_resources.outbound_read_scope_on(connection, actor, now=moment)
             approver = access.control.authorize_on(connection, actor, 'fax:approve', ResourceRef('installation'),
                                                    now=moment).allowed

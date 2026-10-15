@@ -829,3 +829,49 @@ def test_only_the_faxs_latest_certainty_item_counts(desk):
     _certainty(desk, closed, state='settled', outcome='unknown', at=NOW - timedelta(minutes=5))
     board = desk.look()
     assert set(items(board, 'needs_you')) == {reopened} and board['needs_you']['count'] == 1
+
+
+# -- signed in through the console (a browser session) ---------------------------------------------------------------
+
+@pytest.fixture
+def browser_client(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from app import main
+    from api.tests.test_access_management_http import ORIGIN, _environment
+    _environment(monkeypatch, tmp_path)
+    with TestClient(main.app, base_url=ORIGIN, headers={'Origin': ORIGIN}) as test_client:
+        yield test_client
+
+
+def test_a_signed_in_console_session_reads_the_board_with_its_own_scope(browser_client):
+    """The console signs in with a password and polls with its session cookie: the board answers 200, each person
+    sees what Sent lists for them, and a session that has ended gets 401."""
+    from api.tests.test_access_management_http import B, assign, ready_user
+    client = browser_client
+    admin, _ = ready_user(client, 'dana', role='role_administrator')
+    sender, principal = ready_user(client, 'sam')
+    personal = next(item['id'] for item in client.get('/access/resources', headers=B).json()['items']
+                    if item['kind'] == 'personal' and item['principal_id'] == principal['id'])
+    assign(client, principal['id'], 'role_fax_operator', personal)
+    sender.refresh()
+    theirs = sender.post('/fax', data={'to': NUMBER}, json=None,
+                         files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert theirs.status_code == 202, theirs.text
+    ours = client.post('/fax', headers=B, data={'to': OTHER},
+                       files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert ours.status_code == 202, ours.text
+    theirs, ours = theirs.json()['id'], ours.json()['id']
+
+    everyone = admin.get('/outbound/now')
+    assert everyone.status_code == 200, everyone.text
+    assert set(items(everyone.json(), 'needs_you')) == {theirs, ours}
+    own = sender.get('/outbound/now')
+    assert own.status_code == 200, own.text
+    listed = {job['id'] for job in sender.get('/admin/fax-jobs').json()['jobs']}
+    assert set(items(own.json(), 'needs_you')) == listed == {theirs}
+    # Polling again within the scope's life reads it from the cache; it still answers.
+    assert sender.get('/outbound/now').status_code == 200
+
+    assert sender.post('/auth/logout').status_code == 200
+    ended = sender.get('/outbound/now')
+    assert ended.status_code == 401
