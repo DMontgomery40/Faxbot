@@ -375,11 +375,69 @@ def test_a_flat_plan_costs_nothing_extra_and_says_how_much_room_is_left():
     humblefax = RateTerms(card('humblefax', monthly='10.00'), published=True)
     plain = predict_from(facts(humblefax, route='humblefax', label='HumbleFax'), Shape(3, None, 'fine', 'normal'))
     assert (plain.cost, plain.marginal, plain.billed_pages) == (Money(0, 'USD'), True, 0)
-    assert plain.basis.startswith('Included in your HumbleFax plan ($10 a month), so this fax adds nothing to the bill')
+    assert plain.basis.startswith('Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill')
     budget = predict_from(facts(humblefax, route='humblefax', label='HumbleFax',
                                 plan=PlanUse(pages=1999, faxes=400, page_budget=2000)), Shape(3, None, 'fine', 'normal'))
     assert budget.cost == Money(0, 'USD')
-    assert '1999 of the 2000 pages you allow on it a month used so far, and this fax would go past that' in budget.basis
+    assert budget.basis.endswith("You've used 1,999 of the 2,000 pages you set as this plan's normal-use budget this "
+                                 'month, and this fax would go past it, so Faxbot sends by your other routes first '
+                                 'when one of them can take the fax.')
+
+
+# D23 (journey pass 2026-10-15): the estimate tells one story. The cost is said once ("adds nothing to the bill"); the
+# normal-use budget is your own measure of normal use, said in its own sentence with what Faxbot does past it.
+HUMBLEFAX_PLAN = RateTerms(card('humblefax', monthly='10.00'), published=True)
+COST = 'Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; '
+TIME = 'about 30 seconds on the line, for typical pages at a typical fax speed.'
+
+
+def _humblefax(plan, pages=1):
+    return predict_from(facts(HUMBLEFAX_PLAN, route='humblefax', label='HumbleFax', plan=plan),
+                        Shape(pages, None, 'fine', 'normal'))
+
+
+def test_a_flat_plan_past_its_normal_use_budget_says_the_cost_once_and_what_faxbot_does():
+    # The acceptance case: 245 pages used against 200 (Faxbot's start for HumbleFax) and a 1-page fax.
+    over = _humblefax(PlanUse(pages=245, faxes=40, page_budget=200, fax_budget=50))
+    assert (over.cost, over.marginal) == (Money(0, 'USD'), True)
+    assert over.basis == (COST + TIME + " You've used 245 of the 200 pages and 40 of the 50 faxes you set as this "
+                          "plan's normal-use budget this month, so Faxbot sends by your other routes first when one "
+                          'of them can take the fax.')
+    # Already past is never "would go past", and the cost is said once.
+    assert 'would go past' not in over.basis and over.basis.count('nothing') == 1
+    # Past the fax budget with pages to spare: the same story, as the routes' order sees it (plan_budget.marginal).
+    faxes = _humblefax(PlanUse(pages=60, faxes=50, page_budget=200, fax_budget=50))
+    assert faxes.basis.endswith("You've used 60 of the 200 pages and 50 of the 50 faxes you set as this plan's "
+                                'normal-use budget this month, so Faxbot sends by your other routes first when one of '
+                                'them can take the fax.')
+    # This fax is the one that goes past.
+    edge = _humblefax(PlanUse(pages=199, faxes=40, page_budget=200), pages=2)
+    assert edge.basis.endswith("You've used 199 of the 200 pages you set as this plan's normal-use budget this month, "
+                               'and this fax would go past it, so Faxbot sends by your other routes first when one of '
+                               'them can take the fax.')
+
+
+def test_a_flat_plan_within_its_normal_use_budget_says_only_what_is_used():
+    within = _humblefax(PlanUse(pages=5, faxes=3, page_budget=200, fax_budget=50))
+    assert within.basis == (COST + TIME + " You've used 5 of the 200 pages and 3 of the 50 faxes you set as this "
+                            "plan's normal-use budget this month.")
+    # Exactly filling the budget is still within it.
+    full = _humblefax(PlanUse(pages=199, faxes=3, page_budget=200), pages=1)
+    assert full.basis.endswith("You've used 199 of the 200 pages you set as this plan's normal-use budget this month.")
+    unlimited = _humblefax(PlanUse(pages=5, faxes=3))
+    assert unlimited.basis == (COST + TIME + " You've used 5 pages on this plan this month, and you set no normal-use "
+                               'budget for it.')
+    # No count: the cost alone.
+    assert _humblefax(None).basis == COST + TIME
+
+
+def test_a_per_page_route_says_its_price_once_with_no_plan_sentence():
+    phaxio = RateTerms(card('phaxio', page='0.07'), published=True)
+    found = predict_from(facts(phaxio, route='phaxio', label='Phaxio'), Shape(2, None, 'fine', 'normal'))
+    assert (found.cost, found.marginal) == (Money(140_000, 'USD'), False)
+    assert found.basis == 'Billed as 2 pages at $0.07 a page; about 50 seconds on the line, for typical pages at a ' \
+                          'typical fax speed.'
+    assert 'nothing' not in found.basis and 'normal-use budget' not in found.basis
 
 
 def test_a_page_allowance_plan_charges_only_the_pages_past_it():
