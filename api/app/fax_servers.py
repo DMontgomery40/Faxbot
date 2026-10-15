@@ -683,6 +683,9 @@ def _outcome(engine, job_id, name):
         categories = connection.execute(sa.select(attempts.c.error_category).where(
             attempts.c.job_id == job_id)).scalars().all()
         error = connection.execute(sa.select(jobs.c.error).where(jobs.c.id == job_id)).scalar()
+        # Refused while held: what happened and who decided, never the key's name (routing/holds.py).
+        from .routing.holds import refusal_text_on
+        refused = refusal_text_on(connection, job_id, error) if state == 'failed' else None
         # A fax a person settled while its call's outcome was unknown keeps that attempt uncertain.
         unknown = connection.execute(sa.select(attempts.c.phase).select_from(attempts.join(
             deliveries, deliveries.c.attempt_id == attempts.c.id)).where(deliveries.c.id == job_id)).scalar()
@@ -695,6 +698,8 @@ def _outcome(engine, job_id, name):
         if any(category in ('partly_sent', 'pages_unconfirmed') for category in categories):
             return 'uncertain', ("The call ended partway, and part of the fax may have arrived. Faxbot does not send "
                                  'it again; check with the recipient first.')
+        if refused:
+            return 'failed', refused
         reason = f': {error}' if isinstance(error, str) and error else '.'
         if state == 'cancelled':
             return 'failed', f'It was cancelled in Faxbot before it was delivered{reason}'

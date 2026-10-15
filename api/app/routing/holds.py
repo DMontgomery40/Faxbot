@@ -245,6 +245,15 @@ def refusals_on(connection, errors):
                                kind=kinds.get(row['decided_by_principal_id'])) for job, row in decided.items()}
 
 
+def refusal_text_on(connection, job_id, error):
+    """How a fax refused while held reads wherever Faxbot tells someone about it outside the fax's details: "Not
+    sent: <reason>." and who decided, never a key's name. None for a fax nobody refused."""
+    refusal = refusals_on(connection, {job_id: error}).get(job_id)
+    if refusal is None:
+        return None
+    return ' '.join(part for part in (refusal['sentence'], refusal['decided_by']) if part)
+
+
 def hold_after_predata_on(connection, t, *, job_id, pinned, accounts, now):
     """Hold a fax whose last allowed try ended before any page (no fallback is left) instead of failing it.
 

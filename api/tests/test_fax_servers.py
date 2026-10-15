@@ -391,6 +391,42 @@ def test_a_fax_the_carrier_refused_tells_the_server_contact_the_carriers_answer(
     assert view['state'] == 'failed' and view['sentence'] == f'Faxbot could not deliver it: {refused}'
 
 
+def test_a_fax_refused_while_held_is_told_as_what_happened_never_by_the_keys_name(sip_client):
+    """D26: a hold refused through the installation key, stored as on acceptance ("Refused by Installation bootstrap:
+    <reason>"), reads "Not sent: <reason>." in the server contact's notice and the calls list, and the same way in a
+    test line's state and an email intake reply. The stored sentence is unchanged."""
+    from datetime import datetime
+    from app import public_test_lines
+    from app.intake.sources.store import SourceStore
+    from app.main import app
+    from app.routing import envelope as envelopes, holds
+    server = _enrol(sip_client)
+    assert _admit_http(sip_client, server, 'h1').text == f'send:{OUTSIDE}'
+    job = _handover(sip_client, server, 'h1', _tiff('1791100000.2.tiff')).json()['queued']
+    reason = 'Telnyx account disabled for a negative balance; add funds in the Telnyx portal under Billing'
+    stored = f'Refused by Installation bootstrap: {reason}'
+    engine = _engine()
+    values = app.state.configuration_runtime.manager.store.read().active.values
+    with engine.begin() as connection:
+        hold = holds.create_on(connection, envelopes.tables(connection), job_id=job, kind='approval',
+                               decision_id=None, now=datetime.utcnow())
+        connection.execute(sa.text("UPDATE outbound_holds SET state = 'refused', reason = :reason, "
+                                   "decided_by_principal_id = 'bootstrap', decided_by_name = 'Installation bootstrap' "
+                                   'WHERE id = :id'), {'id': hold, 'reason': stored})
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'failed' WHERE id = :id"), {'id': job})
+        connection.execute(sa.text('UPDATE fax_jobs SET error = :error WHERE id = :id'), {'id': job, 'error': stored})
+    shown = f'Not sent: {reason}. Decided through an API key.'
+    told = []
+    fax_servers.settle(engine, values, email=lambda values, address, body: (told.append(body), ('sent', 'ok'))[1])
+    assert told[0]['sentence'].endswith(f'was not delivered. {shown}')
+    [view] = sip_client.get('/admin/sip/fax-servers/calls', headers=_b()).json()['calls']
+    assert view['state'] == 'failed' and view['sentence'] == shown
+    with engine.connect() as connection:
+        assert public_test_lines._fax_state(connection, job) == ('failed', f'The test fax did not go through. {shown}')
+        assert connection.execute(sa.text('SELECT error FROM fax_jobs WHERE id = :id'), {'id': job}).scalar() == stored
+    assert SourceStore(engine, None).fax_outcome(job)['error'] == shown
+
+
 def test_an_uncertain_outcome_and_a_lost_hand_over_are_told_and_never_resent(sip_client):
     server = _enrol(sip_client)
     engine = _engine()
