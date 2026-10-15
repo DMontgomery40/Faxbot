@@ -1856,6 +1856,58 @@ def test_status_names_the_route_faxbot_assigned_and_nothing_before_it():
     assert 'Provider' not in fields and 'Planned route' not in fields
 
 
+def test_send_with_an_engine_says_when_the_fax_will_not_go_over_your_phone_line(cli, tmp_path):
+    """D27: --engine matters only for a fax over your phone line (a SIP trunk). This installation sends by Phaxio, so
+    the fax is still accepted with the choice kept, and one plain line says it applies only to the phone line."""
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    said = cli('send', '+15551230002', note, '--queue', '--engine', 'builtin')
+    assert said.exit_code == 0, said.stdout + said.stderr
+    line = ('The fax engine you chose applies only to faxes over your phone line; Faxbot plans to send this one '
+            'through Phaxio.')
+    assert 'Fax accepted.' in said.stdout and line in ' '.join(said.stdout.split())
+    sent = cli.json('send', '+15551230002', note, '--queue', '--engine', 'hylafax')
+    assert sent['engine_note'] == line
+    assert cli.client.get(f"/admin/fax-jobs/{sent['id']}", headers={'X-API-Key': BOOTSTRAP}).json()[
+        'engine_choice']['engine'] == 'hylafax'
+    # Automatic, the default, says nothing.
+    plain = cli('send', '+15551230002', note, '--queue')
+    assert plain.exit_code == 0 and 'fax engine' not in plain.stdout
+
+
+def test_the_engine_note_follows_the_route_faxbot_plans_first():
+    from app.cli.commands import fax
+    from app.cli.errors import CliError
+
+    class Api:
+        def __init__(self, accounts):
+            self.accounts = accounts
+
+        def get(self, path, params=None):
+            if isinstance(self.accounts, Exception):
+                raise self.accounts
+            return {'accounts': self.accounts}
+    trunks = Api([{'key': 'sip', 'provider': 'sip'}, {'key': 'branch', 'provider': 'sip'},
+                  {'key': 'humblefax', 'provider': 'humblefax'}])
+    humblefax, telnyx = {'route': 'humblefax', 'label': 'HumbleFax'}, {'route': 'sip', 'label': 'Telnyx'}
+    line = ('The fax engine you chose applies only to faxes over your phone line; Faxbot plans to send this one '
+            'through HumbleFax.')
+    # A fax service first says so, whether or not a trunk comes later in the order; a trunk first says nothing.
+    assert fax._engine_note(trunks, [humblefax]) == line
+    assert fax._engine_note(trunks, [humblefax, telnyx]) == line
+    assert fax._engine_note(trunks, [telnyx, humblefax]) is None
+    assert fax._engine_note(trunks, [{'route': 'branch', 'label': 'Branch trunk'}, humblefax]) is None
+    # A key that may not read accounts still knows the main trunk.
+    assert fax._engine_note(Api(CliError('Not allowed.')), [telnyx]) is None
+    # One of your own numbers: into Received, unless a real call was asked for.
+    own = [{'route': 'local', 'label': 'This Faxbot'}, telnyx]
+    assert fax._engine_note(trunks, own) == ('The fax engine you chose applies only to faxes over your phone line; '
+                                             'this one goes straight into Received with no phone call.')
+    assert fax._engine_note(trunks, own, by_call=True) is None
+    # A sending rule decided (no order to read), or no routes: Faxbot can't tell and says nothing.
+    assert fax._engine_note(trunks, None) is None and fax._engine_note(trunks, []) is None
+
+
 def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():
     from app.cli.commands import fax
     from app.cli.errors import CliError

@@ -111,13 +111,20 @@ def _planned_route(api, job):
     """('Planned route', the route Faxbot would try first for this fax), or None when Faxbot cannot say or this
     key may not read routes. A sending rule the fax matched (a label, mailbox or workflow rule) decides it, as the
     fax's route record says; with none, the number's recommended route."""
+    found = _route_plan(api, job)
+    return ('Planned route', found[0]) if found else None
+
+
+def _route_plan(api, job):
+    """(the name of the route Faxbot would try first for this fax, the number's recommended routes in the order this
+    fax would try them, or None when a sending rule decided), or None when Faxbot cannot say (``_planned_route``)."""
     if job.get('id'):
         try:
             decided = (api.get('/routing/faxes/' + segment(job['id']) + '/route') or {}).get('planned')
         except CliError:
             decided = None
         if decided:
-            return ('Planned route', decided)
+            return decided, None
     number = job.get('to_number') or job.get('to')
     if not number:
         return None
@@ -126,7 +133,33 @@ def _planned_route(api, job):
     except CliError:
         return None
     routes = plan.get('recommended_routes') or []
-    return ('Planned route', routes[0].get('label')) if routes else None
+    return (routes[0].get('label'), routes) if routes else None
+
+
+def _trunk_keys(api):
+    """Your SIP trunks' route keys: the main trunk, and any more trunk accounts this key may read."""
+    try:
+        accounts = (api.get('/admin/providers/accounts') or {}).get('accounts') or []
+    except CliError:
+        accounts = []
+    return {'sip'} | {item['key'] for item in accounts if item.get('provider') == 'sip' and item.get('key')}
+
+
+def _engine_note(api, routes, by_call=False):
+    """One line for --engine when the route Faxbot plans first for this fax is not your phone line (one of your SIP
+    trunks, where Faxbot's own fax engines place the call), as Send a fax words it; None when it is, or when Faxbot
+    cannot tell (a sending rule decided, or the routes could not be read). The fax is sent either way, with the
+    choice kept for a call over the trunk later in its order."""
+    # A real call to one of your own numbers goes through your carrier, not into Received.
+    routes = [item for item in routes or () if not (by_call and item.get('route') == 'local')]
+    if not routes or routes[0].get('route') in _trunk_keys(api):
+        return None
+    first = routes[0]
+    if first.get('route') == 'local':
+        return ('The fax engine you chose applies only to faxes over your phone line; this one goes straight into '
+                'Received with no phone call.')
+    return ('The fax engine you chose applies only to faxes over your phone line; Faxbot plans to send this one '
+            f"through {first.get('label') or first.get('route')}.")
 
 
 def _assigned_route(api, job):
@@ -273,7 +306,10 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
     with file.open('rb') as handle:
         job = api.post('/fax', data=data, files={'file': (file.name, handle, content_type)}, headers=headers)
     waiting = _together(api, job['id'])
-    route = _planned_route(api, job)
+    plan = _route_plan(api, job)
+    route = ('Planned route', plan[0]) if plan else None
+    # D27: the engine matters only for a fax over your phone line; a fax going another way says so and still goes.
+    engine_note = _engine_note(api, plan[1] if plan else None, by_call) if engine != 'auto' else None
 
     def human(out):
         if warning:
@@ -282,10 +318,14 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
         if cover_line:
             out.line(cover_line)
         out.fields(_fax_fields(job, route))
+        if engine_note:
+            out.line(engine_note)
         if waiting:
             out.line(waiting)
         out.line(f"Check on it with: faxbot status {job['id']}")
-    state.out().result({**job, 'recipient_warning': warning} if warning else job, human)
+    shown = {**job, **({'recipient_warning': warning} if warning else {}),
+             **({'engine_note': engine_note} if engine_note else {})}
+    state.out().result(shown, human)
 
 
 def _first_send_warning(api, to, recipient):
