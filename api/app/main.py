@@ -1242,11 +1242,13 @@ async def get_health_status(request: Request):
     def inspect():
         from sqlalchemy import or_
         from .db import APIKey
-        from .outbound_summary import dashboard_counts
+        from .outbound_summary import certainty_items, dashboard_counts
         store = _configuration_manager().store
         now = datetime.utcnow()
         with store.engine.connect() as connection:
-            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now, jobs=store.jobs)
+            # Uncertain results count as Sent's settling list and the outbound board count them (certainty items).
+            jobs = dashboard_counts(connection, store.delivery_tables['outbound_deliveries'], now=now, jobs=store.jobs,
+                                    items=certainty_items(connection))
         # Faxes ready to go that wait for room on their number or the trunk (Overview: "Waiting for a free line").
         jobs['waiting_for_line'] = _waiting_for_line(store, now)
         readiness = _readiness_status(request)
