@@ -56,7 +56,8 @@ from .config_secrets import ConfigurationSecretError
 from .provider_catalog import ProviderCatalogError, validate_http_provider_document
 from pathlib import Path
 from .config_runtime import ConfigurationRuntime, ConfigurationMiddleware, run_lifecycle_step
-from .outbound_store import OutboundStore, DeliveryConflict, TERMINAL, engine_request_recorder
+from .outbound_store import (OutboundStore, DeliveryConflict, TERMINAL, clean_recipient_name, engine_request_recorder,
+                             recipient_name_recorder)
 from .outbound_worker import OutboundWorker
 from .analysis.http import router as analysis_router
 from .analysis.store import AnalysisStore
@@ -500,12 +501,42 @@ def mask_phone(phone: Optional[str]) -> str:
     return "*" * (len(phone) - 4) + phone[-4:]
 
 
-def sanitize_error(text: Optional[str]) -> Optional[str]:
+def sanitize_error(text: Optional[str], limit: int = 80) -> Optional[str]:
     if not text:
         return None
-    # Replace long digit sequences (likely numbers/IDs/phones) and truncate
+    # Replace long digit sequences (likely numbers/IDs/phones) and shorten between words, never mid-word.
     sanitized = re.sub(r"\+?\d{6,}", "***", text)
-    return sanitized[:80]
+    if len(sanitized) <= limit:
+        return sanitized
+    cut = sanitized[:limit - 1]
+    if ' ' in cut.strip():
+        cut = cut.rstrip()
+        cut = cut[:cut.rfind(' ')]
+    return cut.rstrip(' ,;:') + '…'
+
+
+# Sent (the console's list and details, and faxbot faxes sent) shows a fax's whole problem sentence, wrapped. The
+# public GET /fax/{id} keeps other problem sentences short; a refusal it shows whole (_shown_error).
+SENT_ERROR_LIMIT = 500
+
+
+def _sent_extras(rows):
+    """``({job_id: recipient name}, {job_id: shown refusal})`` for these fax rows: the name typed when each was sent,
+    else its saved Recipients name, and how a fax refused while held is shown (routing/holds.py)."""
+    from .outbound_store import recipient_names_on
+    from .routing.holds import refusals_on
+    with _configuration_manager().store.engine.connect() as connection:
+        return (recipient_names_on(connection, {row['id']: row['to_number'] for row in rows}),
+                refusals_on(connection, {row['id']: row['error'] for row in rows}))
+
+
+def _shown_error(stored, refusal, limit):
+    """A refused fax's shown sentence (what happened, then who decided, never a key's name); else the stored error."""
+    if refusal is None:
+        return sanitize_error(stored, limit)
+    # Faxbot's own sentence around the decider's reason: shown whole, with long digit runs still hidden.
+    shown = ' '.join(part for part in (refusal['sentence'], refusal['decided_by']) if part)
+    return sanitize_error(shown, len(shown))
 
 
 async def _initialize_runtime(tasks: list[asyncio.Task]) -> bool:
@@ -1824,7 +1855,8 @@ async def list_admin_jobs(
         identity.actor, status=status, backend=backend, limit=limit, offset=offset, since_hours=since_hours)))
     together = await run_lifecycle_step(lambda: batching_summaries(
         _configuration_manager().store.engine, [row['id'] for row in page['jobs']]))
-    return {'total': page['total'], 'jobs': [{**_admin_fax_view(row), 'together': together.get(row['id'])}
+    extras = await run_lifecycle_step(lambda: _sent_extras(page['jobs']))
+    return {'total': page['total'], 'jobs': [{**_admin_fax_view(row, extras), 'together': together.get(row['id'])}
                                              for row in page['jobs']]}
 
 
@@ -1849,7 +1881,8 @@ async def get_admin_job(job_id: str, request: Request, identity=Depends(require_
     # The coding the newest attempt asked for, measured on its pages, and what the call took (pages/coding.py).
     from .pages import coding as page_coding
     coding_view = await run_lifecycle_step(lambda: page_coding.sent_view(_configuration_manager().store.engine, job_id))
-    return {**_admin_fax_view(row), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
+    extras = await run_lifecycle_step(lambda: _sent_extras([row]))
+    return {**_admin_fax_view(row, extras), 'provider_sid': row['provider_sid'], 'file_name': row['file_name'],
             'together': together.get(job_id), 'fax_engine': fax_engine, 'page_layout': page_view,
             'coding': coding_view,
             # The sender asked for a real call through the carrier, even to one of this installation's own numbers.
@@ -1880,12 +1913,20 @@ def _send_by_view(row):
                         finished_at=row.get('updated_at'), now=datetime.utcnow())
 
 
-def _admin_fax_view(row):
+def _admin_fax_view(row, extras):
     fields = ('id', 'status', 'backend', 'pages', 'created_at', 'updated_at',
               'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason',
               'settled_cant_tell')
+    names, refusals = extras
+    refusal = refusals.get(row['id'])
     return {**{name: row[name] for name in fields},
-            'to_number': mask_phone(row['to_number']), 'error': sanitize_error(row['error'])}
+            'to_number': mask_phone(row['to_number']),
+            # The name typed when it was sent, else the saved Recipients name; None without either.
+            'recipient': names.get(row['id']),
+            'error': _shown_error(row['error'], refusal, SENT_ERROR_LIMIT),
+            # Refused while held: what happened, and who decided (a key named only here, for the details).
+            'refusal': None if refusal is None else {
+                key: sanitize_error(value, len(value)) if value else None for key, value in refusal.items()}}
 
 
 class ProviderIdentityConfirmation(BaseModel):
@@ -2015,6 +2056,10 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
                                                  "the installation's time zone (2026-10-08 17:00), or a time "
                                                  "(17:00, its next occurrence). Faxbot never holds the fax past it "
                                                  "for the recipient's hours or a busy hour."),
+                   recipient_name: Optional[str] = Form(None, max_length=200, description="The name of the person "
+                                                        "or office the fax is for, such as Riverside Clinic. Faxbot "
+                                                        "shows it with this fax wherever it lists the fax; your saved "
+                                                        "Recipients do not change."),
                    mailbox: Optional[str] = Form(None, max_length=100,
                                                  description='The mailbox this fax is sent from, so its sending '
                                                              'rules apply. You must work in that mailbox.'),
@@ -2271,8 +2316,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
         # never the registry); kept with the fax for Sent details once accepted, never a reason to refuse it.
         recipient_warning = await run_lifecycle_step(lambda: first_send_warning(
             manager.store.engine, revision.values, destination))
+        # The name shown with this fax: the one typed now, else the saved Recipients name for the number.
+        recipient = clean_recipient_name(recipient_name) or await run_lifecycle_step(
+            lambda: _sent_extras([{'id': job_id, 'to_number': destination, 'error': None}])[0].get(job_id))
         accepted_at = datetime.utcnow()
-        result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages,
+        result = FaxJobOut(id=job_id, to=destination, status='queued', pages=prepared.pages, recipient=recipient,
                           backend=ob, created_at=accepted_at, updated_at=accepted_at,
                           delivery_state='held' if revision.values.fax_disabled else 'ready',
                           dispatch_mode='held' if revision.values.fax_disabled else 'normal',
@@ -2294,7 +2342,11 @@ async def send_fax(request: Request, to: str = Form(...), file: UploadFile = Fil
             None if hold is None else batching_acceptance.recorder(manager.store.engine, job_id, hold, identity.actor),
             None if notice_plan is None else header_notice.recorder(job_id, notice_plan),
             # The engine the sender chose, kept with the fax for every attempt (outbound_store).
-            engine_request_recorder(job_id, engine))))
+            engine_request_recorder(job_id, engine),
+            # The recipient's name typed for this fax, shown with it in Sent and on the board (outbound_store).
+            # Not part of the request's fingerprint: a resumed send keeps its key even when the name was not typed
+            # again, and a replay returns the first fax with the name it was accepted with.
+            recipient_name_recorder(job_id, recipient_name))))
     except IdempotentReplay as replay:
         discard()
         return await run_lifecycle_step(private_operation(lambda: _accepted_job_response(access, identity.actor, replay.job_id)))
@@ -2346,7 +2398,9 @@ def _accepted_job_response(access, actor, job_id):
     fields = ('id', 'status', 'pages', 'backend', 'provider_sid', 'created_at', 'updated_at',
               'delivery_state', 'dispatch_mode', 'delivery_version', 'reconciliation_reason',
               'settled_cant_tell')
-    return FaxJobOut(**{name: row[name] for name in fields}, to=row['to_number'], error=sanitize_error(row['error']))
+    names, refusals = _sent_extras([row])
+    return FaxJobOut(**{name: row[name] for name in fields}, to=row['to_number'], recipient=names.get(job_id),
+                     error=_shown_error(row['error'], refusals.get(job_id), 80))
 
 
 @app.get("/fax/{job_id}", response_model=FaxJobOut)

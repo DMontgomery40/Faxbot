@@ -4,6 +4,7 @@ Sending is turned off in these installations (FAX_DISABLED), so every accepted
 fax stays held and nothing is ever submitted to a provider. Numbers are synthetic.
 """
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
 from app import main
@@ -95,8 +96,10 @@ def test_refusing_needs_approve_faxes_and_fails_the_fax_with_the_reason(client):
     refused = client.post(f"/routing/holds/{hold['id']}/refuse", headers=ADMIN,
                           json={'version': hold['version'], 'reason': 'wrong recipient'})
     assert refused.status_code == 200, refused.text
+    # The installation key decided: what happened first, and the key never by its internal name (D26).
+    assert refused.json()['sentence'] == 'Not sent: wrong recipient. Decided through an API key.'
     fax = client.get(f'/fax/{job}', headers=ADMIN).json()
-    assert fax['status'] == 'failed' and fax['error'].endswith('wrong recipient')
+    assert fax['status'] == 'failed' and fax['error'] == 'Not sent: wrong recipient. Decided through an API key.'
 
 
 def test_a_fax_no_rule_allows_waits_with_its_sentence_and_options(client):
@@ -195,7 +198,7 @@ def test_the_sent_and_costs_commands_against_a_real_server(ruled_cli):
     assert route.startswith('Waits for approval: the rule ‘Rule l-all’ matched. Organization rules version 1.')
     assert _cli_ok(cli('sent', 'approve', first)) == 'Approved. The fax is no longer held.'
     refused = _cli_ok(cli('sent', 'refuse', second, '--reason', 'wrong recipient'))
-    assert refused.startswith('Refused. Nothing was sent.') and refused.endswith('wrong recipient')
+    assert refused == 'Not sent: wrong recipient. Decided through an API key.'
     # A cap no account meets: the fax waits with no route, and anyone may check again.
     publish_as(cli.client, admin, {'format': 1, 'limits': [rule('l-cap', {'cap_cost': {'currency': 'USD',
                                                                                         'amount': '0.01'}},
@@ -238,3 +241,117 @@ def test_send_names_the_route_a_label_rule_chose(ruled_cli):
     assert f'Planned route {label}' in labelled and f"Planned route {first['label']}" not in labelled
     plain = _cli_ok(cli('send', US, str(document)))
     assert f"Planned route {first['label']}" in plain
+
+
+# D26: a refused fax in Sent and on the command line ------------------------------------------------------------------
+
+def _signed_in(client, login):
+    """Headers for a person's own signed-in session: the cookie, the origin and the CSRF token."""
+    from api.tests.test_access_management_http import COOKIE, PASSWORD, _session_token
+    from api.tests.test_cli import ORIGIN
+    client.cookies.clear()
+    signed_in = client.post('/auth/login', json={'login': login, 'password': PASSWORD}, headers={'Origin': ORIGIN})
+    assert signed_in.status_code == 200, signed_in.text
+    client.cookies.clear()
+    cookie = {'Cookie': f'{COOKIE}={_session_token(signed_in)}'}
+    return {**cookie, 'Origin': ORIGIN, 'X-CSRF-Token': client.get('/auth/me', headers=cookie).json()['csrf_token']}
+
+
+def _integration_key(client, admin, name):
+    """An integration (an API key's owner) whose key may approve faxes."""
+    def policy():
+        return client.get('/auth/me', headers=admin).json()['policy_version']
+    integration = client.post('/access/integrations', headers=admin, json={
+        'display_name': name, 'enabled': True, 'expected_policy_version': policy()}).json()['integration']
+    roles = {role['id']: role for role in client.get('/access/roles', headers=admin).json()['items']}
+
+    def version():
+        return client.get(f"/access/users/{integration['id']}", headers=admin).json()['version']
+    granted = client.post('/access/assignments', headers=admin, json={
+        'subject': {'kind': 'principal', 'id': integration['id'], 'version': version()},
+        'role': {'id': 'role_administrator', 'version': roles['role_administrator']['version']},
+        'resource_id': 'installation', 'expected_policy_version': policy()})
+    assert granted.status_code == 200, granted.text
+    issued = client.post('/access/keys', headers=admin, json={
+        'principal': {'id': integration['id'], 'version': version()}, 'name': 'sync key', 'note': None,
+        'expires_at': None, 'ceiling': [{'permission': permission, 'resource_id': 'installation'}
+                                        for permission in ('fax:approve', 'fax:read')],
+        'expected_policy_version': policy()})
+    assert issued.status_code == 200, issued.text
+    return {'X-API-Key': issued.json()['token']}
+
+
+def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
+    """D26: on acceptance Sent showed "Refused by Installation bootstrap: Telnyx account disabled for a negative
+    balanc". Sent's list and details, GET /fax/{id} and faxbot faxes sent list and show now lead with "Not sent:" and
+    the reason, whole; a person who decided is named, an API key only in the fax's details, and the installation
+    key never by its internal name. The stored sentence is unchanged."""
+    from api.tests.test_cli import BOOTSTRAP
+    from api.tests.test_cli_work import ready_user
+    cli, tmp_path = ruled_cli
+    client, admin = cli.client, {'X-API-Key': BOOTSTRAP}
+    publish_as(client, admin, {'format': 1, 'limits': [rule('l-all', {'hold_for_approval': {}})]})
+    document = tmp_path / 'note.txt'
+    document.write_text('Synthetic page\n')
+
+    def refuse(headers, reason):
+        job = cli.json('send', US, str(document))['id']
+        hold = next(item for item in client.get('/routing/holds', headers=admin).json()['holds']
+                    if item['job_id'] == job)
+        refused = client.post(f"/routing/holds/{hold['id']}/refuse", headers=headers,
+                              json={'version': hold['version'], 'reason': reason})
+        assert refused.status_code == 200, refused.text
+        return job, refused.json()['sentence']
+    balance = 'Telnyx account disabled for a negative balance; add funds in the Telnyx portal under Billing'
+    installation, said = refuse(admin, balance)
+    assert said == f'Not sent: {balance}. Decided through an API key.'
+    integration, _ = refuse(_integration_key(client, admin, 'Billing sync'), 'duplicate of an earlier fax')
+    ready_user(client, 'dana', 'Dana Ruiz', role='role_administrator')
+    person, said = refuse(_signed_in(client, 'dana'), 'wrong recipient')
+    assert said == 'Not sent: wrong recipient. Decided by Dana Ruiz.'
+    # A long reason: the stored sentence is cut at 500 characters, mid-word; Sent ends it at its last whole word.
+    words = ' '.join(f'word{index:03d}' for index in range(80))
+    long_job, _ = refuse(admin, words[:490])
+    client.cookies.clear()
+
+    listed = {job['id']: job for job in client.get('/admin/fax-jobs', headers=admin).json()['jobs']}
+    shown = {job: (listed[job]['error'], client.get(f'/admin/fax-jobs/{job}', headers=admin).json()['refusal'])
+             for job in (installation, integration, person)}
+    assert shown == {
+        installation: (f'Not sent: {balance}. Decided through an API key.',
+                       {'sentence': f'Not sent: {balance}.', 'decided_by': 'Decided through an API key.',
+                        'decided_by_detail': 'Decided through the installation key.'}),
+        integration: ('Not sent: duplicate of an earlier fax. Decided through an API key.',
+                      {'sentence': 'Not sent: duplicate of an earlier fax.', 'decided_by': 'Decided through an API key.',
+                       'decided_by_detail': 'Decided through the API key ‘Billing sync’.'}),
+        person: ('Not sent: wrong recipient. Decided by Dana Ruiz.',
+                 {'sentence': 'Not sent: wrong recipient.', 'decided_by': 'Decided by Dana Ruiz.',
+                  'decided_by_detail': 'Decided by Dana Ruiz.'})}
+    for job in (installation, integration, person):
+        assert client.get(f'/fax/{job}', headers=admin).json()['error'] == listed[job]['error']
+    for job in listed.values():
+        assert 'Installation bootstrap' not in str(job), job
+    assert all('Billing sync' not in str(job['error']) for job in listed.values())
+    long_error = listed[long_job]['error']
+    assert long_error.endswith('… Decided through an API key.') and long_error.startswith('Not sent: word000 ')
+    kept = long_error[len('Not sent: '):-len('… Decided through an API key.')].split(' ')
+    assert kept == words.split(' ')[:len(kept)] and len(kept) > 50   # whole words only, never one cut short
+    # Refused holds read the same way; the stored sentence stays as it was written.
+    refused_holds = {item['job_id']: item['reason'] for item in
+                     client.get('/routing/holds', headers=admin, params={'state': 'refused'}).json()['holds']}
+    assert refused_holds[installation] == f'Not sent: {balance}. Decided through an API key.'
+    from app import main
+    with main.app.state.configuration_runtime.manager.store.engine.connect() as connection:
+        stored = connection.execute(sa.text('SELECT error FROM fax_jobs WHERE id = :id'),
+                                    {'id': installation}).scalar_one()
+    assert stored == f'Refused by Installation bootstrap: {balance}'
+    # The command line: the list as Sent's Status cell, the details naming the key.
+    listed_text = _cli_ok(cli('sent', 'list'))
+    assert 'Failed. Not sent: duplicate of an earlier fax. Decided through an API key.' in listed_text
+    assert 'Failed. Not sent: wrong recipient. Decided by Dana Ruiz.' in listed_text
+    assert 'Installation bootstrap' not in listed_text and 'Billing sync' not in listed_text
+    assert f'Problem Not sent: {balance}. Decided through the installation key.' in _cli_ok(
+        cli('sent', 'show', installation))
+    assert 'Problem Not sent: duplicate of an earlier fax. Decided through the API key ‘Billing sync’.' in _cli_ok(
+        cli('sent', 'show', integration))
+    assert 'Problem Not sent: wrong recipient. Decided by Dana Ruiz.' in _cli_ok(cli('status', person))

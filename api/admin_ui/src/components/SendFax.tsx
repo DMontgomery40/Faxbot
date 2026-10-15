@@ -457,7 +457,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
           byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
           sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine,
-          court: court ? courtJson(court) : undefined });
+          court: court ? courtJson(court) : undefined, recipientName: recipientName.trim() || undefined });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -472,6 +472,9 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       clearPendingSend();
       setResuming(false);
       setToNumber('');
+      // The name belongs to the fax just sent, never to the next one.
+      setRecipientName('');
+      setCheckedName('');
       setFile(null);
       setPatient(NO_PATIENT);
       setPatientAsked(false);
@@ -556,7 +559,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   onChange={(event) => setRecipientName(event.target.value)} disabled={!configReady || loading}
                   onBlur={() => setCheckedName(recipientName.trim())}
                   inputProps={{ maxLength: 200, 'data-testid': 'send-recipient-name' }}
-                  helperText="Before a first fax, Faxbot checks the number against the NPI registry (NPPES)." />
+                  helperText={'Shown with this fax wherever Faxbot lists it. Before a first fax, Faxbot checks the '
+                    + 'number against the NPI registry (NPPES).'} />
 
                 {!recordsRoute && routesHidden && !patientAsked && (
                   <Box>

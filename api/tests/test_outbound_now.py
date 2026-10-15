@@ -599,6 +599,67 @@ def test_a_sender_created_after_a_viewer_looked_shows_at_the_next_aggregate(clie
     assert board.scope_reads == reads + 1
 
 
+def test_a_name_typed_on_send_shows_with_that_fax_everywhere_it_is_listed(client):
+    """D24: POST /fax recipient_name is kept with that fax; the board, Sent's list and details and GET /fax/{id}
+    show it before the number's saved Recipients name, which still shows for a fax sent without one. A fax with
+    neither (every fax sent before this) shows none, and the name never changes Recipients."""
+    saved = client.patch(f'/routing/destinations/{OTHER}', headers=ADMIN, json={'display_name': 'Mesa Cardiology'})
+    assert saved.status_code == 200, saved.text
+
+    def send(number, **data):
+        sent = client.post('/fax', headers=ADMIN, data={'to': number, **data},
+                           files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+        assert sent.status_code == 202, sent.text
+        return sent.json()
+    typed = send(NUMBER, recipient_name='  Faxbeep   US\ttest line ')
+    assert typed['recipient'] == 'Faxbeep US test line'
+    fallback, over_saved, plain = send(OTHER), send(OTHER, recipient_name='Dr. Lee'), send(THIRD)
+    expected = {typed['id']: 'Faxbeep US test line', fallback['id']: 'Mesa Cardiology',
+                over_saved['id']: 'Dr. Lee', plain['id']: None}
+    assert (fallback['recipient'], over_saved['recipient'], plain['recipient']) == ('Mesa Cardiology', 'Dr. Lee', None)
+    # Sending is turned off here, so every fax is a held test fax: the board lists them under Needs you.
+    board = client.get('/outbound/now', headers=ADMIN).json()
+    assert {job: item['recipient'] for job, item in items(board, 'needs_you').items()} == expected
+    listed = client.get('/admin/fax-jobs', headers=ADMIN).json()['jobs']
+    assert {job['id']: job['recipient'] for job in listed} == expected
+    for job, name in expected.items():
+        assert client.get(f'/admin/fax-jobs/{job}', headers=ADMIN).json()['recipient'] == name
+        assert client.get(f'/fax/{job}', headers=ADMIN).json()['recipient'] == name
+    # Sent's history names the step in its own words, never "Delivery update".
+    history = client.get(f"/admin/fax-jobs/{typed['id']}/delivery", headers=ADMIN).json()['events']
+    assert 'recipient_named' in [event['kind'] for event in history]
+    assert 'unknown' not in [event['kind'] for event in history]
+    # Saved Recipients keep their own name.
+    assert client.get(f'/routing/destinations/{OTHER}', headers=ADMIN).json()['display_name'] == 'Mesa Cardiology'
+    # The name is a label, not part of the request: a replay with the same key returns the first fax and its name.
+    keyed = {**ADMIN, 'Idempotency-Key': 'name-replay'}
+    first = client.post('/fax', headers=keyed, data={'to': THIRD, 'recipient_name': 'First name'},
+                        files={'file': ('note.txt', b'Replayed body', 'text/plain')})
+    again = client.post('/fax', headers=keyed, data={'to': THIRD},
+                        files={'file': ('note.txt', b'Replayed body', 'text/plain')})
+    assert first.status_code == again.status_code == 202, again.text
+    assert again.json()['id'] == first.json()['id'] and again.json()['recipient'] == 'First name'
+    too_long = client.post('/fax', headers=ADMIN, data={'to': THIRD, 'recipient_name': 'x' * 201},
+                           files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert too_long.status_code == 422
+
+
+def test_a_fax_accepted_without_a_name_keeps_the_saved_name_on_the_board(desk):
+    """A fax accepted before names were kept (no recipient_named event) shows its number's saved Recipients name,
+    as it always did, and one with neither shows none."""
+    with desk.engine.begin() as connection:
+        connection.execute(sa.text(
+            "INSERT INTO delivery_destinations (id, phone_number, display_name, accepts_references, version, "
+            "created_at, updated_at) VALUES (:id, :number, 'Riverside Clinic', 0, 1, :at, :at)"),
+            {'id': uuid4().hex, 'number': NUMBER, 'at': NOW})
+    named, unnamed = desk.accept(to=NUMBER), desk.accept(to=OTHER)
+    desk.set(named, state='held')
+    desk.set(unnamed, state='held')
+    board = desk.look()
+    assert items(board, 'needs_you')[named]['recipient'] == 'Riverside Clinic'
+    assert items(board, 'needs_you')[unnamed]['recipient'] is None
+
+
 # -- bounded loads, filled sentences, Retry-After ---------------------------------------------------------------------
 
 def sentences_filled(board):

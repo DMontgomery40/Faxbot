@@ -1221,6 +1221,9 @@ class RelayService:
                 attempts.c.created_at)).mappings().all()
             job = connection.execute(sa.select(jobs.c.pages, jobs.c.error).where(
                 jobs.c.id == fax['job_id'])).first()
+            # Refused while held: what happened and who decided, never the key's name (routing/holds.py).
+            from ..routing.holds import refusal_text_on
+            refused = refusal_text_on(connection, fax['job_id'], job.error) if job is not None else None
             call = None
             if delivery['attempt_id']:
                 call = connection.execute(sa.select(costs).where(
@@ -1255,7 +1258,8 @@ class RelayService:
                 sentence = f'{relay} cancelled it before dialing.'
             elif not called:
                 # Nothing was submitted, so no call was made: never "call failed".
-                sentence = f'{relay} did not place a call for it' + (f': {reason}' if reason else '.')
+                sentence = f'{relay} did not place a call for it' + (
+                    f'. {refused}' if refused else f': {reason}' if reason else '.')
             else:
                 sentence = f"{relay}'s call failed before any page was sent" + (f': {reason}' if reason else '.')
             return {'status': FAILED_BEFORE_DATA, 'pages': 0, 'seconds': None, 'charge': self._charge(fax['job_id']),

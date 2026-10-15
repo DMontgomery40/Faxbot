@@ -991,10 +991,13 @@ class AdminAPIClient {
 
   async sendFax(to: string, file: File, options: { queueOnly?: boolean; idempotencyKey?: string; sendNow?: boolean; byCall?: boolean;
     urgent?: boolean; mailbox?: string; workflow?: string; labels?: string[]; sendBy?: string;
-    patient?: FaxPatient; coverInHeader?: boolean; court?: string; engine?: FaxEngineRequest } = {}): Promise<FaxSendResult> {
+    patient?: FaxPatient; coverInHeader?: boolean; court?: string; engine?: FaxEngineRequest;
+    recipientName?: string } = {}): Promise<FaxSendResult> {
     const formData = new FormData();
     formData.append('to', normalizeFaxDestination(to));
     formData.append('file', file);
+    // The recipient's name typed for this fax, shown with it in Sent and on the board.
+    if (options.recipientName) formData.append('recipient_name', options.recipientName);
     if (options.queueOnly) formData.append('queue_only', 'true');
     // Only for a number that sends faxes together: go at once, taking the faxes waiting for it.
     if (options.sendNow) formData.append('send_now', 'true');

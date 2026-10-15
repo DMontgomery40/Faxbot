@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
+import AdminAPIClient from '../api/client';
 import type { FaxJob } from '../api/types';
-import { CANT_TELL_LABEL, deliveryNotice, jobStatusLabel, routeText } from '../components/JobsList';
+import JobsList, { CANT_TELL_LABEL, deliveryNotice, jobStatusLabel, problemText, routeText } from '../components/JobsList';
+import { server } from '../test/server';
 
 const uncertain = (overrides: Partial<FaxJob> = {}): FaxJob => ({
   id: 'c'.repeat(32), to_number: '+15550100002', status: 'in_progress', backend: 'humblefax',
@@ -52,5 +56,54 @@ describe('Sent route', () => {
   it('falls back to the accepted provider while no attempt has a route yet', () => {
     expect(routeText('humblefax', undefined)).toBe('HumbleFax');
     expect(routeText('humblefax', { state: 'none', summary: null, reported_cost: [], routes: [] })).toBe('HumbleFax');
+  });
+});
+
+// D26: a fax refused while held. The server keeps the stored "Refused by <name>: <reason>" and sends what Sent shows:
+// what happened first, a person by name, a key only as "an API key" in the list and by its name in the details.
+describe('Sent: a fax refused while held', () => {
+  const reason = 'Telnyx account disabled for a negative balance; add funds in the Telnyx portal under Billing, '
+    + 'then send this referral again from Send a fax';
+  const refused = uncertain({
+    status: 'failed', delivery_state: 'failed', recipient: 'Faxbeep US test line',
+    error: `Not sent: ${reason}. Decided through an API key.`,
+    refusal: { sentence: `Not sent: ${reason}.`, decided_by: 'Decided through an API key.',
+      decided_by_detail: 'Decided through the installation key.' } });
+
+  it('leads with what happened and names a key only in the details', () => {
+    expect(problemText(refused)).toBe(`Not sent: ${reason}. Decided through an API key.`);
+    expect(problemText(refused, true)).toBe(`Not sent: ${reason}. Decided through the installation key.`);
+    const person = { ...refused, refusal: { sentence: 'Not sent: wrong recipient.', decided_by: 'Decided by Dana Ruiz.',
+      decided_by_detail: 'Decided by Dana Ruiz.' } };
+    expect(problemText(person)).toBe('Not sent: wrong recipient. Decided by Dana Ruiz.');
+    // Any other problem reads as the server sent it; a settled fax says it in its notice instead.
+    expect(problemText({ ...refused, refusal: null, error: 'The line was busy.' })).toBe('The line was busy.');
+    expect(problemText({ ...refused, refusal: null, settled_cant_tell: true })).toBeNull();
+  });
+
+  it('shows the whole sentence in the Status cell, the recipient above the number, and the key in the details', async () => {
+    const id = refused.id;
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [refused] })),
+      http.get(`/admin/fax-jobs/${id}`, () => HttpResponse.json(refused)),
+      http.get(`/admin/fax-jobs/${id}/delivery`, () => HttpResponse.json({
+        version: 2, state: 'failed', dispatch_mode: 'normal', provider_id: 'humblefax', profile_id: 'profile',
+        revision_id: 'revision', attempt: null, can_bind_provider_identity: false, bind_refusal_reason: null,
+        events: [{ id: 'e1', attempt_id: null, kind: 'recipient_named', created_at: '2026-10-10T20:45:00', details: {} }],
+        events_truncated: false })),
+      http.get('/direct/deliveries', () => HttpResponse.json({ deliveries: [] })),
+    );
+    render(<JobsList client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} />);
+    const cell = await screen.findByTestId('job-error');
+    // Never cut: the cell holds every word, and the browser wraps it between words.
+    expect(cell.textContent).toBe(`Not sent: ${reason}. Decided through an API key.`);
+    expect(cell.textContent).not.toContain('installation key');
+    expect((await screen.findByTestId('job-recipient')).textContent).toBe('Faxbeep US test line');
+    fireEvent.click(screen.getByText('Faxbeep US test line'));
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    expect((await within(dialog).findByTestId('job-detail-problem')).textContent)
+      .toBe(`Not sent: ${reason}. Decided through the installation key.`);
+    expect(within(dialog).getByText('Faxbeep US test line, +15550100002')).toBeTruthy();
+    expect(await within(dialog).findByText("Recipient's name given with the fax")).toBeTruthy();
   });
 });

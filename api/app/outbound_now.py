@@ -425,6 +425,10 @@ class Board:
             for row in self._fetch(connection, query):
                 if row['id'] not in faxes:
                     faxes[row['id']] = self._fax(row)
+        # The name typed when a fax was sent goes before its number's saved Recipients name (outbound_store).
+        from .outbound_store import typed_recipient_names_on
+        for job_id, name in typed_recipient_names_on(connection, faxes).items():
+            faxes[job_id].recipient = name
         waiting = sorted((fax for fax in faxes.values() if fax.section == 'waiting'),
                          key=lambda fax: (-int(fax.row.get('urgent') or 0), fax.created_at, fax.id))
         for position, fax in enumerate(waiting):
