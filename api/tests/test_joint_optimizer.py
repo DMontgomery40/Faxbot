@@ -673,17 +673,68 @@ def test_the_us_and_canada_stay_eligible_for_that_route(live, number):
     assert humblefax_destination(number) == int(number[1:])
 
 
-def test_an_unknown_price_never_ranks_ahead_of_a_known_one():
-    """Even a plan past its normal-use budget (a known price) goes before a route whose price is unknown."""
+def test_an_unknown_price_never_ranks_ahead_of_a_known_one_within_budget():
+    """Among routes within budget a known price goes first. A plan past its normal-use budget goes after every route
+    within budget, even one whose price is unknown (plan_budget.order_key; live, 13 October 2026: HumbleFax past its
+    budget still went first, "included", before a trunk and Fax API account with no rate card)."""
     from api.app.routing.policy import RouteCandidate, RoutePolicy
     from api.app.routing.pricing import Price
     plan_route = RouteCandidate('humblefax', 'provider', 'humblefax', HUMBLEFAX_PLAN, bound=True)
     trunk = RouteCandidate('sip', 'provider', 'sip', TELNYX_US)
-    prices = {'humblefax': Price('humblefax', 0, 'USD', in_plan=True, over_budget=True, uses_budget=True),
+    within = {'humblefax': Price('humblefax', 0, 'USD', in_plan=True, uses_budget=True),
               'sip': Price('sip', None, None)}
-    order = RoutePolicy().order([plan_route, trunk], prices=prices, pages=2)
+    order = RoutePolicy().order([plan_route, trunk], prices=within, pages=2)
     assert [(choice.route.key, choice.reason) for choice in order] == [('humblefax', 'included'),
                                                                       ('sip', 'alternative')]
+    past = {**within, 'humblefax': Price('humblefax', 0, 'USD', in_plan=True, over_budget=True, uses_budget=True)}
+    order = RoutePolicy().order([plan_route, trunk], prices=past, pages=2)
+    assert [(choice.route.key, choice.reason) for choice in order] == [('sip', 'unknown_cost'),
+                                                                      ('humblefax', 'alternative')]
+
+
+def test_a_plan_past_its_budget_is_named_as_the_reason_and_never_overrides_your_choice():
+    """The first route says the plan is past its budget (plan.over_budget_first); a route you chose for the number,
+    a scarce plan's held room (plan_reserved) and a plan past its budget with no other reliable route keep their own
+    reasons."""
+    from dataclasses import replace
+    from api.app.routing.plan import _reserved, decided_text, explain, over_budget_first, route_label
+    from api.app.routing.plan_allocation import Hold
+    from api.app.routing.policy import RouteCandidate, RoutePolicy
+    from api.app.routing.pricing import Price
+    plan_route = RouteCandidate('humblefax', 'provider', 'humblefax', HUMBLEFAX_PLAN, bound=True)
+    trunk = RouteCandidate('sip', 'provider', 'sip', TELNYX_US)
+    past = {'humblefax': Price('humblefax', 0, 'USD', in_plan=True, over_budget=True, uses_budget=True),
+            'sip': Price('sip', 5000, 'USD')}
+    order = over_budget_first(RoutePolicy().order([plan_route, trunk], prices=past, pages=1), past)
+    assert [(choice.route.key, choice.reason, choice.over_plan) for choice in order] == [
+        ('sip', 'plan_over_budget', 'humblefax'), ('humblefax', 'alternative', None)]
+    assert explain(order[0]) == (f'HumbleFax is past your normal-use budget this month, so this fax goes by '
+                                 f'{route_label("sip")}.')
+    assert decided_text('sip', 'plan_over_budget') == ('Your plan was past its normal-use budget this month, so '
+                                                       'Faxbot sent this fax by the next route.')
+    # The number's preferred route is an override: it stays first and says so.
+    chosen = over_budget_first(RoutePolicy().order([plan_route, trunk], prices=past, pages=1,
+                                                   preferred='humblefax'), past)
+    assert [(choice.route.key, choice.reason) for choice in chosen] == [('humblefax', 'preferred'),
+                                                                       ('sip', 'alternative')]
+    # The only route: the plan takes it, and says it is past its budget, never just "included".
+    alone = over_budget_first(RoutePolicy().order([plan_route], prices=past, pages=1), past)
+    assert [(choice.route.key, choice.reason) for choice in alone] == [('humblefax', 'over_budget')]
+    assert explain(alone[0]) == ('Included in your HumbleFax plan, though it is past its normal-use budget this month; '
+                                 'Faxbot has no other reliable route for this fax.')
+    assert decided_text('humblefax', 'over_budget').startswith('Included in your HumbleFax plan, though it was past')
+    # A scarce plan within budget whose room is held for other faxes keeps plan_reserved; past its budget with the
+    # whole room it never does, and the reason is the budget.
+    hold = Hold('humblefax', (200, 50), ('pages', 'faxes'), 200, False, 2, 0, 'queue')
+    held = {'humblefax': Price('humblefax', 0, 'USD', in_plan=True, over_budget=True, uses_budget=True, held=hold,
+                               unheld_micros=0, unheld_over=False), 'sip': Price('sip', 5000, 'USD')}
+    ranked = RoutePolicy().order([plan_route, trunk], prices=held, pages=1)
+    reserved, kept = _reserved(ranked, held)
+    assert (reserved[0].reason, kept[0]) == ('plan_reserved', hold)
+    assert over_budget_first(reserved, held)[0].reason == 'plan_reserved'
+    whole = {**held, 'humblefax': replace(held['humblefax'], unheld_over=True)}
+    reserved, kept = _reserved(RoutePolicy().order([plan_route, trunk], prices=whole, pages=1), whole)
+    assert kept is None and over_budget_first(reserved, whole)[0].reason == 'plan_over_budget'
 
 
 def test_a_trunk_with_no_published_price_abroad_is_priced_by_its_own_carrier_records(live):

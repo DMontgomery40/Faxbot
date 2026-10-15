@@ -7,10 +7,10 @@ is never called the cheapest, and a flat monthly plan is "included".
 
 Rate cards rank routes until there is evidence. A caller may pass ``prices``
 instead (``routing.pricing``): what one more fax adds on each route, from the
-shared predictor and each plan's budget. A known cost always goes before an
-unknown one; among known costs a route past its normal-use budget goes after
-every route within budget, then cheaper first; between equal costs a route that
-uses no plan budget first. When at least two reliable
+shared predictor and each plan's budget. A route past its normal-use budget
+goes after every route within budget, priced or not (``plan_budget.order_key``);
+then a known cost always goes before an unknown one, cheaper first; between
+equal costs a route that uses no plan budget first. When at least two reliable
 routes each have ``min_delivered`` delivered faxes to the destination in the
 window, every attempt priced and one currency, those routes are ranked by what
 they really cost per delivered fax (``delivered.py``), failed and repeated calls
@@ -27,6 +27,10 @@ DIRECT = 'direct'
 # ``configured``: the installation's outbound provider, recorded without a choice.
 # ``known_cheapest``: cheapest among routes with a known price while another route's price is unknown.
 # ``included``: a flat monthly plan with nothing charged per fax.
+# ``over_budget``: a flat monthly plan past the normal-use budget you set, first only because no route within
+# budget is reliable here (``plan_budget``).
+# ``plan_over_budget``: first because a plan that would have cost less is past its normal-use budget
+# (``plan.over_budget_first``; ``RouteChoice.over_plan`` names that plan).
 # ``reliable``: first because cheaper routes often failed here; its own cost is unknown.
 # ``unknown_cost``: no route has a known price, so the configured order decides.
 # ``cheapest_delivered``: the lowest observed cost per delivered fax among routes with enough delivered faxes.
@@ -40,7 +44,7 @@ DIRECT = 'direct'
 # place; this route took it instead (``plan.ONE_LINE``).
 REASONS = ('direct_peer', 'preferred', 'cheapest', 'alternative', 'unreliable', 'configured', 'known_cheapest',
            'included', 'reliable', 'unknown_cost', 'cheapest_delivered', 'own_number', 'rule', 'plan_reserved',
-           'mixed_currency', 'cheapest_converted', 'own_trunk_one_line')
+           'mixed_currency', 'cheapest_converted', 'own_trunk_one_line', 'over_budget', 'plan_over_budget')
 # A partner relay (``direct.relay``) places its call at the partner; it is ranked like a provider.
 # Ranked by cost against each other: provider accounts, partner relays and digital routes (Direct, FHIR).
 CALLING = ('provider', 'relay', 'digital')
@@ -85,6 +89,8 @@ class RouteChoice:
     # ``cheapest_delivered`` how many routes were compared.
     delivered: object = None
     compared: int = 0
+    # ``plan_over_budget``: the plan past its normal-use budget that this route goes before.
+    over_plan: str | None = None
 
 
 def _rate(exchange, currency, base):
@@ -199,12 +205,13 @@ class RoutePolicy:
             if estimate is not None and candidate.key in converted:
                 estimate = converted[candidate.key]
             price = prices.get(candidate.key)
-            # An unknown cost never ranks ahead of a known one; among known costs a plan past its normal-use budget
-            # goes last; between equal costs a route that uses no plan budget first; ties keep configured order,
-            # which puts the job's own provider first.
+            # A plan past its normal-use budget goes after every route within budget, priced or not
+            # (``plan_budget.order_key``); then an unknown cost never ranks ahead of a known one; between equal
+            # costs a route that uses no plan budget first; ties keep configured order, which puts the job's own
+            # provider first.
             over = bool(price is not None and price.over_budget)
             uses = bool(price is not None and price.uses_budget)
-            return (estimate is None, over, group.get(currencies.get(candidate.key), 0) if mixed else 0,
+            return (over, estimate is None, group.get(currencies.get(candidate.key), 0) if mixed else 0,
                     estimate if estimate is not None else 0, uses, candidate.doubt, not candidate.bound,
                     position[candidate.key])
 
@@ -212,7 +219,7 @@ class RoutePolicy:
             estimate = estimates[candidate.key]
             price = prices.get(candidate.key)
             if price is not None and price.in_plan:
-                return 'included'
+                return 'over_budget' if price.over_budget else 'included'
             if estimate is None:
                 return 'reliable' if doubtful else 'unknown_cost'
             if price is None and getattr(candidate.card, 'flat_plan', False):

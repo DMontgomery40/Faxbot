@@ -189,6 +189,7 @@ def test_a_list_of_faxes_is_checked_in_one_transaction_with_the_same_visibility(
     ids = ['second', 'new', 'missing', 'x' * 41, 'document-only', 'new', '']
     expected = _one_by_one(queries, aw.actor, ids)
     assert list(expected) == ['new']
+    monkeypatch.setattr(Q, 'LIST_SECONDS', 60.0)  # the one-transaction claim only; a slow runner must not split it
     opened = _locks(queries, monkeypatch)
     assert queries.visible_jobs(aw.actor, ids) == expected
     assert len(opened) == 1
