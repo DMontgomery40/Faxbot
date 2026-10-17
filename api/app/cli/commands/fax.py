@@ -42,7 +42,8 @@ EVENT_LABELS = {
     'repair_completed': 'Completed directly by the partner after the call broke',
     'repair_failed': 'The partner did not receive the missing pages',
     'engine_requested': 'Fax engine chosen for this fax',
-    'operator_settled': 'Result confirmed by a person'}
+    'operator_settled': 'Result confirmed by a person',
+    'recipient_named': "Recipient's name given with the fax"}
 RECEIVED_NOT_FOUND = 'No received fax you can see has that ID. See faxbot faxes received list --ids.'
 
 
@@ -96,14 +97,28 @@ def _route_text(job, cost):
     return names[-1] + (f" (after {', '.join(names[:-1])})" if len(names) > 1 else '')
 
 
+def problem_text(job, *, details=True):
+    """What went wrong, as Sent shows it. A fax refused while held leads with what happened and says who decided;
+    an API key is named only in a fax's details (``details``), never in a list."""
+    if job.get('settled_cant_tell'):
+        return None
+    refusal = job.get('refusal')
+    if refusal:
+        return ' '.join(part for part in (refusal.get('sentence'),
+                                          refusal.get('decided_by_detail' if details else 'decided_by')) if part)
+    return job.get('error')
+
+
 def _fax_fields(job, route=None):
     """``route``: ('Planned route' or 'Provider', its name), or None until Faxbot has chosen one. The fax's own
     provider setting is not shown: Faxbot picks each fax's route when it sends it."""
-    return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')), ('Status', status_label(job)),
+    return [('Fax ID', job.get('id')), ('To', job.get('to') or job.get('to_number')),
+            # The name typed when the fax was sent, else the number's saved Recipients name.
+            *([('Recipient', job['recipient'])] if job.get('recipient') else []), ('Status', status_label(job)),
             *([('Delivery', delivery_notice(job))] if delivery_notice(job) else []),
             ('Pages', job.get('pages')), *([route] if route and route[1] else []),
             ('Provider fax ID', job.get('provider_sid')),
-            ('Problem', None if job.get('settled_cant_tell') else job.get('error')),
+            ('Problem', problem_text(job)),
             ('Accepted', local_time(job.get('created_at'))), ('Updated', local_time(job.get('updated_at')))]
 
 
@@ -197,9 +212,10 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
                                      "your installation's time zone. Faxbot never holds the fax past it for the "
                                      "recipient's hours or a busy hour."),
          recipient: str = typer.Option(None, '--recipient', metavar='NAME',
-                                       help='The provider or person the fax is for. Before a first fax to a number, '
-                                            'Faxbot warns when the NPI registry lists that number for someone else; '
-                                            'it still sends.'),
+                                       help='The provider or person the fax is for. Faxbot shows it with this fax '
+                                            'wherever it lists the fax. Before a first fax to a number, Faxbot warns '
+                                            'when the NPI registry lists that number for someone else; it still '
+                                            'sends.'),
          patient_record_number: str = typer.Option(
              None, '--patient-record-number', metavar='NUMBER',
              help="Only for a recipient that takes documents into its health records (FHIR): the patient's medical "
@@ -239,6 +255,8 @@ def send(to: str = typer.Argument(..., help='Fax number to send to, for example 
     headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
     content_type = _TYPES.get(file.suffix.lower(), 'application/octet-stream')
     data = {'to': to, 'queue_only': 'true' if queue else 'false'}
+    if recipient:
+        data['recipient_name'] = recipient
     if now:
         data['send_now'] = 'true'
     if by_call:
@@ -371,7 +389,7 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
         if hours:
             out.line(f"Only faxes whose state changed in the last {hours} {'hour' if hours == 1 else 'hours'}.")
         out.table((['Fax ID'] if ids else []) + ['To', 'Status', 'Pages', 'Route', 'Cost', 'Accepted'],
-                  [([job['id']] if ids else []) + [job['to_number'], status_label(job), job['pages'],
+                  [([job['id']] if ids else []) + [_to_text(job), _list_status(job), job['pages'],
                                                    _route_text(job, costs.get(job['id'])),
                                                    cost_amount(costs.get(job['id'])), local_time(job['created_at'])]
                    for job in page['jobs']],
@@ -379,6 +397,18 @@ def jobs_list(status_filter: str = typer.Option(None, '--status', help='Only fax
         if page['total'] > offset + len(page['jobs']):
             out.line(f"Showing {len(page['jobs'])} of {page['total']}. Use --offset to see more.")
     state.out().result(page, human)
+
+
+def _to_text(job):
+    """'*******0123 (Riverside Clinic)': the number, and the recipient's name when Faxbot has one."""
+    number = job.get('to_number') or job.get('to') or '-'
+    return f"{number} ({job['recipient']})" if job.get('recipient') else number
+
+
+def _list_status(job):
+    """The state, and for a fax refused while held what happened and who decided, as Sent's Status cell shows it."""
+    refused = problem_text(job, details=False) if job.get('refusal') else None
+    return f'{status_label(job)}. {refused}' if refused else status_label(job)
 
 
 @jobs.command('get')

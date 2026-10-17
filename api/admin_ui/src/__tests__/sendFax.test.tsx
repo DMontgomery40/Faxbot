@@ -217,6 +217,29 @@ describe('Send keeps the send identity across a reload', () => {
   });
 });
 
+// D24: the recipient name typed on Send belongs to that fax; Sent and the board show it.
+describe('The recipient name typed on Send', () => {
+  beforeEach(() => window.sessionStorage.clear());
+
+  it('goes with the fax, and the next fax starts without it', async () => {
+    const names: (FormDataEntryValue | null)[] = [];
+    server.use(http.post('/fax', async ({ request }) => {
+      names.push((await request.formData()).get('recipient_name'));
+      return HttpResponse.json({ id: 'b'.repeat(32), status: 'queued', delivery_state: 'ready' }, { status: 202 });
+    }));
+    openSend();
+    const name = screen.getByTestId('send-recipient-name') as HTMLInputElement;
+    fireEvent.change(name, { target: { value: '  Faxbeep US test line ' } });
+    await send('+15551234567', document());
+    expect(await screen.findByText('Fax queued for sending.')).toBeTruthy();
+    expect(names).toEqual(['Faxbeep US test line']);
+    expect(name.value).toBe('');
+    await send('+15551234568', document(1_790_000_000_002));
+    await waitFor(() => expect(names).toHaveLength(2));
+    expect(names[1]).toBeNull();
+  });
+});
+
 describe('Send follows the installation country', () => {
   beforeEach(() => window.sessionStorage.clear());
 
