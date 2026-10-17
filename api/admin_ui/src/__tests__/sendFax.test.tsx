@@ -566,8 +566,8 @@ describe('Before sending', () => {
 
   it('says the plan once when the route was chosen because faxes are included in it', async () => {
     const plan = 'Included in your HumbleFax plan ($10 a month)';
-    const basis = `${plan}, so this fax adds nothing to the bill; 5 pages sent on it this month; about 19 seconds on `
-      + 'the line, for typical pages at a typical fax speed.';
+    const basis = `${plan}: this fax adds nothing to the bill; about 19 seconds on the line, for typical pages at a `
+      + "typical fax speed. You've used 5 of the 200 pages you set as this plan's normal-use budget this month.";
     server.use(http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
       display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
       estimated_cost_30_days: [], direct_partner: null, available_routes: [],
@@ -585,10 +585,11 @@ describe('Before sending', () => {
     expect((await screen.findByTestId('send-route-reason', {}, { timeout: 2000 })).textContent).toBe(`${plan}.`);
     fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
     await waitFor(() => expect(screen.getByTestId('send-cost-basis').textContent).toBe(basis), { timeout: 2000 });
-    // The estimate opens with the plan, so the plan is said once, not twice.
+    // The estimate opens with the plan and its cost, so each is said once, not twice or three times (D23).
     expect(screen.getByTestId('send-route').textContent!.split(plan)).toHaveLength(2);
+    expect(screen.getByTestId('send-route').textContent!.match(/nothing/g)).toHaveLength(1);
     expect(screen.queryByTestId('send-route-reason')).toBeNull();
-    expect(screen.getByTestId('send-cost').textContent).toBe('What would this cost? Nothing extra for this fax.');
+    expect(screen.queryByTestId('send-cost')).toBeNull();
   });
 
   it('never moves Send or Urgent when the estimate arrives late', async () => {
@@ -632,6 +633,88 @@ describe('Before sending', () => {
     fireEvent.click(sendButton);
     expect(await screen.findByText(/^Fax queued/)).toBeTruthy();
     expect(urgent.checked).toBe(false);
+  });
+});
+
+// D23 (journey pass 2026-10-15, acceptance deploy-3e8997bc): a 1-page fax to a number HumbleFax would carry while
+// HumbleFax is past its normal-use budget. The panel said "nothing extra" three times beside "this fax would go past
+// that"; it now says the cost once and the budget once, with what Faxbot does about it.
+describe('The estimate tells one story', () => {
+  const plan = 'Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill';
+  const overBasis = `${plan}; about 23 seconds on the line, for typical pages at a typical fax speed. You've used 245 `
+    + "of the 200 pages you set as this plan's normal-use budget this month, so Faxbot sends by your other routes first "
+    + 'when one of them can take the fax.';
+  // HumbleFax first, past its budget because no other route can take the fax; the trunk later in the order.
+  const overBudget = () => http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({
+    number: params.number, display_name: null, notes: null, preferred_route: null, accepts_references: false,
+    version: 0, routes: [], estimated_cost_30_days: [], direct_partner: null,
+    available_routes: [{ route: 'humblefax', label: 'HumbleFax' }, { route: 'sip', label: 'Telnyx' }],
+    recommended_routes: [
+      { route: 'humblefax', label: 'HumbleFax', reason: 'over_budget',
+        explanation: 'Included in your HumbleFax plan, though it is past its normal-use budget this month; Faxbot has '
+          + 'no other reliable route for this fax.',
+        estimated_cost_one_page: null, pages: 1, estimated_cost: null, rate: null, included_in_plan: true,
+        monthly_fee: { currency: 'USD', amount: '10' } },
+      { route: 'sip', label: 'Telnyx', reason: 'unreliable', explanation: 'Recent faxes to this number often failed.',
+        estimated_cost_one_page: { currency: 'USD', amount: '0.005' }, rate: '$0.005 a minute, at least 1 minute',
+        included_in_plan: false, monthly_fee: null }] }));
+  const planRoute = { route: 'humblefax', label: 'HumbleFax', billed_pages: 0, seconds: 23, billed_seconds: null,
+    seconds_to_next_step: null, cost: { currency: 'USD', amount: '0' }, cost_text: null, marginal: true,
+    headline: 'Nothing extra for this fax.', basis: overBasis, finish_sentence: null, time_note: null };
+  const pageCount = () => http.get('/routing/predict', () => HttpResponse.json({ to: '+19725550123',
+    number_class: 'local', number_class_text: 'a local number', pages: 1, layout: 'normal', resolution: 'fine',
+    sentence: '', note: '', routes: [planRoute] }));
+  // POST /routing/predict as the server words a plan's measured choice (selections.sentence, phase preview).
+  const measured = (runnerUp: object | null, sentence: string) => http.post('/routing/predict', () => HttpResponse.json({
+    to: '+19725550123', number_class: 'local', number_class_text: 'a local number', pages: 1, layout: 'normal',
+    resolution: 'fine', sentence, note: '', measured: { MMR: 82000 }, measured_sentence: null, jbig_measured: false,
+    routes: [{ ...planRoute, cost: null, coding: null, layout: 'normal', sent_pages: 1, original_pages: 1 }],
+    selected: { route: 'humblefax', label: 'HumbleFax', layout: 'normal', rendering: 'as_is', coding: null,
+      original_pages: 1, sent_pages: 1, cost: null, in_plan: true, measured: true },
+    runner_up: runnerUp, compared: runnerUp ? 2 : 1, held: false, approximate: false }));
+  const fill = () => {
+    fireEvent.change(screen.getByRole('textbox', { name: /Destination Number/ }), { target: { value: '+19725550123' } });
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+  };
+
+  it('says the cost once and the budget once for the measured choice, as acceptance showed it', async () => {
+    server.use(overBudget(), pageCount(), measured(null, 'Would go through HumbleFax as 1 page: nothing extra.'));
+    openSend();
+    fill();
+    await waitFor(() => expect(screen.getByTestId('send-cost-basis').textContent).toBe(overBasis), { timeout: 3000 });
+    const panel = screen.getByTestId('send-route').textContent!;
+    expect(panel).toContain('Faxbot will send it through HumbleFax.');
+    expect(panel.match(/nothing/gi)).toHaveLength(1);
+    expect(panel).not.toContain('would go past');
+    expect(screen.queryByTestId('send-plan')).toBeNull();
+    expect(screen.queryByTestId('send-cost')).toBeNull();
+    // D27 on the same screen: the trunk is only later in the order, so the engine is worded as that case.
+    expect(screen.getByTestId('send-engine').textContent).toContain('Fax engine, if it goes over your phone line');
+  });
+
+  it('keeps the measured choice when it compares the plan with a priced route', async () => {
+    const sentence = 'Would go through HumbleFax as 1 page: nothing extra instead of $0.005 through Telnyx as 1 page.';
+    server.use(overBudget(), pageCount(), measured({ route: 'sip', label: 'Telnyx', layout: 'normal',
+      rendering: 'as_is', coding: 'MR', original_pages: 1, sent_pages: 1, cost: { currency: 'USD', amount: '0.005' },
+      in_plan: false, measured: true }, sentence));
+    openSend();
+    fill();
+    await waitFor(() => expect(screen.getByTestId('send-plan').textContent).toBe(sentence), { timeout: 3000 });
+    expect(screen.getByTestId('send-cost-basis').textContent).toBe(overBasis);
+    expect(screen.queryByTestId('send-cost')).toBeNull();
+  });
+
+  it('says the cost once and the budget once from the page count when the document is not measured', async () => {
+    server.use(overBudget(), pageCount(), http.post('/routing/predict', () =>
+      HttpResponse.json({ detail: 'Synthetic refusal' }, { status: 400 })));
+    openSend();
+    fill();
+    await waitFor(() => expect(screen.getByTestId('send-cost-basis').textContent).toBe(overBasis), { timeout: 3000 });
+    const panel = screen.getByTestId('send-route').textContent!;
+    expect(panel.match(/nothing/gi)).toHaveLength(1);
+    expect(panel.split('Included in your HumbleFax plan')).toHaveLength(2);
+    expect(screen.queryByTestId('send-route-reason')).toBeNull();
+    expect(screen.queryByTestId('send-cost')).toBeNull();
   });
 });
 
@@ -799,6 +882,81 @@ describe('The fax engine for one fax', () => {
     expect(textAbove()).toBe(before);
     expect(Boolean(sendButton.compareDocumentPosition(screen.getByTestId('send-cost'))
       & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+});
+
+// D27 (journey pass 2026-10-15): the engine only matters for a fax over your phone line (a trunk), so the choice follows
+// the routes this fax would try, never merely whether a trunk is set up.
+describe('The fax engine follows the route the fax takes', () => {
+  const destination = (recommended: Array<[string, string]>, available: string[]) =>
+    http.get('/routing/destinations/:number', ({ params }) => HttpResponse.json({ number: params.number,
+      display_name: null, notes: null, preferred_route: null, accepts_references: false, version: 0, routes: [],
+      estimated_cost_30_days: [], direct_partner: null,
+      available_routes: available.map((route) => ({ route, label: route })),
+      recommended_routes: recommended.map(([route, label], index) => ({ route, label,
+        reason: index ? 'alternative' : 'included', explanation: index ? 'Used if the routes above it are unavailable.'
+          : `Included in your ${label} plan.`, estimated_cost_one_page: null, rate: null,
+        included_in_plan: !index, monthly_fee: null })) }));
+  const numberBox = () => screen.getByRole('textbox', { name: /Destination Number/ });
+  const fallbackHint = 'Faxbot plans to send it through HumbleFax. This applies only if it goes over your phone line '
+    + 'instead.';
+
+  it('leaves it out when the fax goes by a fax service and no trunk is in its order, though a trunk is set up', async () => {
+    server.use(destination([['humblefax', 'HumbleFax']], ['humblefax', 'sip']));
+    const posted: Array<string | null> = [];
+    server.use(http.post('/fax', async ({ request }) => {
+      posted.push((await request.formData()).get('engine') as string | null);
+      return HttpResponse.json({ id: 'b'.repeat(32), status: 'queued', delivery_state: 'ready' }, { status: 202 });
+    }));
+    openSend();
+    fireEvent.change(numberBox(), { target: { value: '+19725550123' } });
+    await waitFor(() => expect(screen.getByTestId('send-route').textContent).toContain('through HumbleFax.'),
+      { timeout: 2000 });
+    expect(screen.queryByTestId('send-engine-pending')).toBeNull();
+    expect(screen.queryByTestId('send-engine')).toBeNull();
+    await send('+19725550123', document());
+    await waitFor(() => expect(posted).toEqual([null]));
+  });
+
+  it('words it as the phone line case when the trunk is only a fallback, and still asks the estimate again', async () => {
+    const asked: Array<string | null> = [];
+    server.use(destination([['humblefax', 'HumbleFax'], ['sip', 'Telnyx']], ['humblefax', 'sip']),
+      http.post('/routing/predict', async ({ request }) => {
+        asked.push((await request.formData()).get('engine') as string | null);
+        return HttpResponse.json({ detail: 'Synthetic refusal' }, { status: 400 });
+      }));
+    openSend();
+    fireEvent.change(numberBox(), { target: { value: '+19725550123' } });
+    const control = await screen.findByTestId('send-engine', {}, { timeout: 2000 });
+    expect(control.textContent).toContain('Fax engine, if it goes over your phone line');
+    expect(screen.getByTestId('send-engine-hint').textContent).toBe(fallbackHint);
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(asked).toEqual([null]), { timeout: 3000 });
+    fireEvent.mouseDown(within(control).getByRole('combobox'));
+    fireEvent.click(await screen.findByRole('option', { name: /^Built-in engine/ }));
+    await waitFor(() => expect(asked).toEqual([null, 'builtin']), { timeout: 3000 });
+    // The hint stays the phone line case; the pick is shown in the field.
+    expect(screen.getByTestId('send-engine-hint').textContent).toBe(fallbackHint);
+    expect(screen.getByTestId('send-engine').textContent).toContain('Built-in engine');
+  });
+
+  it('words it plainly once the measured choice goes over the trunk', async () => {
+    server.use(destination([['humblefax', 'HumbleFax'], ['sip', 'Telnyx']], ['humblefax', 'sip']), pageCountPrediction(),
+      http.post('/routing/predict', () => HttpResponse.json({
+        ...documentAnswer('+19725550123', '0.005'), sentence: 'Would go through Telnyx as 2 pages: about $0.005.',
+        selected: { route: 'sip', label: 'Telnyx', layout: 'normal', rendering: 'as_is', coding: 'MR', original_pages: 2,
+          sent_pages: 2, cost: { currency: 'USD', amount: '0.005' }, in_plan: false, measured: true },
+        runner_up: null, compared: 2, held: false, approximate: false })));
+    openSend();
+    fireEvent.change(numberBox(), { target: { value: '+19725550123' } });
+    expect((await screen.findByTestId('send-engine', {}, { timeout: 2000 })).textContent)
+      .toContain('Fax engine, if it goes over your phone line');
+    fireEvent.change(window.document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [twoPages()] } });
+    await waitFor(() => expect(screen.getByTestId('send-plan').textContent)
+      .toBe('Would go through Telnyx as 2 pages: about $0.005.'), { timeout: 3000 });
+    expect(screen.getByTestId('send-engine').textContent).not.toContain('if it goes over your phone line');
+    expect(screen.getByTestId('send-engine-hint').textContent)
+      .toBe(ENGINE_CHOICES.find((choice) => choice.value === 'auto')!.hint);
   });
 });
 

@@ -222,7 +222,32 @@ def test_a_synthetic_month_sends_toll_free_by_telnyx_and_the_rest_by_humblefax_u
     assert route_order(routes, settings, TOLL_FREE, datetime(2026, 11, 1, 9)) == ['sip', 'humblefax', 'sinch']
     # The predictor reads the same period and budget.
     facts = facts_for('humblefax', LAB, now=datetime(2026, 10, 31, 12), engine=routes.engine, values=settings)
-    assert (facts.plan.pages, facts.plan.faxes, facts.plan.page_budget) == (30, 10, 30)
+    assert (facts.plan.pages, facts.plan.faxes, facts.plan.page_budget, facts.plan.fax_budget) == (30, 10, 30, None)
+    # D23: its estimate says what the order above does with a plan past its budget, and says the cost once.
+    basis = predict_from(facts, Shape(3, None, 'standard', 'normal')).basis
+    assert basis.startswith('Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; ')
+    assert basis.endswith("You've used 30 of the 30 pages you set as this plan's normal-use budget this month, so "
+                          'Faxbot sends by your other routes first when one of them can take the fax.')
+    november = facts_for('humblefax', LAB, now=datetime(2026, 11, 1, 9), engine=routes.engine, values=settings)
+    assert predict_from(november, Shape(3, None, 'standard', 'normal')).basis.endswith(
+        "You've used 0 of the 30 pages you set as this plan's normal-use budget this month.")
+
+
+def test_the_estimate_and_the_routes_order_agree_on_when_a_plan_is_past_its_budget():
+    """D23: ``use_sentence`` (the estimate) says Faxbot sends by other routes first exactly when ``marginal`` puts the
+    plan after them (``over_budget``), for pages and for faxes, before this fax, with it, and at the edge."""
+    period = billing_period(OCTOBER, 1)
+    for page_budget, fax_budget in ((200, 50), (200, None), (None, 50)):
+        budget = Budget('humblefax', 'HumbleFax', page_budget, fax_budget, 1, flat=True,
+                        monthly_fee_micros=10_000_000)
+        for used_pages in (0, 150, 198, 199, 200, 245):
+            for used_faxes in (0, 49, 50, 51):
+                left = plan_budget._left(budget, period, Usage(used_faxes, used_pages, 0, 0))
+                for pages in (1, 2, 3):
+                    said = plan_budget.use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages)
+                    other_routes_first = 'Faxbot sends by your other routes first' in said
+                    assert other_routes_first == marginal(left, pages).over_budget, (
+                        page_budget, fax_budget, used_pages, used_faxes, pages, said)
 
 
 def test_uncertain_sends_and_received_faxes_count_and_failed_ones_do_not(plans):

@@ -817,13 +817,13 @@ def budget_left(plan, now=None, *, engine=None, values=None, path=None):
 
 
 def plan_use(engine, route_key, *, now, values=None):
-    """The predictor's ``PlanUse`` for a route: what it carried this billing period, and its page budget."""
+    """The predictor's ``PlanUse`` for a route: what it carried this billing period, and its page and fax budget."""
     from .predict import PlanUse
     left = budget_left(route_key, now, engine=engine, values=values)
     if left is None:
         return None
     return PlanUse(pages=left.used.pages, faxes=left.used.faxes, page_budget=left.budget.pages,
-                   minutes=left.used.minutes if left.budget.included_minutes else None)
+                   minutes=left.used.minutes if left.budget.included_minutes else None, fax_budget=left.budget.faxes)
 
 
 # One more fax ---------------------------------------------------------------------------------------
@@ -911,6 +911,36 @@ def marginal(left, pages, prediction=None):
     return Marginal(Money(0, currency), False, True,
                     f"Included in your {name} plan; {' and '.join(parts)} of your normal-use budget will be left "
                     f'until {again}.')
+
+
+def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages):
+    """The estimate's sentence for a flat plan's normal-use budget (``predict``): how much of it is used this month
+    and, once this fax of ``pages`` pages is past it, what Faxbot does about it. Past it is ``marginal``'s test (the
+    pages used and this fax's more than the page budget, or the fax budget already used), and Faxbot then sends by
+    every other reliable route first (``order_key``); going past costs nothing, which the estimate says before this.
+    None without a count of the pages."""
+    if used_pages is None:
+        return None
+    pages = pages if isinstance(pages, int) and pages > 0 else 1
+    if page_budget is None and fax_budget is None:
+        return (f"You've used {_plural(used_pages, 'page')} on this plan this month, and you set no normal-use budget "
+                'for it.')
+    parts = []
+    if page_budget is not None:
+        parts.append(f'{_number(used_pages)} of the {_plural(page_budget, "page")}')
+    if fax_budget is not None and used_faxes is not None:
+        parts.append(f'{_number(used_faxes)} of the {_plural(fax_budget, "fax", "faxes")}')
+    if not parts:
+        return None
+    sentence = f"You've used {' and '.join(parts)} you set as this plan's normal-use budget this month"
+    past = (page_budget is not None and used_pages >= page_budget) or (
+        fax_budget is not None and used_faxes is not None and used_faxes >= fax_budget)
+    if not past and page_budget is not None and used_pages + pages > page_budget:
+        sentence += ', and this fax would go past it'
+        past = True
+    if not past:
+        return sentence + '.'
+    return sentence + ', so Faxbot sends by your other routes first when one of them can take the fax.'
 
 
 # The burn-down -------------------------------------------------------------------------------------------
