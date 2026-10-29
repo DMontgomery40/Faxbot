@@ -106,6 +106,35 @@ def test_an_uncertain_fax_shows_its_checks_and_a_person_settles_it_sending_it_ag
     assert [event['kind'] for event in events] == ['opened', 'drafted', 'query_sent', 'settled']
 
 
+@pytest.mark.parametrize('outcome, state', [('not_delivered', 'failed'), ('delivered', 'success')])
+def test_settling_without_resending_updates_sent_status_and_releases_capacity(client, outcome, state):
+    """#86: the public settle action ends review even when no new fax is requested."""
+    from app.capacity import Capacity
+    from app.cli.commands.fax import delivery_notice, status_label
+
+    job = uncertain(client)
+    [item] = client.get(f'/certainty/faxes/{job}', headers=ADMIN).json()['items']
+    before = fax_ids()
+    capacity = Capacity(engine())
+    with engine().connect() as connection:
+        assert connection.execute(capacity.holds(datetime.utcnow())).all()
+    shown = client.get(f'/admin/fax-jobs/{job}', headers=ADMIN).json()
+    assert status_label(shown) == 'Needs review'
+
+    settled = client.post(f"/certainty/items/{item['id']}/settle", headers=ADMIN, json={
+        'outcome': outcome, 'reason': 'The recipient checked the tray', 'send_again': False,
+        'version': item['version']})
+    assert settled.status_code == 200, settled.text
+    assert settled.json()['outcome'] == outcome and settled.json()['state'] == 'settled'
+    shown = client.get(f'/admin/fax-jobs/{job}', headers=ADMIN).json()
+    assert shown['delivery_state'] == state and shown['status'] == state
+    assert status_label(shown) == ('Failed' if state == 'failed' else 'Delivered')
+    assert shown['reconciliation_reason'] is None and delivery_notice(shown) is None
+    with engine().connect() as connection:
+        assert connection.execute(capacity.holds(datetime.utcnow())).all() == []
+    assert fax_ids() == before
+
+
 def test_people_without_access_see_nothing_and_settings_need_settings_permissions(client):
     job = uncertain(client)
     reader = client.post('/admin/api-keys', headers=ADMIN, json={'name': 'synthetic', 'scopes': ['inbound:read']})
