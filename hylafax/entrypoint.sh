@@ -30,7 +30,7 @@ status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
 # How often the running engine checks that its daemons and lines are whole. Each check asks the processes it
 # started whether they are alive (kill -0) and reads each line's state from its status file, starting no
-# process; pgrep and faxstat run only when that finds something wrong. On a busy machine the processes a
+# process; pgrep runs only when that finds something wrong. On a busy machine the processes a
 # check starts compete with the modems and the T.38 gateway in a call (a receive failed that way, 10 October
 # 2026), so the check is cheap and not too often.
 liveness_seconds=${FAXBOT_ENGINE_LIVENESS_SECONDS:-25}
@@ -352,8 +352,10 @@ done
 # A line's state as its faxgetty reports it ("Running and idle", "Receiving facsimile", "Waiting for modem
 # to come free" ...), and whether a state is a call.
 line_state() {
-  # faxstat ends its lines with CR LF.
-  faxstat -s 2>/dev/null | tr -d '\r' | sed -n "s/^Modem ttyIAX$1 ([^)]*): //p" | head -1
+  # faxgetty maintains the same status file that faxstat reads. Set the caller's
+  # line_status directly: command substitution would fork even for a builtin read.
+  line_status=''
+  { IFS= read -r line_status < "$spool/status/ttyIAX$1"; } 2>/dev/null || true
 }
 in_call() {
   case $1 in *[Ss]ending*|*[Rr]eceiving*|*[Aa]nswering*|*[Dd]ialing*) return 0 ;; esac
@@ -366,7 +368,7 @@ in_call() {
 # is one. A line that is not ready counts after $unready_seconds (it may be setting its modem up).
 declare -A unready_since=()
 check_lines() {
-  local number count state now
+  local number count line_status now
   now=$(date +%s)
   problem=''
   for number in $(seq 1 "$lines"); do
@@ -376,13 +378,13 @@ check_lines() {
       || { problem="line $number is not on its port $((4569 + number))"; return 0; }
     [ -e "$root/dev/ttyIAX$number" ] || { problem="line $number has no device"; return 0; }
     pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { problem="line $number has no faxgetty"; return 0; }
-    state=$(line_state "$number")
-    if [ "$state" = 'Running and idle' ] || in_call "$state"; then
+    line_state "$number"
+    if [ "$line_status" = 'Running and idle' ] || in_call "$line_status"; then
       unset "unready_since[$number]"
     else
       unready_since[$number]=${unready_since[$number]:-$now}
       if (( now - unready_since[$number] >= unready_seconds )); then
-        problem="line $number is not ready (${state:-no state})"
+        problem="line $number is not ready (${line_status:-no state})"
         return 0
       fi
     fi
@@ -403,10 +405,10 @@ fi
 # Asterisk sends calls to a line as soon as its modem registers, but a call is answered only once faxgetty
 # has set the modem up: the engine says it is running only when every line is ready (or already in a call).
 lines_ready() {
-  local number state
+  local number line_status
   for number in $(seq 1 "$lines"); do
-    state=$(line_state "$number")
-    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+    line_state "$number"
+    [ "$line_status" = 'Running and idle' ] || in_call "$line_status" || return 1
   done
   return 0
 }
@@ -452,15 +454,14 @@ alive() {
 # alive, each line has its device, and each line's faxgetty says (in the status file faxstat reads) that it
 # is ready for a call or in one. Fails at the first thing that looks wrong; the full checks then say what.
 looks_whole() {
-  local name number state
+  local name number line_status
   for name in "${!watched[@]}"; do
     alive "${watched[$name]}" || return 1
   done
   for ((number = 1; number <= lines; number++)); do
     [ -e "$root/dev/ttyIAX$number" ] || return 1
-    state=''
-    { read -r state < "$spool/status/ttyIAX$number"; } 2>/dev/null || true
-    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+    line_state "$number"
+    [ "$line_status" = 'Running and idle' ] || in_call "$line_status" || return 1
   done
   return 0
 }
