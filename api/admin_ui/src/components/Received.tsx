@@ -355,18 +355,24 @@ export default function Received({
       setSelected((current) => (current?.id === found.id ? current : found));
       return;
     }
-    if (!hasLoaded || work === null || recordAsked.current === itemId) return;
+    if (!hasLoaded || recordAsked.current === itemId) return;
     recordAsked.current = itemId;
-    let current = true;
-    client.getWork(itemId).then((item) => {
-      if (!current) return;
+    // Without the owners list there is no document to open here.
+    if (!canWork) {
+      setRecordMissing(true);
+      return;
+    }
+    // The answer counts while the address still names this document; a re-render
+    // meanwhile (a fresh callback, the list read again) must not drop it.
+    const asked = itemId;
+    client.getWork(asked).then((item) => {
+      if (recordAsked.current !== asked) return;
       setRecordMissing(false);
       setSelected(item);
     }).catch(() => {
-      if (current) setRecordMissing(true);
+      if (recordAsked.current === asked) setRecordMissing(true);
     });
-    return () => { current = false; };
-  }, [client, hasLoaded, itemId, onItemChange, work]);
+  }, [canWork, client, hasLoaded, itemId, onItemChange, work]);
 
   const filterCount = (value: ReceivedFilter): number | null => {
     if (value === 'mine') return counts?.mine ?? null;

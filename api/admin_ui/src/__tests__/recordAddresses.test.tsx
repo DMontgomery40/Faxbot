@@ -122,6 +122,34 @@ describe('Received record addresses', () => {
       itemId="someone-elses-item" onItemChange={vi.fn()} recordHref={(id) => `#/faxes/received?item=${id}`} />);
     expect(await screen.findByTestId('received-fax-not-found')).toBeTruthy();
   });
+
+  it('shows the same safe state to someone without the owners list who opens a copied link', async () => {
+    serveReceived();
+    render(<Received client={client()} inboundEnabled permissions={new Set()} canWork={false}
+      itemId="open-item" onItemChange={vi.fn()} recordHref={(id) => `#/faxes/received?item=${id}`} />);
+    expect(await screen.findByTestId('received-fax-not-found')).toBeTruthy();
+    expect(screen.queryByText('History')).toBeNull();
+  });
+
+  it('opens a document the list does not reach even when the page re-renders while it loads', async () => {
+    serveReceived();
+    const older = workItem({ id: 'older-item', inbound_fax_id: 'fax-older', state: 'done', state_key: 'done' });
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => { answer = resolve; });
+    server.use(http.get('/work/older-item', async () => {
+      await answered;
+      return HttpResponse.json(older);
+    }));
+    const props = { client: client(), inboundEnabled: true, permissions: new Set<string>(), itemId: 'older-item',
+      recordHref: (id: string) => `#/faxes/received?item=${id}` };
+    const { rerender } = render(<Received {...props} onItemChange={vi.fn()} />);
+    await screen.findByRole('link', { name: /9999/ });
+    // The console shell hands the page a fresh callback on each of its renders.
+    rerender(<Received {...props} onItemChange={vi.fn()} />);
+    answer();
+    expect(await screen.findByText('History')).toBeTruthy();
+    expect(screen.queryByTestId('received-fax-not-found')).toBeNull();
+  });
 });
 
 // -- Expected ------------------------------------------------------------------------------------
