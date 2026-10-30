@@ -221,6 +221,8 @@ export interface PageContext {
   // The address's query, such as ?mine=1 on Keys & phones.
   params: URLSearchParams;
   navigate: (destination: AdminDestination) => void;
+  // The same address change without a history entry, for typing in a search box.
+  replace?: (destination: AdminDestination) => void;
   goHome: () => void;
   // A fax Send just queued, opened in Sent when the person follows it.
   jobToOpen: string | null;
@@ -301,6 +303,26 @@ function settingsPage(sections: SettingsSection[], title?: string) {
   );
 }
 
+// Address query helpers: filters and the open record ride together, so opening a
+// record never loses the filtered list under it, and changing a filter closes it.
+function withParams(params: URLSearchParams, updates: Record<string, string | null>): URLSearchParams {
+  const next = new URLSearchParams(params);
+  for (const [key, value] of Object.entries(updates)) {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  }
+  return next;
+}
+
+function destinationWith(areaPage: string, params: URLSearchParams): AdminDestination {
+  const query = params.toString();
+  return (query ? `${areaPage}?${query}` : areaPage) as AdminDestination;
+}
+
+function hrefWith(area: AreaId, page: string, params: URLSearchParams, key: string, value: string): string {
+  return pageAddress(area, page, withParams(params, { [key]: value }));
+}
+
 // Send a fax, from the pages that offer it, for people who may send.
 function sendFax(ctx: PageContext): (() => void) | undefined {
   return ctx.context.navigation.send ? () => ctx.navigate('faxes/send') : undefined;
@@ -367,6 +389,9 @@ export const NAVIGATION: NavArea[] = [
             canList={ctx.context.navigation.inbox} canWork={Boolean(ctx.context.navigation.work)}
             show={readFilter(ctx.params.get('show'))}
             onShowChange={(next) => ctx.navigate(next === 'all' ? 'faxes/received' : `faxes/received?show=${next}`)}
+            itemId={ctx.params.get('item')}
+            onItemChange={(itemId) => ctx.navigate(destinationWith('faxes/received', withParams(ctx.params, { item: itemId })))}
+            recordHref={(itemId) => hrefWith('faxes', 'received', ctx.params, 'item', itemId)}
             onSendFax={sendFax(ctx)} onOpenSentFax={ctx.openJob} />
           {ctx.permissions.has('settings:read') && <DigitalReceived client={ctx.client} />}
         </>) },
@@ -375,12 +400,14 @@ export const NAVIGATION: NavArea[] = [
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate}
           status={readSentStatus(ctx.params.get('status'))} heldOnly={ctx.params.get('show') === 'held'}
           sinceHours={readSentSince(ctx.params.get('since'))}
-          onStatusChange={(next) => ctx.navigate(next ? `faxes/sent?status=${next}` : 'faxes/sent')}
-          onShowAnyTime={() => {
-            const status = readSentStatus(ctx.params.get('status'));
-            ctx.navigate(status ? `faxes/sent?status=${status}` : 'faxes/sent');
-          }}
-          onShowAll={() => ctx.navigate('faxes/sent')} /> },
+          onStatusChange={(next) => ctx.navigate(destinationWith('faxes/sent',
+            withParams(ctx.params, { status: next || null, show: null, fax: null })))}
+          onShowAnyTime={() => ctx.navigate(destinationWith('faxes/sent',
+            withParams(ctx.params, { since: null, fax: null })))}
+          onShowAll={() => ctx.navigate('faxes/sent')}
+          faxId={ctx.params.get('fax')}
+          onFaxChange={(faxId) => ctx.navigate(destinationWith('faxes/sent', withParams(ctx.params, { fax: faxId })))}
+          recordHref={(faxId) => hrefWith('faxes', 'sent', ctx.params, 'fax', faxId)} /> },
       // Listed at the top of the panel as a persistent action rather than among the Faxes pages.
       { id: 'send', label: 'Send a fax', icon: <SendIcon />, gate: { navigation: 'send' }, refreshContext: true, inPanel: false,
         render: (ctx) => <SendFax client={ctx.client} config={ctx.adminConfig} configLoading={ctx.contextLoading}
@@ -391,7 +418,14 @@ export const NAVIGATION: NavArea[] = [
         render: (ctx) => <ExpectedFaxes client={ctx.client} canImport={ctx.permissions.has('work:import')}
           canOutage={ctx.permissions.has('work:import') || ctx.permissions.has('settings:write')}
           show={readExpectedView(ctx.params.get('show'))}
-          onShowChange={(next) => ctx.navigate(next === 'waiting' ? 'faxes/expected' : `faxes/expected?show=${next}`)} /> },
+          onShowChange={(next) => ctx.navigate(destinationWith('faxes/expected',
+            withParams(ctx.params, { show: next === 'waiting' ? null : next, expected: null })))}
+          code={ctx.params.get('expected')}
+          onCodeChange={(code) => ctx.navigate(destinationWith('faxes/expected', withParams(ctx.params, { expected: code })))}
+          recordHref={(code) => hrefWith('faxes', 'expected', ctx.params, 'expected', code)}
+          search={ctx.params.get('q') ?? ''}
+          onSearchChange={(search) => (ctx.replace ?? ctx.navigate)(destinationWith('faxes/expected',
+            withParams(ctx.params, { q: search || null })))} /> },
       // Registered forms: import, fill in and send; partners get only the values (faxbot forms).
       // Reading forms needs settings:read or fax:send, so a fax operator can fill one in and send it.
       { id: 'forms', label: 'Forms', icon: <DescriptionIcon />, gate: { anyOf: ['settings:read', 'fax:send'] },
@@ -487,7 +521,10 @@ export const NAVIGATION: NavArea[] = [
     id: 'recipients', label: 'Recipients', icon: <ContactsIcon />,
     pages: [
       { id: 'list', label: 'Recipients', icon: <ContactPhoneIcon />, gate: { anyOf: SETTINGS_READ },
-        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="numbers" /> },
+        render: (ctx) => <DeliveryRoutes client={ctx.client} canWrite={ctx.permissions.has('settings:write')} section="numbers"
+          recipient={ctx.params.get('recipient')}
+          onRecipientChange={(number) => ctx.navigate(destinationWith('recipients/list', withParams(ctx.params, { recipient: number })))}
+          recordHref={(number) => hrefWith('recipients', 'list', ctx.params, 'recipient', number)} /> },
       { id: 'partners', label: 'Partners', icon: <HandshakeIcon />, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => (
           <>

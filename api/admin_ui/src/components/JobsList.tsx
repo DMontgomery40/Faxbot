@@ -53,6 +53,7 @@ import { formatServerTime } from '../api/time';
 import type { AdminDestination } from '../navigation';
 import { FaxRequestedByItem } from './delivery/Connectors';
 import { CompactOutboundBoard } from './overview/OutboundBoard';
+import RecordLink from './common/RecordLink';
 
 
 interface JobsListProps {
@@ -74,6 +75,12 @@ interface JobsListProps {
   // Only faxes whose state changed in the last this many hours (?since=24h), and a way to show any time.
   sinceHours?: number | null;
   onShowAnyTime?: () => void;
+  // The fax named in the page address (?fax=…), and a way to keep it there, so a
+  // copied link, a reload or Back reopens the same fax over the same filtered list.
+  faxId?: string | null;
+  onFaxChange?: (faxId: string | null) => void;
+  // A fax's own address, for the row link's href (copy link, new tab).
+  recordHref?: (faxId: string) => string;
 }
 
 // Hours from the page address ('24h'), or null for any time.
@@ -276,7 +283,7 @@ export function routeText(backend: string, cost?: FaxCost | null): string {
 }
 
 function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, onNavigate, status = '', onStatusChange,
-  heldOnly = false, onShowAll, sinceHours = null, onShowAnyTime }: JobsListProps) {
+  heldOnly = false, onShowAll, sinceHours = null, onShowAnyTime, faxId, onFaxChange, recordHref }: JobsListProps) {
   const [jobs, setJobs] = useState<FaxJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -426,7 +433,10 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
   useEffect(() => {
     if (!openJobId) return;
     onOpened?.();
-    void handleJobClick(openJobId);
+    if (onFaxChange) onFaxChange(openJobId);
+    else void handleJobClick(openJobId);
+    // handleJobClick reads refs and state setters only; the fax to open is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openJobId]);
 
   const handleCloseJobDetail = () => {
@@ -442,6 +452,29 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
     setProviderIdDraft('');
     setOriginalAccountConfirmed(false);
     setReviewRequired(true);
+  };
+
+  // The fax named in the address is the one open. Without an address to keep it in,
+  // the row link opens it here directly.
+  const openRecord = (jobId: string) => {
+    if (onFaxChange) onFaxChange(jobId);
+    else void handleJobClick(jobId);
+  };
+  const addressFax = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!onFaxChange) return;
+    // Only the address changing reopens or closes the details; a fresh callback
+    // identity on a shell re-render must not reload the fax already open.
+    if (addressFax.current === (faxId ?? null)) return;
+    addressFax.current = faxId ?? null;
+    if (faxId) void handleJobClick(faxId);
+    else handleCloseJobDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faxId, onFaxChange]);
+
+  const closeRecord = () => {
+    handleCloseJobDetail();
+    onFaxChange?.(null);
   };
 
   const handleReloadDelivery = async () => {
@@ -656,21 +689,20 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                 </TableHead>
                 <TableBody>
                   {jobs.map((job) => (
-                    <TableRow 
-                      key={job.id} 
-                      hover 
-                      sx={{ cursor: 'pointer' }}
-                      onClick={() => handleJobClick(job.id)}
-                    >
+                    <TableRow key={job.id} hover>
                       <TableCell>
-                        {/* The name typed when it was sent, else the saved Recipients name, above the number. */}
-                        {job.recipient && <Typography variant="body2" data-testid="job-recipient"
-                          sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>{job.recipient}</Typography>}
-                        <Typography variant={job.recipient ? 'caption' : 'body2'} fontFamily="monospace"
-                          color={job.recipient ? 'text.secondary' : undefined}
-                          sx={{ fontSize: { xs: '0.7rem', sm: job.recipient ? '0.75rem' : '0.875rem' } }}>
-                          {job.to_number}
-                        </Typography>
+                        {/* The name typed when it was sent, else the saved Recipients name, above the number;
+                            both open the fax's details at its own address. */}
+                        <RecordLink href={recordHref?.(job.id)} onOpen={() => openRecord(job.id)}
+                          ariaLabel={`Details for the fax to ${job.recipient ? `${job.recipient}, ` : ''}${job.to_number}`}>
+                          {job.recipient && <Typography component="span" display="block" variant="body2" data-testid="job-recipient"
+                            sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>{job.recipient}</Typography>}
+                          <Typography component="span" display="block" variant={job.recipient ? 'caption' : 'body2'} fontFamily="monospace"
+                            color={job.recipient ? 'text.secondary' : undefined}
+                            sx={{ fontSize: { xs: '0.7rem', sm: job.recipient ? '0.75rem' : '0.875rem' } }}>
+                            {job.to_number}
+                          </Typography>
+                        </RecordLink>
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -751,7 +783,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
       </>)}
 
       {/* Job Detail Modal */}
-      <Dialog open={jobDetailOpen} onClose={handleCloseJobDetail} maxWidth="md" fullWidth aria-labelledby="fax-job-details-title">
+      <Dialog open={jobDetailOpen} onClose={closeRecord} maxWidth="md" fullWidth aria-labelledby="fax-job-details-title">
         <DialogTitle id="fax-job-details-title">
           Fax details
         </DialogTitle>
@@ -1043,7 +1075,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
           {selectedJob && <Button onClick={handleDownloadPdf} disabled={detailBusy}>Download PDF</Button>}
           {selectedJob && <Button onClick={handleRefreshStatus} disabled={detailBusy}>Refresh status</Button>}
           <Button onClick={handleReloadDelivery} disabled={detailBusy}>Reload</Button>
-          <Button onClick={handleCloseJobDetail}>Close</Button>
+          <Button onClick={closeRecord}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>
