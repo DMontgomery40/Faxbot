@@ -105,14 +105,16 @@ def invoices_show(invoice_id: str = typer.Argument(..., help="Invoice ID, from '
 
     def human(out):
         _invoice_lines(out, result)
+        out.line(f"Console: {api.url}/admin/ui/#/savings/invoices?invoice={segment(result['id'])}")
         if result.get('note'):
             out.line(f"Note: {result['note']}")
         if result.get('file'):
             out.line(f"File: {text(result['file'].get('name'))}" + (f', saved to {save}.' if save else ''))
         if len(result.get('history', [])) > 1:
-            out.table(['Version', 'Total', 'Entered by', 'Entered'],
-                      [[entry['version'], money([entry['total']]), text(entry.get('entered_by')),
+            out.table(['Invoice ID', 'Version', 'Total', 'Entered by', 'Entered'],
+                      [[entry['id'], entry['version'], money([entry['total']]), text(entry.get('entered_by')),
                         local_time(entry['entered_at'])] for entry in result['history']])
+            out.line("Open an earlier total with 'faxbot savings invoices show INVOICE_ID'.")
     state.out().result(result, human)
 
 

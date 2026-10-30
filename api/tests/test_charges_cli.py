@@ -38,6 +38,7 @@ def test_an_invoice_is_entered_with_its_file_listed_and_its_file_saved(cli, tmp_
     saved = tmp_path / 'copy.pdf'
     shown = cli('costs', 'invoices', 'show', entry['id'], '--save-file', saved)
     assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    assert f"/admin/ui/#/savings/invoices?invoice={entry['id']}" in shown.stdout
     assert saved.read_bytes() == PDF and f'saved to {saved}' in shown.stdout
     again = cli('costs', 'invoices', 'show', entry['id'], '--save-file', saved)
     assert again.exit_code != 0 and 'already exists' in again.stdout + again.stderr
@@ -93,3 +94,14 @@ def test_costs_spending_has_a_received_faxes_line_per_provider(cli):
     assert len(phaxio) == 1 and phaxio[0].endswith(' for 2 faxes.')
     assert 'Received faxes: Documo 1 fax, not priced yet.' in text
     assert '1 fax is not priced yet, so it is not in the total.' in text
+
+
+def test_invoice_history_names_records_that_can_be_opened(cli):
+    original = cli.json('savings', 'invoices', 'add', '--account', 'phaxio', '--month', '2026-09', '--total', '10')
+    corrected = cli.json('savings', 'invoices', 'add', '--account', 'phaxio', '--month', '2026-09', '--total', '12')
+    shown = cli('savings', 'invoices', 'show', corrected['id'])
+    assert shown.exit_code == 0, (shown.stdout, shown.stderr)
+    assert original['id'] in shown.stdout and corrected['id'] in shown.stdout
+    assert 'faxbot savings invoices show INVOICE_ID' in shown.stdout
+    older = cli.json('savings', 'invoices', 'show', original['id'])
+    assert older['current'] is False and older['total']['amount'] == '10.00'

@@ -10,6 +10,7 @@ import AdminAPIClient from '../../api/client';
 import type { InvoiceDetail, InvoicesView } from '../../api/chargesTypes';
 import { formatLocalDate, formatServerTime } from '../../api/time';
 import { LoadStateView, ScreenHeader, loadFailure, type LoadState } from '../access/AccessViews';
+import { invoiceAddress, invoiceAt } from './invoiceAddress';
 import { DeliveryError, Notice, formatMoney } from './shared';
 
 // Last month, as the month field writes it ("2026-09").
@@ -27,10 +28,21 @@ function billingDayText(day: number): string {
 function InvoiceDialog({ client, invoiceId, onClose }: { client: AdminAPIClient; invoiceId: string; onClose: () => void }) {
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [state, setState] = useState<LoadState>('loading');
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    client.getInvoice(invoiceId).then(setDetail, setError);
-  }, [client, invoiceId]);
+    let active = true;
+    setDetail(null);
+    setError(null);
+    setState('loading');
+    client.getInvoice(invoiceId).then((value) => {
+      if (active) { setDetail(value); setState('ready'); }
+    }, (failure) => {
+      if (active) setState(loadFailure(failure));
+    });
+    return () => { active = false; };
+  }, [client, invoiceId, reload]);
 
   const download = async () => {
     if (!detail) return;
@@ -54,7 +66,7 @@ function InvoiceDialog({ client, invoiceId, onClose }: { client: AdminAPIClient;
       <DialogTitle id="invoice-title">{detail ? `${detail.label}, ${detail.period_name}` : 'Invoice'}</DialogTitle>
       <DialogContent>
         <DeliveryError error={error} onClose={() => setError(null)} />
-        {!detail ? <LoadStateView state="loading" /> : (
+        {!detail ? <LoadStateView state={state} onRetry={() => setReload((value) => value + 1)} /> : (
           <Stack spacing={2}>
             <Typography>{detail.summary}</Typography>
             <Typography variant="body2" color="text.secondary">
@@ -89,7 +101,10 @@ function InvoiceDialog({ client, invoiceId, onClose }: { client: AdminAPIClient;
                   <TableBody>
                     {detail.history.map((entry) => (
                       <TableRow key={entry.id}>
-                        <TableCell>{formatMoney(entry.total)}</TableCell>
+                        <TableCell>
+                          <Button component="a" href={invoiceAddress(entry.id, window.location.hash)}
+                            aria-label={`Open invoice version ${entry.version}`}>{formatMoney(entry.total)}</Button>
+                        </TableCell>
                         <TableCell>{entry.entered_by ?? '-'}</TableCell>
                         <TableCell>{formatServerTime(entry.entered_at)}</TableCell>
                       </TableRow>
@@ -121,7 +136,16 @@ export default function Invoices({ client, canWrite }: { client: AdminAPIClient;
   const [note, setNote] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(() => invoiceAt(window.location.hash));
+  useEffect(() => {
+    const follow = () => setOpen(invoiceAt(window.location.hash));
+    window.addEventListener('hashchange', follow);
+    return () => window.removeEventListener('hashchange', follow);
+  }, []);
+  const closeInvoice = () => {
+    window.location.hash = invoiceAddress(null, window.location.hash);
+    setOpen(null);
+  };
 
   const load = useCallback(async () => {
     setState((current) => (current === 'ready' ? current : 'loading'));
@@ -240,7 +264,7 @@ export default function Invoices({ client, canWrite }: { client: AdminAPIClient;
                           {formatMoney(invoice.residual)}{invoice.complete ? '' : ' (some faxes have no price)'}
                         </TableCell>
                         <TableCell align="right">
-                          <Button size="small" onClick={() => setOpen(invoice.id)}
+                          <Button size="small" component="a" href={invoiceAddress(invoice.id, window.location.hash)}
                             aria-label={`Details of the ${invoice.label} invoice for ${invoice.period_name}`}>Details</Button>
                         </TableCell>
                       </TableRow>
@@ -252,7 +276,7 @@ export default function Invoices({ client, canWrite }: { client: AdminAPIClient;
           </Box>
         </Stack>
       )}
-      {open && <InvoiceDialog client={client} invoiceId={open} onClose={() => setOpen(null)} />}
+      {open && <InvoiceDialog key={open} client={client} invoiceId={open} onClose={closeInvoice} />}
     </Box>
   );
 }

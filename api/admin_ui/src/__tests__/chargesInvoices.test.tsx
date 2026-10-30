@@ -1,7 +1,7 @@
 // Costs → Charges and Costs → Invoices, and received faxes in Costs → Spending and the Overview.
 // Synthetic data only; every request is answered by the fake server.
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { ReceivedFaxCosts } from '../api/deliveryTypes';
@@ -110,6 +110,45 @@ const accounts = [
 ];
 
 describe('Costs → Invoices', () => {
+  it('opens a copied invoice address, follows an older total and closes back to the list', async () => {
+    window.history.replaceState(null, '', '/#/savings/invoices?invoice=inv-1');
+    const history = [
+      { id: 'inv-0', version: 1, total: usd('12.00'), entered_by: 'Admin', entered_at: invoice.entered_at, note: null },
+      { id: 'inv-1', version: 2, total: usd('13.20'), entered_by: 'Admin', entered_at: invoice.entered_at, note: null },
+    ];
+    server.use(
+      http.get('/routing/invoices', () => HttpResponse.json({ invoices: [invoice], accounts, recommendations: [] })),
+      http.get('/routing/invoices/:id', ({ params }) => HttpResponse.json({ ...invoice, id: params.id,
+        current: params.id === 'inv-1', history })),
+    );
+    render(<Invoices client={client()} canWrite={false} />);
+    let dialog = await screen.findByRole('dialog');
+    const older = await within(dialog).findByRole('link', { name: 'Open invoice version 1' });
+    expect(older.getAttribute('href')).toBe('#/savings/invoices?invoice=inv-0');
+    act(() => {
+      window.history.replaceState(null, '', older.getAttribute('href')!);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('A later correction replaced this total.')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(window.location.hash).toBe('#/savings/invoices');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows a denied copied record without an endless loading state or protected details', async () => {
+    window.history.replaceState(null, '', '/#/savings/invoices?invoice=forbidden');
+    server.use(
+      http.get('/routing/invoices', () => HttpResponse.json({ invoices: [], accounts, recommendations: [] })),
+      http.get('/routing/invoices/forbidden', () => HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })),
+    );
+    render(<Invoices client={client()} canWrite={false} />);
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/permission/i)).toBeTruthy();
+    expect(within(dialog).queryByText(invoice.summary)).toBeNull();
+    expect(within(dialog).queryByRole('progressbar')).toBeNull();
+  });
+
   it('lists each invoice with the part your faxes do not explain, and the recommendation when it recurs', async () => {
     const advice = 'Your HumbleFax invoices were more than your faxes explain in July 2026 and September 2026 ($3.10 and $3.20).';
     server.use(
@@ -124,7 +163,7 @@ describe('Costs → Invoices', () => {
     const row = screen.getByTestId('invoice-row');
     expect(within(row).getByText('$13.20')).toBeTruthy();
     expect(within(row).getByText('$3.20')).toBeTruthy();
-    fireEvent.click(within(row).getByRole('button', { name: 'Details of the HumbleFax invoice for September 2026' }));
+    fireEvent.click(within(row).getByRole('link', { name: 'Details of the HumbleFax invoice for September 2026' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText(invoice.summary)).toBeTruthy();
     expect(within(dialog).getByText('Plan fee')).toBeTruthy();
