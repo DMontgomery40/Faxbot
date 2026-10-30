@@ -457,9 +457,10 @@ def test_the_engine_starts_each_line_as_exactly_one_modem_and_says_running_only_
 
 def test_a_line_that_loses_its_modem_is_reported_and_the_engine_starts_again(entrypoint):
     """A line whose modem is gone takes no calls: the status says so at once, and the engine exits to be
-    started again (Docker's restart policy) as soon as no call is up."""
+    started again (Docker's restart policy) as soon as no call is up. The slower round (refused registrations,
+    session logs) is 30 seconds here: the check that notices a stopped process runs every round on its own."""
     start, root, data = entrypoint
-    process = start()
+    process = start(FAXBOT_ENGINE_LIVENESS_SECONDS='30')
     assert _wait(lambda: _status(data).get('state') == 'running')
     (modem,) = [entry for entry in (root / 'procs').iterdir() if entry.read_text().strip() == 'iaxmodem ttyIAX2']
     os.kill(int(modem.name), signal.SIGTERM)
@@ -505,9 +506,10 @@ def test_the_running_engine_checks_its_lines_without_pgrep_or_faxstat_while_they
 ])
 def test_a_daemon_that_stops_is_noticed_and_the_engine_starts_again(entrypoint, stopped, state, reason):
     """A line's faxgetty, the scheduler or the submission server that stops: the cheap check notices its
-    process is gone, the full checks say what, and the engine exits to be started again."""
+    process is gone at the next round (as when every round ran pgrep), not only with the slower 30-second
+    round, the full checks say what, and the engine exits to be started again."""
     start, root, data = entrypoint
-    process = start()
+    process = start(FAXBOT_ENGINE_LIVENESS_SECONDS='30')
     assert _wait(lambda: _status(data).get('state') == 'running')
     (entry,) = [entry for entry in (root / 'procs').iterdir() if entry.read_text().strip() == stopped]
     os.kill(int(entry.name), signal.SIGTERM)
@@ -516,9 +518,9 @@ def test_a_daemon_that_stops_is_noticed_and_the_engine_starts_again(entrypoint, 
     assert (_status(data)['state'], _status(data)['reason']) == (state, reason)
 
 
-def test_the_session_logs_are_read_when_one_is_added_and_with_each_check_of_the_lines(entrypoint):
+def test_the_session_logs_are_read_when_one_is_added_and_with_the_slower_round(entrypoint):
     """Each reading of the session logs starts a few programs, so the running engine reads them when a session
-    log was added and with each check of the lines, not every few seconds."""
+    log was added and with the slower round (FAXBOT_ENGINE_LIVENESS_SECONDS), not every few seconds."""
     start, root, data = entrypoint
 
     def readings():
@@ -580,9 +582,10 @@ def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_rec
         entrypoint, faxstat_lists_idle_lines, unready_status):
     """After the start, a line that is not ready for a call (waiting on a modem lock) makes the status say so;
     while the other line is in a call the engine does not restart, and once the line is ready again the
-    status says running. With no call up, the engine starts again."""
+    status says running. With no call up, the engine starts again. The line is reported within the
+    readiness grace period of the few-second check, not only with the slower 30-second round."""
     start, root, data = entrypoint
-    process = start()
+    process = start(FAXBOT_ENGINE_LIVENESS_SECONDS='30')
     assert _wait(lambda: _status(data).get('state') == 'running')
     if not faxstat_lists_idle_lines:
         # A partial status-client listing must not hide a recovered line.
@@ -595,7 +598,7 @@ def test_a_line_that_stops_being_ready_is_reported_and_running_again_once_it_rec
         _line(root, 'ttyIAX1').unlink()
     else:
         _line(root, 'ttyIAX1').write_text(unready_status)
-    assert _wait(lambda: _status(data).get('state') == 'restarting'), _status(data)
+    assert _wait(lambda: _status(data).get('state') == 'restarting', 8), _status(data)
     assert _status(data)['reason'] == "Faxbot's fax engine lost a fax line and is starting again."
     assert process.poll() is None
     _line(root, 'ttyIAX1').write_text('Running and idle')  # status files need no final newline
