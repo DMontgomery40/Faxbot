@@ -105,7 +105,7 @@ class Mechanism:
     @property
     def destination(self):
         """Where selecting it leads: its part on Savings & optimization → Savings results, else its own page, else nowhere."""
-        return f'costs/savings?part={self.part}' if self.part else self.link
+        return f'savings/results?part={self.part}' if self.part else self.link
 
 
 class Installation:
@@ -392,7 +392,7 @@ def separator_pages(here):
         sentence = ((sentence + ' ') if working else '') + (
             'Marks at the top of every page need your header text and sending number set in Delivery setup → '
             'Sending identity, so faxes to those recipients use separator pages for now.')
-        page = ('numbers/identity', 'Delivery setup → Sending identity')
+        page = ('delivery/identity', 'Delivery setup → Sending identity')
     why = _shared_calls(here)
     return State(bool(working), why is None, sentence, why, page=page)
 
@@ -685,8 +685,8 @@ def _pots_quote(here):
 
 
 def _advice(key, name, sentence, section, command, check):
-    return Mechanism(key, name, sentence, 'advice', 'built', None, 'costs/recommendations', 'Savings & optimization → Opportunities',
-                     check, link=f'costs/recommendations?section={section}', link_label='Savings & optimization → Opportunities',
+    return Mechanism(key, name, sentence, 'advice', 'built', None, 'savings/opportunities', 'Savings & optimization → Opportunities',
+                     check, link=f'savings/opportunities?section={section}', link_label='Savings & optimization → Opportunities',
                      command=command)
 
 
@@ -702,7 +702,7 @@ CATALOGUE = (
     Mechanism('dense_pages', 'Dense pages',
               'Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank '
               'page bottoms, so fewer pages and seconds are billed.',
-              'document', 'built', 'packing', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
+              'document', 'built', 'packing', 'delivery/connections', 'Delivery setup → Providers & accounts → Delivery routes',
               dense_pages),
     Mechanism('encoded_pages', 'Encoded pages (experimental)',
               "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the "
@@ -711,11 +711,11 @@ CATALOGUE = (
     Mechanism('fax_friendly', 'Lighter shading',
               'Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages '
               'take less time to send.',
-              'document', 'built', 'fax_friendly', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
+              'document', 'built', 'fax_friendly', 'delivery/connections', 'Delivery setup → Providers & accounts → Delivery routes',
               fax_friendly, settings=('fax_friendly_documents',)),
     Mechanism('own_numbers', 'Faxes to your own numbers',
               'Delivers a fax to one of your own numbers straight into Received, with no phone call.',
-              'route', 'built', 'own_numbers', 'providers/sending', 'Delivery setup → Providers & accounts → Delivery routes',
+              'route', 'built', 'own_numbers', 'delivery/connections', 'Delivery setup → Providers & accounts → Delivery routes',
               own_numbers, settings=('local_delivery_enabled',)),
     Mechanism('direct_delivery', 'Direct delivery',
               'Sends documents to verified partners over the internet instead of placing a fax call.',
@@ -747,7 +747,7 @@ CATALOGUE = (
               'route', 'built', 'cheapest_route', 'recipients/list', 'Recipients', cheapest_route),
     Mechanism('plan_first', "Your plan's faxes first",
               'Uses a monthly plan while it has room under its budget, before routes that charge per fax.',
-              'route', 'built', 'plan_first', 'costs/prices', 'Savings & optimization → Prices & plans', plan_first,
+              'route', 'built', 'plan_first', 'savings/prices', 'Savings & optimization → Prices & plans', plan_first,
               settings=('plan_budgets',)),
     Mechanism('busy_hours', 'Calls at the right hour',
               "Waits out a number's usual busy hours when a failed call there could be charged.",
@@ -761,12 +761,12 @@ CATALOGUE = (
     Mechanism('fax_over_ip', 'Fax over IP (T.38)',
               'Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls '
               'are shorter.',
-              'call', 'live', 't38', 'providers/trunk', 'Delivery setup → Carrier trunk', fax_over_ip,
+              'call', 'live', 't38', 'delivery/trunk', 'Delivery setup → Carrier trunk', fax_over_ip,
               settings=('sip_t38_enabled',), counts=('calls', 'call', 'calls')),
     Mechanism('measured_coding', 'Smallest page coding',
               "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take "
               'less time on the line.',
-              'call', 'lab', 'coding', 'providers/trunk', 'Delivery setup → Carrier trunk', measured_coding,
+              'call', 'lab', 'coding', 'delivery/trunk', 'Delivery setup → Carrier trunk', measured_coding,
               settings=('sip_fax_compression',)),
     Mechanism('sending_together', 'Sending together',
               'Sends several short faxes to the same number in one call, on a line that charges for each call.',
@@ -778,7 +778,7 @@ CATALOGUE = (
               counts=('calls', 'shared call', 'shared calls')),
     Mechanism('sslfax', 'Faster pages',
               'Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.',
-              'call', 'lab', 'sslfax', 'providers/trunk', 'Delivery setup → Carrier trunk', sslfax,
+              'call', 'lab', 'sslfax', 'delivery/trunk', 'Delivery setup → Carrier trunk', sslfax,
               settings=('sip_sslfax_enabled',)),
     Mechanism('continuation', 'Only the missing pages',
               'Finishes a fax whose call broke by sending only the pages the call did not confirm.',
@@ -790,11 +790,11 @@ CATALOGUE = (
     Mechanism('charge_checks', 'Charge checks',
               'Matches what your carriers and fax services billed against your faxes, and points out charges and '
               "invoice amounts your faxes don't explain.",
-              'after', 'built', None, 'costs/charges', 'Savings & optimization → Charges', charge_checks,
-              link='costs/charges', link_label='Savings & optimization → Charges', command='faxbot savings charges'),
+              'after', 'built', None, 'savings/charges', 'Savings & optimization → Charges', charge_checks,
+              link='savings/charges', link_label='Savings & optimization → Charges', command='faxbot savings charges'),
     Mechanism('blocked_senders', 'Junk callers turned away',
               'Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.',
-              'receiving', 'built', 'blocked_calls', 'numbers/blocked', 'Delivery setup → Blocked senders',
+              'receiving', 'built', 'blocked_calls', 'delivery/blocked', 'Delivery setup → Blocked senders',
               blocked_senders, counts=('calls', 'call', 'calls'), verb='Turned away'),
     _advice('advice_sending', 'Cheaper routes per number',
             'Names numbers whose usual route cost more per delivered fax than another, with a button to switch.',
@@ -846,13 +846,13 @@ CATALOGUE = (
     Mechanism('advice_caller_names', 'Caller-name lookup',
               'Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can '
               'turn it off.',
-              'advice', 'built', None, 'providers/trunk', 'Delivery setup → Carrier trunk', _telnyx_numbers,
-              link='providers/trunk', link_label='Delivery setup → Carrier trunk',
+              'advice', 'built', None, 'delivery/trunk', 'Delivery setup → Carrier trunk', _telnyx_numbers,
+              link='delivery/trunk', link_label='Delivery setup → Carrier trunk',
               command='faxbot delivery providers trunk telnyx names'),
     Mechanism('advice_setup_packs', 'Suggested packs',
               'Gathers the settings and rules that would save money here into packs you review and apply.',
-              'advice', 'built', None, 'system/setup', 'Administration → Setup', _always,
-              link='system/setup', link_label='Administration → Setup', command='faxbot admin setup plan'),
+              'advice', 'built', None, 'admin/setup', 'Administration → Setup', _always,
+              link='admin/setup', link_label='Administration → Setup', command='faxbot admin setup plan'),
     Mechanism('measured_account', 'Account chosen after measuring its pages',
               "Measures the pages each of your sending accounts would really send, then sends by the account whose "
               'fax costs least.',
@@ -885,7 +885,7 @@ CATALOGUE = (
     Mechanism('answer_cap', '50-second answer cap',
               'Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, '
               'so an unanswered call is not billed a second minute.',
-              'call', 'lab', None, 'providers/trunk', 'Delivery setup → Carrier trunk', answer_cap,
+              'call', 'lab', None, 'delivery/trunk', 'Delivery setup → Carrier trunk', answer_cap,
               settings=('sip_fax_answer_cap',)),
     Mechanism('station_check', 'Station check',
               'Compares the fax number the far machine shows with the number you dialled before any page, and says '
@@ -917,7 +917,7 @@ CATALOGUE = (
     Mechanism('copier_extensions', 'Copiers as extensions of Faxbot',
               'Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog '
               'line can go.',
-              'receiving', 'lab', None, 'providers/trunk', 'Delivery setup → Carrier trunk', copier_extensions),
+              'receiving', 'lab', None, 'delivery/trunk', 'Delivery setup → Carrier trunk', copier_extensions),
     Mechanism('advice_line_inventory', 'Lines and carrier closing dates',
               'Matches your fax lines to carriers\' discontinuance lists and contract end dates, so you move a line '
               'before its price changes or it closes.',
@@ -956,7 +956,7 @@ BY_KEY = {mechanism.key: mechanism for mechanism in CATALOGUE}
 
 def _label(page, label, values):
     """A page's name as the console shows it; the trunk page is named after its carrier ("Delivery setup → Telnyx")."""
-    if page == 'providers/trunk':
+    if page == 'delivery/trunk':
         from ..provider_labels import trunk_name
         return f"Delivery setup → {trunk_name(getattr(values, 'sip_trunk_preset', ''))}"
     return label

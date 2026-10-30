@@ -15,7 +15,7 @@ from ..output import cost_amount, local_time, money, text
 routing = typer.Typer(help='Delivery routes, destinations, fax costs and rate cards.', no_args_is_help=True)
 intake = typer.Typer(help='The intake queue: received documents being delivered to email and other places.',
                      no_args_is_help=True)
-connectors = typer.Typer(help='The email inboxes and other places received faxes are delivered to.', no_args_is_help=True)
+connectors = typer.Typer(help='Destinations that deliver received documents to staff by email.', no_args_is_help=True)
 direct = typer.Typer(help='Direct delivery: send faxes to verified Faxbot partners over the internet.',
                      no_args_is_help=True)
 peers = typer.Typer(help='Direct delivery partners.', no_args_is_help=True)

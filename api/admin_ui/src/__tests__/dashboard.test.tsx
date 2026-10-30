@@ -51,7 +51,7 @@ describe('Dashboard delivery cards', () => {
     fireEvent.click(spending);
     fireEvent.click(delivery);
     fireEvent.click(partners);
-    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['routes', 'inbox', 'recipients/partners']);
+    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['savings/spending', 'faxes/received', 'recipients/partners']);
   });
 
   it('says a card is not available to this account when permission is missing', async () => {
@@ -129,10 +129,10 @@ describe('Dashboard delivery cards', () => {
       const buttons = screen.getAllByRole('button', { name: 'Set up a fax provider' });
       expect(buttons).toHaveLength(1);
       fireEvent.click(buttons[0]);
-      expect(navigate).toHaveBeenLastCalledWith('setup');
+      expect(navigate).toHaveBeenLastCalledWith('admin/setup');
       unmount();
     }
-    expect(navigate).not.toHaveBeenCalledWith('diagnostics');
+    expect(navigate).not.toHaveBeenCalledWith('admin/health');
     render(<Dashboard client={client()} onNavigate={navigate} />);
     expect(await screen.findByText('No fax provider set up yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Set up a fax provider' })).toBeNull();

@@ -50,9 +50,9 @@ HEADER_SOURCE = {'name': 'US fax rules, 47 CFR 68.318(d)',
                            'sending it and its fax number.'}
 COUNTRY_RULES_REVIEWED = ('US',)
 # Console pages, as the console's navigation names them.
-RULES_PAGE, PARTNERS_PAGE, RECIPIENTS_PAGE = 'providers/rules', 'recipients/partners', 'recipients/list'
-NUMBERS_PAGE, BLOCKED_PAGE, IDENTITY_PAGE = 'numbers/list', 'numbers/blocked', 'numbers/identity'
-IN_USE_PAGE, STORAGE_PAGE = 'providers/sending', 'system/storage'
+RULES_PAGE, PARTNERS_PAGE, RECIPIENTS_PAGE = 'delivery/rules', 'recipients/partners', 'recipients/list'
+NUMBERS_PAGE, BLOCKED_PAGE, IDENTITY_PAGE = 'delivery/numbers', 'delivery/blocked', 'delivery/identity'
+IN_USE_PAGE, STORAGE_PAGE = 'delivery/connections', 'admin/retention'
 
 
 def _plural(count, one, many=None):
@@ -462,7 +462,7 @@ def _general_missing(plan, countries):
                              'country-specific settings.', owner='you', operation='Compliance basics')
     if not any(account.sends and account.enabled for account in facts.accounts):
         plan.lack('sending', 'Choose a provider for sending on the first step. Cost and reliability rules need one.',
-                  owner='you', operation='Costs and reliability', blocking=True, link='system/setup')
+                  owner='you', operation='Costs and reliability', blocking=True, link='admin/setup')
     for scope, state in sorted(facts.rules.items()):
         if state.get('draft') and any(item['kind'] == 'rule' and item['scope'] == scope for item in plan.items):
             plan.lack(f'draft.{scope}', f"Your rules for {plan.scope_names.get(scope, scope)} have unpublished "

@@ -183,14 +183,14 @@ describe('Inbox email delivery', () => {
     const navigate = vi.fn();
     render(<Received client={client()} inboundEnabled permissions={operator} onNavigate={navigate} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Email delivery settings' }));
-    expect(navigate).toHaveBeenCalledWith('email');
+    expect(navigate).toHaveBeenCalledWith('delivery/email');
   });
 
   it('has no Intake page any more', () => {
     const pages = visibleNavigation(new Set(['mailboxes:read', 'settings:read', 'diagnostics:read']),
       { send: false, jobs: false, inbox: true }, { pluginsEnabled: false }).flatMap((area) => area.pages.map((page) => page.label));
     expect(pages).not.toContain('Intake');
-    expect(pages).toEqual(expect.arrayContaining(['Staff email delivery', 'Recipients', 'Spending']));
+    expect(pages).toEqual(expect.arrayContaining(['Deliver received documents to staff', 'Recipients', 'Spending']));
   });
 });
 
@@ -373,7 +373,7 @@ describe('Inbox wording for received faxes', () => {
     expect(status.textContent).toContain(READY);
     expect(screen.queryByText(/_internal|YOUR_SECRET|curl|dialplan/i)).toBeNull();
     fireEvent.click(within(status).getByRole('button', { name: 'Open Carrier trunk' }));
-    expect(navigate).toHaveBeenCalledWith('trunk');
+    expect(navigate).toHaveBeenCalledWith('delivery/trunk');
   });
 
   it('names a failed hand-over in that line', async () => {
@@ -437,7 +437,7 @@ describe('How received faxes reach Faxbot', () => {
     render(<Received client={client()} inboundEnabled={false} onNavigate={navigate} permissions={new Set(['inbound:list', 'settings:read'])} />);
     expect(await screen.findByText('Receiving faxes is turned off. Turn it on under Delivery setup, Providers & accounts.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Open Providers & accounts' }));
-    expect(navigate).toHaveBeenCalledWith('providers/sending');
+    expect(navigate).toHaveBeenCalledWith('delivery/connections');
   });
 
   it('lists the addresses to give the receiving provider on In use', async () => {

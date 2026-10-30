@@ -44,7 +44,7 @@ export function ReceivingOptionsFields({
   onChange: (value: ReceivingOptions) => void;
   // Accounts that receive faxes.
   accounts: Named[];
-  // Email connectors (Delivery setup → Staff email delivery).
+  // Email connectors (Delivery setup → Deliver received documents to staff).
   connectors: Named[];
   timeZone: string;
   // Sites (Delivery setup → Routing rules), for faxes that arrive on an account of one site.

@@ -499,7 +499,7 @@ export default function Plugins({ client, config, configLoading: activeConfigLoa
                       <Button
                         size="medium"
                         variant="outlined"
-                        onClick={() => onNavigate('send')}
+                        onClick={() => onNavigate('faxes/send')}
                         sx={{ borderRadius: 2 }}
                       >
                         Open Send

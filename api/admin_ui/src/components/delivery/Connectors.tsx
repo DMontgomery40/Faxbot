@@ -19,10 +19,10 @@ import { DeliveryError, Notice } from './shared';
 type Purpose = 'mail-in' | 'folder-in' | 'mail-out' | 'folder-out';
 
 const PURPOSES: { id: Purpose; label: string; kind: ConnectorKind; direction: ConnectorDirection }[] = [
-  { id: 'mail-in', label: 'Bring in documents from a mailbox', kind: 'email', direction: 'receive' },
-  { id: 'folder-in', label: 'Bring in documents from a folder', kind: 'folder', direction: 'receive' },
-  { id: 'mail-out', label: 'Fax what people email', kind: 'email', direction: 'send' },
-  { id: 'folder-out', label: 'Fax files put in a folder', kind: 'folder', direction: 'send' },
+  { id: 'mail-in', label: 'Import incoming documents from a mailbox', kind: 'email', direction: 'receive' },
+  { id: 'folder-in', label: 'Import incoming documents from a folder', kind: 'folder', direction: 'receive' },
+  { id: 'mail-out', label: 'Submit outgoing faxes from email', kind: 'email', direction: 'send' },
+  { id: 'folder-out', label: 'Submit outgoing faxes from a folder', kind: 'folder', direction: 'send' },
 ];
 
 const SERVICES: { id: string; label: string }[] = [
@@ -378,9 +378,9 @@ export default function Connectors({ client, canWrite }: { client: AdminAPIClien
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ mb: 1 }}>Email and folders</Typography>
+      <Typography variant="h4" component="h1" sx={{ mb: 1 }}>Import documents or submit faxes</Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        Mailboxes and folders that bring documents into Faxbot or send faxes. Faxbot files or faxes each document once;
+        Import incoming documents from mailboxes and folders, or submit outgoing faxes. Faxbot files or faxes each document once;
         a copy it sees again is counted, never handled twice.
       </Typography>
       <Notice message={notice} onClose={() => setNotice(null)} />

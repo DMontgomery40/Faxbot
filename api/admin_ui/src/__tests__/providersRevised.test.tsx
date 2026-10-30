@@ -101,7 +101,7 @@ describe('In use', () => {
     fireEvent.click(within(summary).getByRole('button', { name: 'Telnyx' }));
     fireEvent.click(within(summary).getByRole('button', { name: 'Phaxio' }));
     fireEvent.click(within(summary).getByRole('button', { name: 'Add or change a provider' }));
-    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['providers/trunk', 'providers/phaxio', 'system/setup']);
+    expect(navigate.mock.calls.map(([destination]) => destination)).toEqual(['delivery/trunk', 'delivery/phaxio', 'admin/setup']);
   });
 });
 

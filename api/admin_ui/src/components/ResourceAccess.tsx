@@ -366,10 +366,10 @@ export interface CarriedNumber {
 }
 
 const CARRIER_PAGES: Record<string, { label: string; page: AdminDestination }> = {
-  sip: { label: 'Carrier trunk', page: 'providers/trunk' },
-  humblefax: { label: 'HumbleFax', page: 'providers/humblefax' },
-  efax: { label: 'eFax', page: 'providers/efax' },
-  signalwire: { label: 'SignalWire', page: 'providers/signalwire' },
+  sip: { label: 'Carrier trunk', page: 'delivery/trunk' },
+  humblefax: { label: 'HumbleFax', page: 'delivery/humblefax' },
+  efax: { label: 'eFax', page: 'delivery/efax' },
+  signalwire: { label: 'SignalWire', page: 'delivery/signalwire' },
 };
 
 export function carriedNumbers(settings: Settings): CarriedNumber[] {

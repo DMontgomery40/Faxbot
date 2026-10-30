@@ -1116,7 +1116,7 @@ def test_connectors_add_test_pause_resume_items_and_remove(cli, tmp_path):
     scans.mkdir()
     outbox.mkdir()
     added = cli.json('numbers', 'connectors', 'add', 'Scanner share', '--kind', 'folder', '--path', str(scans))
-    assert added['what'] == 'Brings in documents from a folder' and added['status'] == 'Not checked yet.'
+    assert added['what'] == 'Imports incoming documents from a folder' and added['status'] == 'Not checked yet.'
     tested = cli.json('numbers', 'connectors', 'test', 'Scanner share')
     assert tested == {'ok': True, 'detail': f'Faxbot can read and write {scans}; it holds 0 files waiting.'}
     sending = cli.json('numbers', 'connectors', 'add', 'Outbox', '--kind', 'folder', '--direction', 'send',
@@ -1136,7 +1136,7 @@ def test_connectors_add_test_pause_resume_items_and_remove(cli, tmp_path):
     resumed = cli.json('numbers', 'connectors', 'resume', 'Outbox')
     assert resumed['has_sending_key'] is True and resumed['sending_key_id'] != sending['sending_key_id']
     listed = ' '.join(cli('numbers', 'connectors', 'list').stdout.split())
-    assert 'Faxes files put in a folder' in listed and '0 items, 0 seen again, 0 refused' in listed
+    assert 'Submits outgoing faxes from a folder' in listed and '0 items, 0 seen again, 0 refused' in listed
     assert cli.json('numbers', 'connectors', 'items') == {'items': []}
     assert '0 seen again and never handled twice; 0 refused.' in cli('numbers', 'connectors', 'items').stdout
     missing = cli('numbers', 'connectors', 'add', 'Nowhere', '--kind', 'folder', '--path', str(tmp_path / 'absent'))

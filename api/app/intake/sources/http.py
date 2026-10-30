@@ -138,8 +138,10 @@ def _status(source):
 
 def _what(source):
     if source.kind == 'email':
-        return 'Brings in documents from an email mailbox' if source.direction == 'receive' else 'Faxes what people email'
-    return 'Brings in documents from a folder' if source.direction == 'receive' else 'Faxes files put in a folder'
+        return ('Imports incoming documents from an email mailbox' if source.direction == 'receive'
+                else 'Submits outgoing faxes from email')
+    return ('Imports incoming documents from a folder' if source.direction == 'receive'
+            else 'Submits outgoing faxes from a folder')
 
 
 def _source_view(source, counts, senders=None, mailbox=None):

@@ -88,7 +88,7 @@ def _static_addresses():
         for prerequisite in capability.prerequisites if capability else ():
             found.append((mechanism.key, 'prerequisite', prerequisite.address))
     # Pages the catalogue's evaluation may send a setting to this time (separator pages → Sender identity).
-    found.append(('separator_pages', 'setting', capabilities.address('numbers/identity')))
+    found.append(('separator_pages', 'setting', capabilities.address('delivery/identity')))
     return found
 
 
@@ -166,10 +166,9 @@ def test_every_catalogue_key_says_what_it_did_here():
 
 def test_every_address_is_a_six_area_page():
     assert set(capabilities.PAGES) <= SPEC_PAGES, sorted(set(capabilities.PAGES) - SPEC_PAGES)
-    assert set(capabilities.MOVED.values()) <= set(capabilities.PAGES)
     for key, what, where in _static_addresses():
         assert _page(where) in capabilities.PAGES, (
-            f'{key}: its {what} address {where} has no six-area page; add its page to MOVED or PAGES in {MODULE}')
+            f'{key}: its {what} address {where} has no six-area page; add its page to PAGES in {MODULE}')
 
 
 def _navigation_labels():

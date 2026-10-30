@@ -132,7 +132,7 @@ describe('Overview blocks', () => {
     fireEvent.click(trunk);
     expect(navigate).toHaveBeenLastCalledWith('delivery/trunk');
     fireEvent.click(within(doing).getByRole('button', { name: 'Set up a fax provider' }));
-    expect(navigate).toHaveBeenLastCalledWith('setup');
+    expect(navigate).toHaveBeenLastCalledWith('admin/setup');
     // No saving is made up to fill the page.
     expect(doing.textContent).not.toMatch(/\$|saved/);
   });

@@ -857,7 +857,7 @@ export interface SavingsMechanism {
   // The console page that holds its setting ('recipients/list'), and that page's name.
   page: string;
   page_label: string;
-  // Where selecting it leads ('costs/savings?part=sslfax', 'costs/recommendations?section=plans'), or null,
+  // Where selecting it leads ('savings/results?part=sslfax', 'savings/opportunities?section=plans'), or null,
   // with that page's name; and the command that prints the same.
   link: string | null;
   link_label: string | null;

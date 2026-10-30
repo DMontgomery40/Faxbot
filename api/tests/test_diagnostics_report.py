@@ -70,7 +70,7 @@ def test_freeswitch_sending_says_it_is_removed_next_release(monkeypatch, provide
     assert finding.status == status
     if provider == 'freeswitch':
         assert finding.sentence == "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup."
-        assert (finding.fix_label, finding.fix_page) == ('Open Setup', 'system/setup')
+        assert (finding.fix_label, finding.fix_page) == ('Open Setup', 'admin/setup')
 
 
 def test_slow_provider_times_out(monkeypatch):
@@ -184,9 +184,9 @@ def test_report_runs_through_the_api_and_keeps_the_last_run(isolated_installatio
     assert {section['id'] for section in body['sections']} >= {'sending', 'server', 'security'}
     # The installation's Phaxio profile has no keys: a problem with the place to fix it.
     assert by_id['sending.provider']['status'] == PROBLEM
-    assert by_id['sending.provider']['fix'] == {'label': 'Open Providers & accounts', 'page': 'providers/sending'}
+    assert by_id['sending.provider']['fix'] == {'label': 'Open Providers & accounts', 'page': 'delivery/connections'}
     assert by_id['sending.recent']['sentence'] == 'No fax has been sent yet.'
-    assert by_id['security.audit']['status'] == ATTENTION and by_id['security.audit']['fix']['page'] == 'system/audit'
+    assert by_id['security.audit']['status'] == ATTENTION and by_id['security.audit']['fix']['page'] == 'admin/audit'
     assert by_id['server.time_zone']['sentence'] == (
         'No time zone is chosen, so times are shown in world standard time (UTC).')
     assert by_id['engine.running']['status'] == OFF

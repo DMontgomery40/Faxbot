@@ -16,7 +16,7 @@ module, when a key has none, names an unknown outcome or prerequisite kind, or p
 command that does not exist.
 
 Console addresses here are the six-area addresses of spec #48 (``delivery/trunk``, ``savings/results``, …). The
-catalogue still names the older ones, so ``MOVED`` translates each page and link it emits.
+catalogue uses these same canonical addresses.
 """
 from dataclasses import dataclass
 import logging
@@ -103,22 +103,6 @@ PAGES = {
     'delivery/rules': 'Delivery setup → Routing rules',
 }
 
-# The catalogue's older console pages and their six-area homes (spec #48's navigation table). Whoever gives the
-# catalogue a page it has not used before adds it here.
-MOVED = {
-    'providers/sending': 'delivery/connections',
-    'providers/trunk': 'delivery/trunk',
-    'numbers/list': 'delivery/numbers',
-    'numbers/identity': 'delivery/identity',
-    'numbers/blocked': 'delivery/blocked',
-    'costs/prices': 'savings/prices',
-    'costs/charges': 'savings/charges',
-    'costs/recommendations': 'savings/opportunities',
-    'costs/savings': 'savings/results',
-    'system/setup': 'admin/setup',
-}
-
-
 # How a prerequisite stands here. Only "missing" counts as missing; the other two are said as they are, so a
 # prerequisite Faxbot has not seen working, or that nothing needs yet, never reads as in place.
 STATES = {
@@ -156,10 +140,9 @@ class Capability:
     findings: bool = False
 
 
-def address(old):
-    """A console address in the six-area navigation: the catalogue's older page translated, its query kept."""
-    page, mark, query = old.partition('?')
-    return MOVED.get(page, page) + mark + query
+def address(where):
+    """The catalogue already names canonical console pages, including their query."""
+    return where
 
 
 # -- what each capability needs, and whether this installation has it -------------------------------------------

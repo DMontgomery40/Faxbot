@@ -318,7 +318,7 @@ def test_diagnostics_shows_a_carrier_trunk_finding_with_the_fix(client, telnyx, 
     findings = {item.id: item for item in asyncio.run(report.carrier_trunk(SimpleNamespace(request=None, identity=None)))}
     finding = findings['engine.telnyx_t38']
     assert (finding.status, finding.title, finding.fix_label, finding.fix_page) == (
-        report.ATTENTION, 'Fax over IP (T.38) at Telnyx', 'Open carrier trunk to turn on T.38', 'providers/trunk')
+        report.ATTENTION, 'Fax over IP (T.38) at Telnyx', 'Open carrier trunk to turn on T.38', 'delivery/trunk')
     assert finding.sentence == ('Telnyx has fax over IP (T.38) turned off for +1 555-555-0100, so received faxes there '
                                 'arrive as audio.')
 

@@ -544,7 +544,7 @@ export default function Received({
   const sipLine = receiving && callbacks?.backend === 'sip' && (
     <Alert severity={callbacks.receiving?.ready ? 'success' : 'warning'} sx={{ mb: 2, borderRadius: 2 }} data-testid="sip-receiving"
       action={onNavigate && permissions?.has('settings:read') ? (
-        <Button color="inherit" size="small" onClick={() => onNavigate('trunk')}>{`Open ${providerLabel('sip')}`}</Button>
+        <Button color="inherit" size="small" onClick={() => onNavigate('delivery/trunk')}>{`Open ${providerLabel('sip')}`}</Button>
       ) : undefined}>
       {callbacks.receiving?.message ?? `Receiving through ${providerLabel('sip')}.`}{' '}
       <Box component="a" href={docsLink('inbound', docsBase)} target="_blank" rel="noreferrer" sx={{ color: 'inherit' }}>How receiving works</Box>
@@ -571,7 +571,7 @@ export default function Received({
             Faxes that came in to your numbers, who owns each one, and whether it was emailed.
           </Typography>
           {canOpenEmailSettings && (
-            <Button variant="text" size="small" onClick={() => onNavigate?.('email')} sx={{ px: 0, minWidth: 0 }}>
+            <Button variant="text" size="small" onClick={() => onNavigate?.('delivery/email')} sx={{ px: 0, minWidth: 0 }}>
               Email delivery settings
             </Button>
           )}
@@ -597,7 +597,7 @@ export default function Received({
       {!receiving && (
         <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}
           action={onNavigate && permissions?.has('settings:read') && (
-            <Button color="inherit" onClick={() => onNavigate('providers/sending')}>Open Providers & accounts</Button>
+            <Button color="inherit" onClick={() => onNavigate('delivery/connections')}>Open Providers & accounts</Button>
           )}>
           Receiving faxes is turned off. Turn it on under Delivery setup, Providers & accounts.
         </Alert>

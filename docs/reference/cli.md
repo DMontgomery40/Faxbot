@@ -2847,8 +2847,8 @@ $ faxbot delivery [OPTIONS] COMMAND [ARGS]...
 * `mailboxes`: Mailboxes that hold received faxes, and...
 * `blocked`: Junk senders whose calls are turned away...
 * `identity`: The number printed on the faxes you send,...
-* `email`: Email delivery of received faxes to your...
-* `connectors`: Email mailboxes and folders that bring...
+* `email`: Deliver received documents to staff by...
+* `connectors`: Import incoming documents or submit...
 * `providers`: The fax services Faxbot sends and receives...
 * `rules`: Sending rules: which provider account...
 
@@ -3676,7 +3676,7 @@ $ faxbot delivery identity notice clear [OPTIONS]
 
 ### `faxbot delivery email`
 
-Email delivery of received faxes to your staff.
+Deliver received documents to staff by email.
 
 **Usage**:
 
@@ -3690,11 +3690,11 @@ $ faxbot delivery email [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `connectors`: The email inboxes and other places...
+* `connectors`: Destinations that deliver received documents...
 
 #### `faxbot delivery email connectors`
 
-The email inboxes and other places received faxes are delivered to.
+Destinations that deliver received documents to staff by email.
 
 **Usage**:
 
@@ -3824,7 +3824,7 @@ $ faxbot delivery email connectors remove [OPTIONS] {name}
 
 ### `faxbot delivery connectors`
 
-Email mailboxes and folders that bring documents into Faxbot or send faxes, each document only once.
+Import incoming documents or submit outgoing faxes from email mailboxes and folders, each document only once.
 
 **Usage**:
 
@@ -3880,7 +3880,7 @@ $ faxbot delivery connectors add [OPTIONS] {name}
 **Options**:
 
 * `--kind <str>`: email (a mailbox) or folder (a folder inside the Faxbot container).  [required]
-* `--direction <str>`: receive brings documents in; send faxes them.  [default: receive]
+* `--direction <str>`: receive imports incoming documents; send submits outgoing faxes.  [default: receive]
 * `--mailbox <str>`: Mailbox that receives documents with no sidecar file.
 * `--path <str>`: Folder inside the Faxbot container, such as /scans.
 * `--settle-seconds <int>`: Seconds a file must stay unchanged before Faxbot reads it.

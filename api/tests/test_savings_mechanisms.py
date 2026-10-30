@@ -65,9 +65,6 @@ def _navigation_pages():
     for index, (start, area) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else len(body)
         pages |= {f'{area}/{page}' for page in re.findall(r"\{ id: '([a-z-]+)', label:", body[start:end])}
-    # An old address (#49) still opens its page through the moved-address table: count it when its new home is real.
-    moves = text[text.index('const MOVES'):text.index('export const MOVED_ADDRESSES')]
-    pages |= {old for old, new in re.findall(r"\['([a-z]+/[a-z-]+)', '([a-z]+/[a-z-]+)[^']*'", moves) if new in pages}
     return pages
 
 
@@ -78,8 +75,8 @@ def test_every_entry_names_real_settings_pages_parts_and_an_evidence_level():
     assert len(keys) == len(set(keys))
     stages = {key for key, _ in mechanisms.STAGES}
     pages = _navigation_pages()
-    assert {'savings/results', 'recipients/list', 'delivery/trunk', 'costs/savings', 'providers/trunk'} <= pages, \
-        'navigation.tsx or its moved addresses were not read'
+    assert {'savings/results', 'recipients/list', 'delivery/trunk'} <= pages, \
+        'navigation.tsx was not read'
     screen = SAVINGS_SCREEN.read_text(encoding='utf-8')
     advice = RECOMMENDATIONS_SCREEN.read_text(encoding='utf-8')
     reference = (API_ROOT.parent / 'docs' / 'reference' / 'cli.md').read_text(encoding='utf-8')
@@ -100,7 +97,7 @@ def test_every_entry_names_real_settings_pages_parts_and_an_evidence_level():
             assert mechanism.link_label and mechanism.command, mechanism.key
             assert f'### `{_command_now(mechanism.command)}`' in reference, \
                 f'{mechanism.key}: no command {mechanism.command}'
-            if page == 'costs/recommendations':
+            if page == 'savings/opportunities':
                 section = query.removeprefix('section=')
                 assert f'section="{section}"' in advice, f'Recommendations.tsx renders no anchor for {section}'
         else:
@@ -238,7 +235,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert blocked['enabled'] == {'on': True, 'label': 'On', 'sentence': 'On for 1 number on your blocked list.'}
     assert blocked['works'] == {'here': True, 'label': 'Works here', 'sentence': None}
     assert blocked['here'] == {'used': 1, 'sentence': 'Turned away 1 call in 30 days'}
-    assert blocked['part'] == 'blocked_calls' and blocked['page'] == 'numbers/blocked'
+    assert blocked['part'] == 'blocked_calls' and blocked['page'] == 'delivery/blocked'
     assert savings['blocked_calls']['sentence'] == '1 call from blocked senders was turned away before Faxbot answered.'
 
     assert items['toll_free']['enabled']['sentence'] == 'On for 1 recipient who approved a toll-free number.'
@@ -255,7 +252,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     # Shading is off by the setting and the trunk bills by time, so the map offers to turn it on there.
     friendly = items['fax_friendly']
     assert (friendly['enabled']['label'], friendly['works']['label'], friendly['turn_on']) == ('Off', 'Works here', True)
-    assert friendly['page'] == 'providers/sending' and friendly['page_label'] == 'Delivery setup → Providers & accounts → Delivery routes'
+    assert friendly['page'] == 'delivery/connections' and friendly['page_label'] == 'Delivery setup → Providers & accounts → Delivery routes'
 
     # The trunk's own numbers receive into Faxbot, so faxes to them need no call.
     assert items['own_numbers']['enabled']['on'] is True and items['own_numbers']['works']['here'] is True
@@ -275,7 +272,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     t38 = items['fax_over_ip']
     assert (t38['enabled']['on'], t38['works']['here'], t38['evidence']['level']) == (True, True, 'live')
     assert t38['here']['sentence'] == 'Used on 10 calls in 30 days'
-    assert t38['link'] == 'costs/savings?part=t38' and t38['command'] == 'faxbot savings results'
+    assert t38['link'] == 'savings/results?part=t38' and t38['command'] == 'faxbot savings results'
     assert savings['t38']['sentence'] == ('Fax over IP (T.38) took about 18 seconds a page over 10 calls, and audio '
                                           'fax about 30 seconds a page over 10 calls.')
     assert savings['t38']['saved'] == [] and savings['t38']['estimate'] is False
@@ -299,7 +296,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
 
     # Advice leads to its own section of Recommendations, never to Savings, and is always on.
     plans = items['advice_plans']
-    assert plans['link'] == 'costs/recommendations?section=plans' and plans['part'] is None
+    assert plans['link'] == 'savings/opportunities?section=plans' and plans['part'] is None
     assert plans['enabled']['on'] is True and plans['turn_on'] is False
     assert plans['works'] == {'here': False, 'label': 'Not here',
                               'sentence': 'Needs a monthly plan; none of your fax services has one.'}
@@ -308,7 +305,7 @@ def test_the_map_reads_a_real_installation_and_never_shows_money(installation):
     assert items['advice_caller_names']['works']['sentence'] == 'Needs your Telnyx key saved on the Telnyx page.'
     charges = items['charge_checks']
     assert (charges['link'], charges['link_label'], charges['command']) == (
-        'costs/charges', 'Savings & optimization → Charges', 'faxbot savings charges')
+        'savings/charges', 'Savings & optimization → Charges', 'faxbot savings charges')
     stages = {stage['key']: stage for stage in body['stages']}
     assert [key for key, stage in stages.items() if not stage['path']] == ['advice']
     # "Advice only" is said once, under the advice stage's title, never on each card.
@@ -413,7 +410,7 @@ def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation
         # One call got no fax data back: it works here, and Turn on leads to the trunk page's "Try T.38 again".
         sip_fax_mode.write(where, 'audio', sip_fax_mode.NO_DATA_BACK)
         t38 = item('fax_over_ip')
-        assert (t38['works']['here'], t38['turn_on'], t38['page']) == (True, True, 'providers/trunk')
+        assert (t38['works']['here'], t38['turn_on'], t38['page']) == (True, True, 'delivery/trunk')
         assert t38['enabled']['sentence'] == ('Off: a T.38 fax got no fax data back on this network, so Faxbot uses '
                                               'audio fax.')
 
@@ -424,7 +421,7 @@ def test_a_switch_faxbot_made_itself_is_said_and_never_offered_back(installation
         assert agreed.status_code == 200, agreed.text
         marks = item('separator_pages')
         assert (marks['enabled']['on'], marks['works']['here'], marks['turn_on']) == (False, True, True)
-        assert (marks['page'], marks['page_label']) == ('numbers/identity', 'Delivery setup → Sending identity')
+        assert (marks['page'], marks['page_label']) == ('delivery/identity', 'Delivery setup → Sending identity')
         assert marks['enabled']['sentence'].startswith('Marks at the top of every page need your header text')
 
 

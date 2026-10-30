@@ -429,7 +429,7 @@ def test_system_diagnostics_shows_the_network_check(monkeypatch, tmp_path):
         'engine.network', 'engine', report.OK, 'Faxbot has not checked this network yet.')
     sip_network.write_check(settings, sip_network.assess(settings, COLIMA_USER[1], COLIMA_USER[0]))
     [blocked] = asyncio.run(report.network_for_fax(context))
-    assert (blocked.status, blocked.fix_page) == (report.ATTENTION, 'providers/trunk')
+    assert (blocked.status, blocked.fix_page) == (report.ATTENTION, 'delivery/trunk')
     assert blocked.sentence == ('Your network needs one change so faxes can go over the internet. The carrier page '
                                 'shows what to do. Faxes still go through meanwhile.')
     assert blocked.title == 'Faxing over the internet'

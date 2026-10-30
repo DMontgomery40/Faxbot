@@ -175,7 +175,7 @@ export function HeldFaxes({ api, canApprove, onNavigate, onChanged, whenNone }: 
                         onClick={() => setRefusing(hold)}>Refuse</Button>
                     )}
                     {hold.kind === 'no_route' && onNavigate && (
-                      <Button size="small" onClick={() => onNavigate('providers/rules')}>Edit rules</Button>
+                      <Button size="small" onClick={() => onNavigate('delivery/rules')}>Edit rules</Button>
                     )}
                   </TableCell>
                 </TableRow>

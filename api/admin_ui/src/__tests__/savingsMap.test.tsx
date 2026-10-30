@@ -62,7 +62,7 @@ describe('The savings map on Overview', () => {
     const shading = items.find((item) => item.key === 'fax_friendly')!;
     fireEvent.click(screen.getByRole('button', { name: `Turn on ${shading.name} in ${shading.page_label}` }));
     // The setting's page only: the card's own link to Savings does not fire as well.
-    expect(navigate.mock.calls).toEqual([['providers/sending']]);
+    expect(navigate.mock.calls).toEqual([['delivery/connections']]);
     // Every mechanism has its page, even one with no figures of its own; advice and charge checks too.
     fireEvent.click(screen.getByTestId('savings-map-busy_hours'));
     expect(navigate).toHaveBeenLastCalledWith('savings/capabilities?key=busy_hours');

@@ -92,7 +92,7 @@ export function DoingContent({ used, results, days, newInstall, connect, canSetU
           </LinkLine>
         ))}
         {canSetUp && onNavigate && (
-          <Button variant="contained" size="small" sx={{ mt: 1 }} onClick={() => onNavigate('setup')}>Set up a fax provider</Button>
+          <Button variant="contained" size="small" sx={{ mt: 1 }} onClick={() => onNavigate('admin/setup')}>Set up a fax provider</Button>
         )}
       </Box>
     );

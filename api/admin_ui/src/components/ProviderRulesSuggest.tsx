@@ -30,7 +30,7 @@ export function AddAsRuleButton({ api, suggestion, onDone, onError, onNavigate }
   const [added, setAdded] = useState(false);
   const [busy, setBusy] = useState(false);
   if (added && onNavigate) {
-    return <Button size="small" onClick={() => onNavigate('providers/rules')}>Open your draft rules</Button>;
+    return <Button size="small" onClick={() => onNavigate('delivery/rules')}>Open your draft rules</Button>;
   }
   return (
     <Button size="small" disabled={busy || added} onClick={() => {

@@ -46,7 +46,7 @@ export default function ProvidersInUse({ context, canChange, onNavigate }: {
       )}
       {canChange && (
         <Button variant="outlined" startIcon={<AddCircleOutlineIcon />} sx={{ mt: 2, borderRadius: 2 }}
-          onClick={() => onNavigate('system/setup')}>
+          onClick={() => onNavigate('admin/setup')}>
           Add or change a provider
         </Button>
       )}

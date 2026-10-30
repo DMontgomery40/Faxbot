@@ -46,7 +46,7 @@ class Finding:
     status: str
     sentence: str
     fix_label: str | None = None
-    fix_page: str | None = None  # a console address such as 'providers/sending'
+    fix_page: str | None = None  # a console address such as 'delivery/connections'
 
     def as_dict(self):
         item = asdict(self)
@@ -158,21 +158,21 @@ async def sending(context: Context) -> list[Finding]:
     if configuration is None:
         return [Finding('sending.provider', 'sending', 'Sending', PROBLEM,
                         'No sending provider is set up, so Faxbot cannot send faxes.',
-                        'Set up sending', 'system/setup')]
+                        'Set up sending', 'admin/setup')]
     if configuration is False:
         return [Finding('sending.provider', 'sending', 'Sending', PROBLEM,
                         'Faxbot cannot read its saved sending settings. Open Providers & accounts and save them again.',
-                        'Open Providers & accounts', 'providers/sending')]
+                        'Open Providers & accounts', 'delivery/connections')]
     if configuration.provider_id == 'freeswitch':
         return [Finding('sending.provider', 'sending', 'Sending', ATTENTION,
-                        "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup.", 'Open Setup', 'system/setup')]
+                        "FreeSWITCH, your sending provider, won't work after the next update. Choose a new one in Setup.", 'Open Setup', 'admin/setup')]
     if configuration.provider_id == 'sip':
         name = provider_label(configuration.provider_id)
         return [Finding('sending.provider', 'sending', 'Sending', OK,
                         f'Faxes are sent through {name}. Fax engine, below, shows whether {name} accepts Faxbot\'s calls.')]
     status, sentence = await _sign_in(configuration)
     return [Finding('sending.provider', 'sending', 'Sending account', status, sentence,
-                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'providers/sending')]
+                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'delivery/connections')]
 
 
 @check('receiving')
@@ -180,13 +180,13 @@ async def receiving(context: Context) -> list[Finding]:
     main = _main()
     if not main.settings.inbound_enabled:
         return [Finding('receiving.provider', 'receiving', 'Receiving', OFF, 'Receiving is turned off.',
-                        'Open Providers & accounts', 'providers/sending')]
+                        'Open Providers & accounts', 'delivery/connections')]
     configuration = _profile(context.request, 'inbound')
     if not configuration:
         return [Finding('receiving.provider', 'receiving', 'Receiving', PROBLEM,
                         'Receiving is turned on, but no fax service is chosen to receive faxes. Choose one in Setup.',
                         'Set up receiving',
-                        'system/setup')]
+                        'admin/setup')]
     if configuration.provider_id in {'sip', 'freeswitch'}:
         return []  # the trunk check below covers it
     outbound = _profile(context.request, 'outbound')
@@ -196,7 +196,7 @@ async def receiving(context: Context) -> list[Finding]:
                         f'{name} receives faxes with the same account it sends with.')]
     status, sentence = await _sign_in(configuration)
     return [Finding('receiving.provider', 'receiving', 'Receiving account', status, sentence,
-                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'providers/sending')]
+                    None if status == OK else 'Open Providers & accounts', None if status == OK else 'delivery/connections')]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +333,7 @@ async def email_delivery(context: Context) -> list[Finding]:
     store, connectors, counts = await _blocking(_intake_state, context.request)
     if not connectors:
         return [Finding('receiving.email', 'receiving', 'Email delivery', OFF,
-                        'Received faxes are not emailed to anyone.', 'Set up email delivery', 'numbers/email')]
+                        'Received faxes are not emailed to anyone.', 'Set up email delivery', 'delivery/email')]
     findings = []
     for connector in connectors:
         password = await _blocking(store.password, connector.id)
@@ -346,7 +346,7 @@ async def email_delivery(context: Context) -> list[Finding]:
         findings.append(Finding(f'receiving.email.{connector.id}', 'receiving', f'Email to {recipients}',
                                 PROBLEM if problem else OK,
                                 problem or 'Faxbot can sign in to the email server.',
-                                'Open Email delivery' if problem else None, 'numbers/email' if problem else None))
+                                'Open Email delivery' if problem else None, 'delivery/email' if problem else None))
     failed = int(counts.get('failed', 0))
     if failed:
         findings.append(Finding('receiving.email.failed', 'receiving', 'Faxes not emailed', ATTENTION,
@@ -378,7 +378,7 @@ async def fax_engine(context: Context) -> list[Finding]:
     if not ami_client._connected.is_set():
         message = ami_client.engine_message() or 'Faxbot cannot reach its fax engine.'
         return [Finding('engine.running', 'engine', 'Fax engine', PROBLEM, message, 'Open carrier trunk',
-                        'providers/trunk')]
+                        'delivery/trunk')]
     try:
         calls = await asyncio.wait_for(ami_client.active_calls(), CHECK_SECONDS)
         detail = 'No call is in progress.' if not calls else f'{_plural(calls, "call")} in progress.'
@@ -402,7 +402,7 @@ async def ssl_fax_engine(context: Context) -> list[Finding]:
         status = ATTENTION  # on audio fax on its own; Apply and connect on the trunk page tries T.38 again
     fix = None if status in (OK, OFF) else 'Open carrier trunk'
     return [Finding('engine.sslfax', 'engine', 'Fax engine', status, sentence, fix,
-                    'providers/trunk' if fix else None)]
+                    'delivery/trunk' if fix else None)]
 
 
 @check('carrier trunk')
@@ -417,18 +417,18 @@ async def carrier_trunk(context: Context) -> list[Finding]:
         registration == 'registered' or status.get('reachability') == 'reachable')
     findings = [Finding('engine.trunk', 'engine', f'{carrier} trunk', OK if working else PROBLEM,
                         status.get('message') or status.get('registration_text') or '',
-                        None if working else 'Open carrier trunk', None if working else 'providers/trunk')]
+                        None if working else 'Open carrier trunk', None if working else 'delivery/trunk')]
     if status.get('handover_text'):
         ready = status.get('handover_ready')
         findings.append(Finding('engine.handover', 'receiving', 'Faxes from the trunk', OK if ready else PROBLEM,
                                 status['handover_text'], None if ready else 'Open carrier trunk',
-                                None if ready else 'providers/trunk'))
+                                None if ready else 'delivery/trunk'))
     if status.get('t38_off_reason'):
         from . import sip_fax_mode
         sentence = sip_fax_mode.off_sentence(status['t38_off_reason'], _day(status.get('t38_off_at')), carrier)
         findings.append(Finding('engine.t38', 'engine', 'Fax over IP (T.38)', ATTENTION,
                                 sentence or 'Faxbot uses audio fax on this trunk.', 'Open carrier trunk',
-                                'providers/trunk'))
+                                'delivery/trunk'))
     telnyx = status.get('telnyx_t38')
     if telnyx and telnyx.get('text'):
         ready = bool(telnyx.get('ready'))
@@ -437,7 +437,7 @@ async def carrier_trunk(context: Context) -> list[Finding]:
                                 OK if ready else ATTENTION, telnyx['text'],
                                 None if ready else ('Open carrier trunk to turn on T.38' if fixable
                                                     else 'Open carrier trunk'),
-                                None if ready else 'providers/trunk'))
+                                None if ready else 'delivery/trunk'))
     if status.get('last_call_text'):
         verdict = status.get('last_call_verdict') or ''
         good = verdict in {'sent', 'received', ''}
@@ -459,7 +459,7 @@ async def network_for_fax(context: Context) -> list[Finding]:
     good = found['t38'] == sip_network.OPEN or not found.get('checked')
     return [Finding('engine.network', 'engine', 'Faxing over the internet', OK if good else ATTENTION,
                     found.get('office_text') or '', None if good else 'Open carrier trunk',
-                    None if good else 'providers/trunk')]
+                    None if good else 'delivery/trunk')]
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +512,7 @@ async def server(context: Context) -> list[Finding]:
         findings.append(Finding('server.disk', 'server', 'Disk space', ATTENTION if low else OK,
                                 f'{_gigabytes(free)} free of {_gigabytes(total)} where faxes are stored.'
                                 + (' Free some space soon: Faxbot stops receiving when the disk is full.' if low else ''),
-                                'Open Storage & retention' if low else None, 'system/storage' if low else None))
+                                'Open Storage & retention' if low else None, 'admin/retention' if low else None))
     folders = facts['data_writable'] and facts['temp_writable']
     findings.append(Finding('server.folders', 'server', 'Fax folders', OK if folders else PROBLEM,
                             'Faxbot can save fax files.' if folders
@@ -525,7 +525,7 @@ async def server(context: Context) -> list[Finding]:
     findings.append(Finding('server.time_zone', 'server', 'Time zone', OK if zone else ATTENTION,
                             f'Times are shown in {zone} time.' if zone
                             else 'No time zone is chosen, so times are shown in world standard time (UTC).',
-                            None if zone else 'Choose a time zone', None if zone else 'system/setup'))
+                            None if zone else 'Choose a time zone', None if zone else 'admin/setup'))
     snapshot = context.request.scope['faxbot.configuration']
     if snapshot.pending is not None:
         findings.append(Finding('server.restart', 'server', 'Waiting for a restart', ATTENTION,
@@ -553,7 +553,7 @@ def _s3_reachable(settings):
 
 def _storage_finding(settings):
     """Online storage: finished or not, and reachable when the bucket check is turned on."""
-    page = 'system/storage'
+    page = 'admin/retention'
     if not settings.s3_bucket:
         return Finding('server.storage', 'server', 'Online storage', PROBLEM,
                        'Online storage is turned on but not finished. Finish it in Storage & retention.',
@@ -578,7 +578,7 @@ async def security(context: Context) -> list[Finding]:
                 'Faxbot records who changed what in the audit log.' if settings.audit_log_enabled
                 else 'Faxbot is not recording who changed what. Turn on the audit log.',
                 None if settings.audit_log_enabled else 'Open Audit log',
-                None if settings.audit_log_enabled else 'system/audit'),
+                None if settings.audit_log_enabled else 'admin/audit'),
         Finding('security.limits', 'security', 'Protection from overload',
                 OK if settings.max_requests_per_minute > 0 else ATTENTION,
                 'Faxbot protects itself from a program that sends it too much at once.'
@@ -586,13 +586,13 @@ async def security(context: Context) -> list[Finding]:
                 else ('Faxbot does not protect itself from a program that sends it too much at once. Turn this on '
                       'in Security.'),
                 None if settings.max_requests_per_minute > 0 else 'Open Security',
-                None if settings.max_requests_per_minute > 0 else 'system/security'),
+                None if settings.max_requests_per_minute > 0 else 'admin/security'),
     ]
     if not settings.enforce_public_https:
         findings.append(Finding('security.https', 'security', 'Secure links', ATTENTION,
                                 'Fax services may collect your documents over an unprotected connection. Turn on secure links in '
                                 'Security.',
-                                'Open Security', 'system/security'))
+                                'Open Security', 'admin/security'))
     return findings
 
 

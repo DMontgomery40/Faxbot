@@ -52,7 +52,7 @@ export function ReceivingSummary({ load, onNavigate }: {
         </Typography>
       ))}
       {rules && rules.length > 8 && <Typography variant="body2">And {rules.length - 8} more.</Typography>}
-      {onNavigate && <Button size="small" sx={{ mt: 1 }} onClick={() => onNavigate('numbers/list')}>Open Numbers</Button>}
+      {onNavigate && <Button size="small" sx={{ mt: 1 }} onClick={() => onNavigate('delivery/numbers')}>Open Numbers</Button>}
     </Paper>
   );
 }

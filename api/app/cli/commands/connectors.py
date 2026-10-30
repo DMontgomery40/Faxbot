@@ -13,7 +13,7 @@ from ..errors import CliError, EXIT_FAILURE
 from ..output import local_time, text
 
 
-connectors = typer.Typer(help='Email mailboxes and folders that bring documents into Faxbot or send faxes, each '
+connectors = typer.Typer(help='Import incoming documents or submit outgoing faxes from email mailboxes and folders, each '
                               'document only once.', no_args_is_help=True)
 
 SECRET_PROMPTS = {
@@ -87,7 +87,7 @@ def connectors_add(
         name: str = typer.Argument(..., help='A name for the connector, such as "Scanner share" or "Email to fax".'),
         kind: str = typer.Option(..., '--kind', help='email (a mailbox) or folder (a folder inside the Faxbot '
                                                     'container).'),
-        direction: str = typer.Option('receive', '--direction', help='receive brings documents in; send faxes them.'),
+        direction: str = typer.Option('receive', '--direction', help='receive imports incoming documents; send submits outgoing faxes.'),
         mailbox: str = typer.Option(None, '--mailbox', help='Mailbox that receives documents with no sidecar file.'),
         path: str = typer.Option(None, '--path', help='Folder inside the Faxbot container, such as /scans.'),
         settle_seconds: int = typer.Option(None, '--settle-seconds',

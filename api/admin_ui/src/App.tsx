@@ -350,7 +350,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
     client, me, permissions, context, adminConfig, contextLoading, contextError, docsBase, canSetUp,
     params: shown ? parseAddress(shown.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
     navigate, goHome, jobToOpen,
-    openJob: (jobId) => { setJobToOpen(jobId); navigate('jobs'); },
+    openJob: (jobId) => { setJobToOpen(jobId); navigate('faxes/sent'); },
     jobOpened: () => setJobToOpen(null),
   };
 
@@ -414,7 +414,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
             <OwnerEnrollment client={client} onEnrolled={() => {
               onIdentityChanged();
               // A new installation's next step after its first owner is choosing a fax provider.
-              if (context.provider_view && !context.provider_view.active_outbound) navigate('setup');
+              if (context.provider_view && !context.provider_view.active_outbound) navigate('admin/setup');
             }} />
           </Box>
         )}

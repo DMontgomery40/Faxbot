@@ -440,10 +440,10 @@ export const NAVIGATION: NavArea[] = [
             <ReplyNumber client={ctx.client} canWrite={ctx.permissions.has('settings:write')} />
           </>
         ) },
-      { id: 'email', label: 'Staff email delivery', icon: <EmailIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
-        render: settingsPage(['intake', 'email'], 'Staff email delivery') },
+      { id: 'email', label: 'Deliver received documents to staff', icon: <EmailIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
+        render: settingsPage(['intake', 'email'], 'Deliver received documents to staff') },
       // Mailboxes and folders that bring documents in or send faxes (intake connectors).
-      { id: 'connectors', label: 'Email and folders', icon: <AllInboxIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
+      { id: 'connectors', label: 'Import documents or submit faxes', icon: <AllInboxIcon />, group: DOCUMENTS, gate: { anyOf: SETTINGS_READ },
         render: (ctx) => <Connectors client={ctx.client} canWrite={ctx.permissions.has('settings:write')} /> },
       { id: 'connections', label: 'Providers & accounts', icon: <SwapHorizIcon />, group: CONNECTIONS, gate: { anyOf: SETTINGS_READ }, refreshContext: true,
         render: (ctx) => whenContextReady(ctx,
@@ -639,7 +639,7 @@ export interface ParsedAddress {
   params: URLSearchParams;
 }
 
-// '#/providers/trunk' → providers, trunk. Anything else is not an address.
+// '#/delivery/trunk' → delivery, trunk. Anything else is not an address.
 export function parseAddress(hash: string): ParsedAddress | null {
   const match = /^#\/([a-z]+)(?:\/([a-z-]+))?\/?(?:\?(.*))?$/.exec(hash);
   if (!match) return null;

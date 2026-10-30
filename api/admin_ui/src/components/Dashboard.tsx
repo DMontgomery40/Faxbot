@@ -342,7 +342,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
                     )}
                     {!health.backend && !receivesOnly(health) && canSetUp && onNavigate && !doingOffersSetUp && (
                       <Button variant="contained" size="small" sx={{ mt: 1.5 }}
-                        onClick={(event) => { event.stopPropagation(); onNavigate('setup'); }}>
+                        onClick={(event) => { event.stopPropagation(); onNavigate('admin/setup'); }}>
                         Set up a fax provider
                       </Button>
                     )}
@@ -381,7 +381,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
               {/* Sending now */}
               <Grid item xs={12} sm={6} lg={4}>
-                <OpenCard hint="Open Sent" onOpen={() => onNavigate?.('jobs')}>
+                <OpenCard hint="Open Sent" onOpen={() => onNavigate?.('faxes/sent')}>
                   <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                     <Typography variant="h6" component="h3" gutterBottom sx={cardTitleSx}>Outbound Delivery</Typography>
                     <Box display="flex" flexDirection="column" gap={1}>
@@ -409,7 +409,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
               {/* Receiving */}
               <Grid item xs={12} sm={6} lg={4}>
-                <OpenCard hint="Open Received" onOpen={() => onNavigate?.('inbox')}>
+                <OpenCard hint="Open Received" onOpen={() => onNavigate?.('faxes/received')}>
                   <CardContent sx={{ pb: { xs: 1, sm: 2 } }}>
                     <Typography variant="h6" component="h3" gutterBottom sx={cardTitleSx}>Inbound Fax</Typography>
                     <Chip label={health.inbound_enabled ? 'Enabled' : 'Disabled'} color={health.inbound_enabled ? 'success' : 'warning'}
@@ -427,7 +427,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
           {/* Spending by provider, last 30 days */}
           <Grid item xs={12} sm={6} lg={4}>
-            <DeliveryCard title="Spending, last 30 days" hint="Click to view spending" data={sources.costs} onOpen={() => onNavigate?.('routes')}>
+            <DeliveryCard title="Spending, last 30 days" hint="Click to view spending" data={sources.costs} onOpen={() => onNavigate?.('savings/spending')}>
               {(costs) => {
                 // The same reading of spending as Spending (spendingSummary).
                 const lines = spendingLines(costs);
@@ -445,7 +445,7 @@ function Dashboard({ client, onNavigate, canSetUp = false, canReadAnalysis = fal
 
           {/* Received faxes waiting for or done with email delivery */}
           <Grid item xs={12} sm={6} lg={4}>
-            <DeliveryCard title="Email delivery" hint="Click to view received faxes" data={sources.intake} onOpen={() => onNavigate?.('inbox')}>
+            <DeliveryCard title="Email delivery" hint="Click to view received faxes" data={sources.intake} onOpen={() => onNavigate?.('faxes/received')}>
               {(intakeCounts) => (
                 <Box display="flex" flexDirection="column" gap={1}>
                   <Line label="Waiting" value={intakeCounts.received + intakeCounts.sending} />

@@ -11,7 +11,7 @@ import { server } from '../test/server';
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 
 const connector = (overrides: Partial<Connector>): Connector => ({
-  id: 'c1', name: 'Email to fax', kind: 'email', direction: 'send', what: 'Faxes what people email', enabled: true,
+  id: 'c1', name: 'Email to fax', kind: 'email', direction: 'send', what: 'Submits outgoing faxes from email', enabled: true,
   paused: false, status: 'Nothing new.', ok: true, last_checked_at: '2026-10-07T15:00:00', has_secret: true,
   has_sending_key: true, sending_key_id: 'abcdef012345', settings: { provider: 'google', address: 'fax@example.com' },
   version: 1, created_at: '2026-10-07T14:00:00', counts: { items: 4, duplicates: 3, refused: 1, failed: 0 },
@@ -34,7 +34,7 @@ describe('Email and folders', () => {
   it('is a Delivery setup page for people who read settings', () => {
     const delivery = NAVIGATION.find((area) => area.id === 'delivery')!;
     const page = delivery.pages.find((item) => item.id === 'connectors')!;
-    expect(page.label).toBe('Email and folders');
+    expect(page.label).toBe('Import documents or submit faxes');
     expect(page.gate).toEqual({ anyOf: ['settings:read'] });
   });
 
@@ -42,7 +42,7 @@ describe('Email and folders', () => {
     server.use(
       http.get('/intake/sources', () => HttpResponse.json({ connectors: [
         connector({}),
-        connector({ id: 'c2', name: 'Scanner share', kind: 'folder', direction: 'receive', what: 'Brings in documents from a folder',
+        connector({ id: 'c2', name: 'Scanner share', kind: 'folder', direction: 'receive', what: 'Imports incoming documents from a folder',
           paused: true, enabled: false, status: 'Paused by Jane Smith.', has_sending_key: false, senders: undefined,
           mailbox: { id: 'm1', label: 'Front Desk', number: '+15550100001' }, counts: { items: 2, duplicates: 0, refused: 0, failed: 0 } }),
       ] })),

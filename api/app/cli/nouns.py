@@ -119,7 +119,7 @@ mailboxes.command('list')(access.mailboxes_list)
 mailboxes.command('add')(access.mailboxes_add)
 mailboxes.command('update')(access.mailboxes_update)
 mailboxes.command('target')(work.work_settings)
-email = _group('Email delivery of received faxes to your staff.')
+email = _group('Deliver received documents to staff by email.')
 email.add_typer(delivery.connectors, name='connectors')
 # Their own homes are under delivery (and admin npi); the older names under numbers still work.
 numbers.add_typer(mailboxes, name='mailboxes', hidden=True)

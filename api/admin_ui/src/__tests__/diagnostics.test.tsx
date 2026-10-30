@@ -18,13 +18,13 @@ const report: DiagnosticsReport = {
     { id: 'sending', title: 'Sending', checks: [
       { id: 'sending.provider', section: 'sending', title: 'Sending account', status: 'problem',
         sentence: 'HumbleFax did not accept Faxbot\'s sign-in details. Enter them again in Providers.',
-        fix: { label: 'Open Providers', page: 'providers/sending' } },
+        fix: { label: 'Open Providers', page: 'delivery/connections' } },
       { id: 'sending.recent', section: 'sending', title: 'Recent faxes', status: 'ok',
         sentence: 'Last fax delivered 4 Oct 2:55 PM MDT. In the last 7 days: 6 delivered, 1 failed.', fix: null },
     ] },
     { id: 'engine', title: 'Fax engine', checks: [
       { id: 'engine.t38', section: 'engine', title: 'Fax over IP (T.38)', status: 'attention',
-        sentence: 'Off: your network changes port numbers.', fix: { label: 'Open carrier trunk', page: 'providers/trunk' } },
+        sentence: 'Off: your network changes port numbers.', fix: { label: 'Open carrier trunk', page: 'delivery/trunk' } },
       { id: 'engine.running', section: 'engine', title: 'Fax engine', status: 'off',
         sentence: 'Your providers send and receive faxes themselves.', fix: null },
     ] },
@@ -61,9 +61,9 @@ describe('Diagnostics', () => {
     const onNavigate = vi.fn();
     render(<Diagnostics client={client()} onNavigate={onNavigate} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open Providers' }));
-    expect(onNavigate).toHaveBeenCalledWith('providers/sending');
+    expect(onNavigate).toHaveBeenCalledWith('delivery/connections');
     fireEvent.click(screen.getByRole('button', { name: 'Open carrier trunk' }));
-    expect(onNavigate).toHaveBeenLastCalledWith('providers/trunk');
+    expect(onNavigate).toHaveBeenLastCalledWith('delivery/trunk');
   });
 
   it('copies the same sentences a person reads, with no codes', async () => {

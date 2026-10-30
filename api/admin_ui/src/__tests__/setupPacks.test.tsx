@@ -54,11 +54,11 @@ function plan(changes: Partial<Plan> = {}): Plan {
     missing: [
       { key: 'retention', sentence: 'Choose how long Faxbot keeps the documents you send.', owner: 'you',
         operation: 'Compliance basics: keeping sent documents', status: 'warning', scope: 'organization',
-        link: 'system/storage' },
+        link: 'admin/retention' },
       { key: 'reviewed-rules.GB', sentence: 'Faxbot has no reviewed fax rules for the United Kingdom yet.',
         owner: 'faxbot', operation: 'Compliance basics', status: 'warning', scope: 'box-gb', link: null },
       { key: 'draft.organization', sentence: 'Your rules for the organization have unpublished changes.',
-        owner: 'you', operation: 'Rules in this plan', status: 'blocking', scope: 'organization', link: 'providers/rules' },
+        owner: 'you', operation: 'Rules in this plan', status: 'blocking', scope: 'organization', link: 'delivery/rules' },
     ],
     mailboxes: [
       { id: 'box-us', name: 'Denver', country: 'US', country_source: 'stated', items: ['compliance.header'], missing: [],
@@ -145,7 +145,7 @@ describe('Setup → Suggested Packs', () => {
     expect(within(screen.getByTestId('setup-missing-reviewed-rules.GB')).getByText('Not in Faxbot yet')).toBeTruthy();
     expect(within(screen.getByTestId('setup-missing-draft.organization')).getByText('Holds back: Rules in this plan')).toBeTruthy();
     fireEvent.click(within(retention).getByRole('button', { name: 'Open the page' }));
-    expect(navigate).toHaveBeenCalledWith('system/storage');
+    expect(navigate).toHaveBeenCalledWith('admin/retention');
     const denver = screen.getByRole('table', { name: 'Denver settings' });
     expect(within(denver).getByText('This installation')).toBeTruthy();
     expect(screen.getByRole('table', { name: 'Leeds settings' })).toBeTruthy();

@@ -148,7 +148,7 @@ export function attentionView(sources: AttentionSources, { canSetUp = false }: {
     const status = health.data;
     if (!status.backend && !status.receiving_backend) {
       add({ key: 'no-provider', group: 'check', label: 'No fax provider is set up yet', count: null,
-        destination: canSetUp ? 'setup' : 'diagnostics' });
+        destination: canSetUp ? 'admin/setup' : 'admin/health' });
     }
     const notReady = notReadyFor(status);
     if (notReady) {
