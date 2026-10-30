@@ -46,7 +46,15 @@ function Section({ title, text, children }: { title: string; text: string; child
   );
 }
 
-export default function DeliveryRoutes({ client, canWrite, section }: { client: AdminAPIClient; canWrite: boolean; section?: DeliveryRoutesSection }) {
+export default function DeliveryRoutes({ client, canWrite, section, recipient, onRecipientChange, recordHref }: {
+  client: AdminAPIClient;
+  canWrite: boolean;
+  section?: DeliveryRoutesSection;
+  // The recipient named in the page address (?recipient=…), on the Recipients page.
+  recipient?: string | null;
+  onRecipientChange?: (number: string | null) => void;
+  recordHref?: (number: string) => string;
+}) {
   const [state, setState] = useState<LoadState>('loading');
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [providers, setProviders] = useState<ProviderCosts[]>([]);
@@ -129,7 +137,10 @@ export default function DeliveryRoutes({ client, canWrite, section }: { client: 
               {section === 'numbers' && unread.suggestions && <LoadFailed testId="numbers-suggestions-unread"
                 text="Numbers whose recipient runs Faxbot could not be loaded. Try again." />}
               <Destinations client={client} destinations={destinations} canWrite={canWrite} onChanged={() => void load()}
-                partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null} />
+                partners={section === 'numbers' ? partners : null} suggested={section === 'numbers' ? suggested : null}
+                recipient={section === 'numbers' ? recipient : undefined}
+                onRecipientChange={section === 'numbers' ? onRecipientChange : undefined}
+                recordHref={section === 'numbers' ? recordHref : undefined} />
               {section === 'numbers' && <RegisteredSenders client={client} canWrite={canWrite} />}
             </>)}
           {shows('rates') && part('rates',

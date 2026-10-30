@@ -60,7 +60,7 @@ function BlockedSenders({ client, canWrite }: BlockedSendersProps) {
   const past = entries.filter((entry) => !entry.active);
   return (
     <Box data-testid="blocked-senders">
-      <Typography variant="h5" gutterBottom>Blocked senders</Typography>
+      <Typography variant="h5" component="h1" gutterBottom>Blocked senders</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Calls from these numbers are turned away before Faxbot answers, so the call costs nothing and no junk fax arrives.
         Callers who withhold their number are never blocked.

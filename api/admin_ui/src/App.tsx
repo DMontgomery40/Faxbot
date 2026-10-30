@@ -20,6 +20,7 @@ import OwnerEnrollment from './components/OwnerEnrollment';
 import NavPanel, { SendFaxButton, type SendAction } from './components/shell/NavPanel';
 import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
 import { AddressProblem, MovedNotice } from './components/shell/AddressState';
+import { focusPageHeadingWhenShown } from './components/shell/focusHeading';
 import UserMenu from './components/shell/UserMenu';
 import { ThemeProvider } from './theme/ThemeContext';
 import { setProviderNames } from './providerLabels';
@@ -266,8 +267,6 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   // Every screen names the trunk by its carrier, from the context in hand.
   setProviderNames(context.provider_names);
   const [mobileOpen, setMobileOpen] = useState(false);
-  // A fax Send just queued, opened in Sent when the person follows it.
-  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
 
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
   const pluginsEnabled = Boolean(context.provider_view?.plugins_enabled);
@@ -298,12 +297,27 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
 
   const navigateTo = useCallback((address: string) => {
     setMoved(null);
+    // A query-only move (a filter, an opened record) keeps the scroll position, so
+    // Back returns to the same place in the same list; another page starts at its top.
+    const anotherPage = address.split('?')[0] !== window.location.hash.split('?')[0];
     setAddress(address);
     setMobileOpen(false);
-    window.scrollTo?.({ top: 0 });
+    if (anotherPage) window.scrollTo?.({ top: 0 });
+  }, [setAddress]);
+  // The address changes without a history entry (typing in a search box).
+  const replaceTo = useCallback((address: string) => {
+    window.history.replaceState(window.history.state, '', address);
+    setAddress(address);
   }, [setAddress]);
   const openPage = useCallback((area: NavArea, page: NavPage) => navigateTo(pageAddress(area.id, page.id)), [navigateTo]);
   const navigate = useCallback((destination: AdminDestination) => navigateTo(destinationAddress(destination)), [navigateTo]);
+  const replace = useCallback((destination: AdminDestination) => replaceTo(destinationAddress(destination)), [replaceTo]);
+
+  // Moving to another page puts the keyboard focus on its heading. Query-only
+  // moves (filters, opened records) and the first page shown leave focus alone.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const shownPage = useRef<string | null>(null);
+  const focusedPage = useRef<string | null>(null);
   const goHome = useCallback(() => {
     if (visible[0]) openPage(visible[0], visible[0].pages[0]);
   }, [visible, openPage]);
@@ -334,6 +348,18 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const contextLoading = refreshes && (refresh.key !== pageKey || refresh.state === 'loading');
   const contextError = refreshes && refresh.key === pageKey && refresh.state === 'error' ? CONTEXT_FAILED : null;
 
+  // A page that reads its settings again, or loads its own data first, shows its
+  // heading only once they land; focus then, once per page, never on the first page
+  // of the session. Leaving the page stops the wait.
+  useEffect(() => {
+    if (!pageKey) return;
+    const firstPage = shownPage.current === null;
+    shownPage.current = pageKey;
+    if (firstPage) { focusedPage.current = pageKey; return; }
+    if (contextLoading || focusedPage.current === pageKey) return;
+    return focusPageHeadingWhenShown(mainRef.current, () => { focusedPage.current = pageKey; });
+  }, [pageKey, contextLoading]);
+
   const docsBase = context.branding?.docs_base;
   // The Setup Wizard is for people who may change settings.
   const canSetUp = permissions.has('settings:write');
@@ -349,9 +375,9 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const pageContext: PageContext = {
     client, me, permissions, context, adminConfig, contextLoading, contextError, docsBase, canSetUp,
     params: shown ? parseAddress(shown.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
-    navigate, goHome, jobToOpen,
-    openJob: (jobId) => { setJobToOpen(jobId); navigate('jobs'); },
-    jobOpened: () => setJobToOpen(null),
+    navigate, replace, goHome,
+    // A fax to open travels in the address, so it can be copied, reloaded and gone Back to.
+    openJob: (jobId) => navigateTo(pageAddress('faxes', 'sent', new URLSearchParams({ fax: jobId }))),
   };
 
 
@@ -408,7 +434,7 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
         </Drawer>
       )}
 
-      <Box component="main" sx={{ flex: 1, minWidth: 0, px: { xs: 1.5, sm: 2, md: 4 }, pt: { xs: 9, md: 3 }, pb: 4 }}>
+      <Box component="main" ref={mainRef} sx={{ flex: 1, minWidth: 0, px: { xs: 1.5, sm: 2, md: 4 }, pt: { xs: 9, md: 3 }, pb: 4 }}>
         {me.can_enroll_owner && (
           <Box sx={{ mb: 2 }}>
             <OwnerEnrollment client={client} onEnrolled={() => {

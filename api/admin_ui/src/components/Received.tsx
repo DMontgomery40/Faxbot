@@ -1,7 +1,7 @@
 // Faxes → Received: every received fax and imported document in one list, with
 // who owns it and its state, whether it was emailed, and what can be done next.
 // This is the former Inbox and Work screens together.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -64,6 +64,7 @@ import MarkJunk from './MarkJunk';
 import type { ReceivedForm } from '../api/formsTypes';
 import ReceivedFormLine from './forms/ReceivedFormLine';
 import { ReceivedCallerCheck } from './CallerCheck';
+import RecordLink from './common/RecordLink';
 import { ReceivedCopier } from './CopiersPanel';
 
 // Which received faxes are listed. The first four follow the work queue's own views.
@@ -150,11 +151,17 @@ interface ReceivedProps {
   onSendFax?: () => void;
   // Opens a sent fax in Sent, for the sent faxes to settle shown here beside the received work.
   onOpenSentFax?: (faxId: string) => void;
+  // The received document named in the page address (?item=…), and a way to keep
+  // it there, so a copied link, a reload or Back reopens the same document.
+  itemId?: string | null;
+  onItemChange?: (itemId: string | null) => void;
+  // A document's own address, for the row link's href (copy link, new tab).
+  recordHref?: (itemId: string) => string;
 }
 
 export default function Received({
   client, docsBase, inboundEnabled, onNavigate, permissions, canList = true, canWork = true, show = 'all', onShowChange, onSendFax,
-  onOpenSentFax,
+  onOpenSentFax, itemId, onItemChange, recordHref,
 }: ReceivedProps) {
   const canReadProviders = !!permissions?.has('providers:read');
   const canChangeProviders = !!permissions?.has('providers:write');
@@ -317,6 +324,55 @@ export default function Received({
     if (filter === 'not-delivered') return row.fax !== null && deliveryFor.get(row.fax.id)?.state === 'failed';
     return row.work !== null && viewIds !== null && viewIds.has(row.work.id);
   });
+
+  // The document named in the address is the one open. It is found in the loaded
+  // work list, or read on its own when the list does not reach it; one this person
+  // may not see (or that is gone) shows a safe not-found line and opens nothing.
+  const [recordMissing, setRecordMissing] = useState(false);
+  const recordAsked = useRef<string | null>(null);
+  const openRecord = (row: Row) => {
+    if (!row.work) return;
+    if (onItemChange) onItemChange(row.work.id);
+    else setSelected(row.work);
+  };
+  const closeRecord = () => {
+    setSelected(null);
+    setRecordMissing(false);
+    recordAsked.current = null;
+    onItemChange?.(null);
+  };
+  useEffect(() => {
+    if (!onItemChange) return;
+    if (!itemId) {
+      setSelected(null);
+      setRecordMissing(false);
+      recordAsked.current = null;
+      return;
+    }
+    const found = (work ?? []).find((candidate) => candidate.id === itemId);
+    if (found) {
+      setRecordMissing(false);
+      setSelected((current) => (current?.id === found.id ? current : found));
+      return;
+    }
+    if (!hasLoaded || recordAsked.current === itemId) return;
+    recordAsked.current = itemId;
+    // Without the owners list there is no document to open here.
+    if (!canWork) {
+      setRecordMissing(true);
+      return;
+    }
+    // The answer counts while the address still names this document; a re-render
+    // meanwhile (a fresh callback, the list read again) must not drop it.
+    const asked = itemId;
+    client.getWork(asked).then((item) => {
+      if (recordAsked.current !== asked) return;
+      setRecordMissing(false);
+      setSelected(item);
+    }).catch(() => {
+      if (recordAsked.current === asked) setRecordMissing(true);
+    });
+  }, [canWork, client, hasLoaded, itemId, onItemChange, work]);
 
   const filterCount = (value: ReceivedFilter): number | null => {
     if (value === 'mine') return counts?.mine ?? null;
@@ -607,6 +663,12 @@ export default function Received({
       {efaxLine}
 
       {loadError && <Alert severity="error" sx={{ mb: 3, borderRadius: 2 }}>{loadError}</Alert>}
+      {itemId && recordMissing && (
+        <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }} data-testid="received-fax-not-found"
+          action={<Button color="inherit" size="small" onClick={closeRecord}>Show the list</Button>}>
+          That received fax could not be found. It may have been removed, or you may not see it.
+        </Alert>
+      )}
       <Notice message={notice} onClose={() => setNotice(null)} />
       <DeliveryError error={error} onClose={() => setError(null)} />
 
@@ -642,12 +704,18 @@ export default function Received({
           ) : isMobile ? (
             <Stack spacing={2}>
               {shown.map((row) => (
-                <Card key={row.key} sx={{ borderRadius: 2, cursor: row.work ? 'pointer' : 'default' }}
-                  onClick={() => row.work && setSelected(row.work)}>
+                <Card key={row.key} sx={{ borderRadius: 2 }}>
                   <CardContent>
                     <Stack spacing={1.5}>
                       <Box>
-                        <Typography variant="subtitle2" fontWeight={600}>From {from(row)}</Typography>
+                        {row.work ? (
+                          <RecordLink href={recordHref?.(row.work.id)} onOpen={() => openRecord(row)}
+                            ariaLabel={`Details for the fax from ${from(row)}`}>
+                            <Typography component="span" variant="subtitle2" fontWeight={600}>From {from(row)}</Typography>
+                          </RecordLink>
+                        ) : (
+                          <Typography variant="subtitle2" fontWeight={600}>From {from(row)}</Typography>
+                        )}
                         <Typography variant="caption" color="text.secondary">{arrivedText(row)}</Typography>
                       </Box>
                       <Typography variant="body2" color="text.secondary">
@@ -687,9 +755,17 @@ export default function Received({
                   </TableHead>
                   <TableBody>
                     {shown.map((row) => (
-                      <TableRow key={row.key} hover onClick={() => row.work && setSelected(row.work)}
-                        sx={{ cursor: row.work ? 'pointer' : 'default' }}>
-                        <TableCell><Typography variant="body2" fontFamily="monospace">{from(row)}</Typography></TableCell>
+                      <TableRow key={row.key} hover>
+                        <TableCell>
+                          {row.work ? (
+                            <RecordLink href={recordHref?.(row.work.id)} onOpen={() => openRecord(row)}
+                              ariaLabel={`Details for the fax from ${from(row)}`}>
+                              <Typography component="span" variant="body2" fontFamily="monospace">{from(row)}</Typography>
+                            </RecordLink>
+                          ) : (
+                            <Typography variant="body2" fontFamily="monospace">{from(row)}</Typography>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <Typography variant="body2" fontFamily="monospace">{to(row)}</Typography>
                           {mailbox(row) && <Typography variant="caption" color="text.secondary">{mailbox(row)}</Typography>}
@@ -753,7 +829,7 @@ export default function Received({
         </DialogActions>
       </Dialog>
 
-      <WorkDetail client={client} item={selected} onClose={() => setSelected(null)}
+      <WorkDetail client={client} item={selected} onClose={closeRecord}
         fax={selected ? faxes.find((candidate) => candidate.id === selected.inbound_fax_id) ?? null : null}
         delivery={selected ? deliveryFor.get(selected.inbound_fax_id) ?? null : null}
         onDownload={(item) => void downloadPdf(item.inbound_fax_id, `document-${localDay(item.available_at) || 'fax'}.pdf`)} />
