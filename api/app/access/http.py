@@ -498,6 +498,45 @@ async def console_context(request: Request, identity=Depends(require_identity)):
     return await run_lifecycle_step(snapshot)
 
 
+class FinderResultResponse(AuthOutput):
+    kind: Literal['page', 'setting']
+    label: str
+    name: str | None
+    address: str | None
+    place: str
+    scope: str
+    command: str | None
+
+
+class FinderResponse(AuthOutput):
+    q: str
+    results: list[FinderResultResponse]
+
+
+@router.get('/finder', response_model=FinderResponse,
+    summary='Find a page or a setting',
+    description='Pages and settings matching the words given, among the ones this person may open. '
+        'Labels, technical names and synonyms only: no document content and no setting value is ever '
+        'searched or returned, and a forbidden page or field never appears.')
+async def finder_search(request: Request, q: str = Query(default='', max_length=200),
+        identity=Depends(require_identity)):
+    from .. import finder as finder_catalogue
+    service = runtime(request)
+    @private_operation
+    def search():
+        result = service.context.snapshot(identity.actor)
+        with service.store.transaction() as connection:
+            source = service.control._current_source_on(connection, identity.actor, utcnow())
+            navigation = dict(result['navigation'])
+            navigation['work'] = bool(not source.reset_required and service.context._has_scope_on(
+                connection, identity.actor, source, 'work:read', ('mailbox', 'legacy', 'inbound')))
+        provider_view = result.get('provider_view') or {}
+        return {'q': q, 'results': finder_catalogue.search(
+            q, permissions=frozenset(result['permissions']), navigation=navigation,
+            plugins_enabled=bool(provider_view.get('plugins_enabled')))}
+    return await run_lifecycle_step(search)
+
+
 @router.post('/logout', response_model=AuthLogoutResponse)
 async def logout(request: Request, response: Response, identity=Depends(require_identity)):
     selected = transport(request)

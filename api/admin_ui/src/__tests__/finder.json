@@ -1,0 +1,432 @@
+{
+  "about": "Finder answers in words. The console's search (components/shell/Finder.tsx) and `faxbot find` (cli/commands/find.py) show the same results from GET /auth/finder; each query holds the response for someone who may see every page and the lines the command prints from it. api/tests/test_finder.py regenerates this file with FAXBOT_WRITE_FIXTURES=1.",
+  "queries": [
+    {
+      "q": "T.38",
+      "response": {
+        "q": "T.38",
+        "results": [
+          {
+            "kind": "page",
+            "label": "Carrier trunk",
+            "name": null,
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Delivery setup",
+            "command": null
+          },
+          {
+            "kind": "setting",
+            "label": "Fs t38 enable",
+            "name": "fs_t38_enable",
+            "address": null,
+            "place": "faxbot delivery providers configure freeswitch (FreeSWITCH has no console page)",
+            "scope": "Installation (set outside the console)",
+            "command": "faxbot admin settings set fs_t38_enable=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Sip t38 enabled",
+            "name": "sip_t38_enabled",
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Installation",
+            "command": "faxbot admin settings set sip_t38_enabled=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Sip t38 error correction",
+            "name": "sip_t38_error_correction",
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Installation",
+            "command": "faxbot admin settings set sip_t38_error_correction=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Sip t38 max datagram",
+            "name": "sip_t38_max_datagram",
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Installation",
+            "command": "faxbot admin settings set sip_t38_max_datagram=VALUE"
+          }
+        ]
+      },
+      "cli": [
+        "Find: T.38",
+        "  Carrier trunk",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Delivery setup",
+        "  Fs t38 enable (fs_t38_enable)",
+        "    faxbot delivery providers configure freeswitch (FreeSWITCH has no console page)",
+        "    Scope: Installation (set outside the console)",
+        "    faxbot admin settings set fs_t38_enable=VALUE",
+        "  Sip t38 enabled (sip_t38_enabled)",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Installation",
+        "    faxbot admin settings set sip_t38_enabled=VALUE",
+        "  Sip t38 error correction (sip_t38_error_correction)",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Installation",
+        "    faxbot admin settings set sip_t38_error_correction=VALUE",
+        "  Sip t38 max datagram (sip_t38_max_datagram)",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Installation",
+        "    faxbot admin settings set sip_t38_max_datagram=VALUE"
+      ]
+    },
+    {
+      "q": "retention",
+      "response": {
+        "q": "retention",
+        "results": [
+          {
+            "kind": "page",
+            "label": "Documents & retention",
+            "name": null,
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Administration",
+            "command": null
+          },
+          {
+            "kind": "setting",
+            "label": "Inbound retention days",
+            "name": "inbound_retention_days",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set inbound_retention_days=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Artifact ttl days",
+            "name": "artifact_ttl_days",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set artifact_ttl_days=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Cleanup interval minutes",
+            "name": "cleanup_interval_minutes",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set cleanup_interval_minutes=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Inbound get rpm",
+            "name": "inbound_get_rpm",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set inbound_get_rpm=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Inbound list rpm",
+            "name": "inbound_list_rpm",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set inbound_list_rpm=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Inbound token ttl minutes",
+            "name": "inbound_token_ttl_minutes",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set inbound_token_ttl_minutes=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Max file size mb",
+            "name": "max_file_size_mb",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set max_file_size_mb=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Max requests per minute",
+            "name": "max_requests_per_minute",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set max_requests_per_minute=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Pdf token ttl minutes",
+            "name": "pdf_token_ttl_minutes",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set pdf_token_ttl_minutes=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Persisted env path",
+            "name": "persisted_env_path",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set persisted_env_path=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "S3 bucket",
+            "name": "s3_bucket",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set s3_bucket=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "S3 endpoint url",
+            "name": "s3_endpoint_url",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set s3_endpoint_url=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "S3 kms key id",
+            "name": "s3_kms_key_id",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set s3_kms_key_id=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "S3 prefix",
+            "name": "s3_prefix",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set s3_prefix=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "S3 region",
+            "name": "s3_region",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set s3_region=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Storage backend",
+            "name": "storage_backend",
+            "address": "#/admin/retention",
+            "place": "Administration \u203a Installation \u203a Documents & retention",
+            "scope": "Installation",
+            "command": "faxbot admin settings set storage_backend=VALUE"
+          }
+        ]
+      },
+      "cli": [
+        "Find: retention",
+        "  Documents & retention",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Administration",
+        "  Inbound retention days (inbound_retention_days)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set inbound_retention_days=VALUE",
+        "  Artifact ttl days (artifact_ttl_days)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set artifact_ttl_days=VALUE",
+        "  Cleanup interval minutes (cleanup_interval_minutes)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set cleanup_interval_minutes=VALUE",
+        "  Inbound get rpm (inbound_get_rpm)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set inbound_get_rpm=VALUE",
+        "  Inbound list rpm (inbound_list_rpm)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set inbound_list_rpm=VALUE",
+        "  Inbound token ttl minutes (inbound_token_ttl_minutes)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set inbound_token_ttl_minutes=VALUE",
+        "  Max file size mb (max_file_size_mb)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set max_file_size_mb=VALUE",
+        "  Max requests per minute (max_requests_per_minute)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set max_requests_per_minute=VALUE",
+        "  Pdf token ttl minutes (pdf_token_ttl_minutes)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set pdf_token_ttl_minutes=VALUE",
+        "  Persisted env path (persisted_env_path)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set persisted_env_path=VALUE",
+        "  S3 bucket (s3_bucket)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set s3_bucket=VALUE",
+        "  S3 endpoint url (s3_endpoint_url)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set s3_endpoint_url=VALUE",
+        "  S3 kms key id (s3_kms_key_id)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set s3_kms_key_id=VALUE",
+        "  S3 prefix (s3_prefix)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set s3_prefix=VALUE",
+        "  S3 region (s3_region)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set s3_region=VALUE",
+        "  Storage backend (storage_backend)",
+        "    Administration \u203a Installation \u203a Documents & retention \u2014 #/admin/retention",
+        "    Scope: Installation",
+        "    faxbot admin settings set storage_backend=VALUE"
+      ]
+    },
+    {
+      "q": "caller ID",
+      "response": {
+        "q": "caller ID",
+        "results": [
+          {
+            "kind": "setting",
+            "label": "Efax caller id",
+            "name": "efax_caller_id",
+            "address": "#/delivery/efax",
+            "place": "Delivery setup \u203a Connections \u203a eFax",
+            "scope": "Installation",
+            "command": "faxbot admin settings set efax_caller_id=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Fs caller id number",
+            "name": "fs_caller_id_number",
+            "address": null,
+            "place": "faxbot delivery providers configure freeswitch (FreeSWITCH has no console page)",
+            "scope": "Installation (set outside the console)",
+            "command": "faxbot admin settings set fs_caller_id_number=VALUE"
+          },
+          {
+            "kind": "setting",
+            "label": "Sip trunk caller id",
+            "name": "sip_trunk_caller_id",
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Installation",
+            "command": "faxbot admin settings set sip_trunk_caller_id=VALUE"
+          },
+          {
+            "kind": "page",
+            "label": "Carrier trunk",
+            "name": null,
+            "address": "#/delivery/trunk",
+            "place": "Delivery setup \u203a Connections \u203a Carrier trunk",
+            "scope": "Delivery setup",
+            "command": null
+          },
+          {
+            "kind": "page",
+            "label": "Sending identity",
+            "name": null,
+            "address": "#/delivery/identity",
+            "place": "Delivery setup \u203a Numbers & mailboxes \u203a Sending identity",
+            "scope": "Delivery setup",
+            "command": null
+          }
+        ]
+      },
+      "cli": [
+        "Find: caller ID",
+        "  Efax caller id (efax_caller_id)",
+        "    Delivery setup \u203a Connections \u203a eFax \u2014 #/delivery/efax",
+        "    Scope: Installation",
+        "    faxbot admin settings set efax_caller_id=VALUE",
+        "  Fs caller id number (fs_caller_id_number)",
+        "    faxbot delivery providers configure freeswitch (FreeSWITCH has no console page)",
+        "    Scope: Installation (set outside the console)",
+        "    faxbot admin settings set fs_caller_id_number=VALUE",
+        "  Sip trunk caller id (sip_trunk_caller_id)",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Installation",
+        "    faxbot admin settings set sip_trunk_caller_id=VALUE",
+        "  Carrier trunk",
+        "    Delivery setup \u203a Connections \u203a Carrier trunk \u2014 #/delivery/trunk",
+        "    Scope: Delivery setup",
+        "  Sending identity",
+        "    Delivery setup \u203a Numbers & mailboxes \u203a Sending identity \u2014 #/delivery/identity",
+        "    Scope: Delivery setup"
+      ]
+    },
+    {
+      "q": "who can send",
+      "response": {
+        "q": "who can send",
+        "results": [
+          {
+            "kind": "page",
+            "label": "Mailboxes",
+            "name": null,
+            "address": "#/delivery/mailboxes",
+            "place": "Delivery setup \u203a Numbers & mailboxes \u203a Mailboxes",
+            "scope": "Delivery setup",
+            "command": null
+          },
+          {
+            "kind": "page",
+            "label": "Routing rules",
+            "name": null,
+            "address": "#/delivery/rules",
+            "place": "Delivery setup \u203a Connections \u203a Routing rules",
+            "scope": "Delivery setup",
+            "command": null
+          },
+          {
+            "kind": "page",
+            "label": "Who has access",
+            "name": null,
+            "address": "#/admin/who",
+            "place": "Administration \u203a People & access \u203a Who has access",
+            "scope": "Administration",
+            "command": null
+          }
+        ]
+      },
+      "cli": [
+        "Find: who can send",
+        "  Mailboxes",
+        "    Delivery setup \u203a Numbers & mailboxes \u203a Mailboxes \u2014 #/delivery/mailboxes",
+        "    Scope: Delivery setup",
+        "  Routing rules",
+        "    Delivery setup \u203a Connections \u203a Routing rules \u2014 #/delivery/rules",
+        "    Scope: Delivery setup",
+        "  Who has access",
+        "    Administration \u203a People & access \u203a Who has access \u2014 #/admin/who",
+        "    Scope: Administration"
+      ]
+    }
+  ]
+}

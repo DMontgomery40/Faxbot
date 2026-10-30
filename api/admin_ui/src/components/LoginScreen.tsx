@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import AdminAPIClient from '../api/client';
 import { NAVIGATION } from '../navigation';
+import Help from './shell/Help';
 
 interface LoginScreenProps {
   notice?: string;
@@ -221,6 +222,10 @@ export default function LoginScreen({ notice, onPasswordSignIn, onKeySignIn }: L
                 >
                   {mode === 'password' ? 'Sign in with API key' : 'Sign in with username and password'}
                 </Link>
+              </Box>
+
+              <Box sx={{ mt: 1, textAlign: 'center' }}>
+                <Help signedIn={false} place="Sign in" />
               </Box>
             </Paper>
           </Fade>

@@ -159,7 +159,9 @@ def test_help_lists_send_status_and_the_six_areas_without_starting_the_server():
     assert NOUNS == ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
     root = typer.main.get_command(cli_app)
     # `faxbot overview` is the Overview page; the other five areas are groups.
-    assert [name for name, command in root.commands.items() if not command.hidden] == ['send', 'status', *NOUNS]
+    # `faxbot find` (#53) sits with send and status: a verb, not an area.
+    assert [name for name, command in root.commands.items() if not command.hidden] == [
+        'send', 'status', 'overview', 'find', 'savings', 'faxes', 'delivery', 'recipients', 'admin']
     result = CliRunner().invoke(cli_app, ['--help'], env={'COLUMNS': '200'})
     plain = _plain(result.stdout)
     assert result.exit_code == 0 and ' savings ' in plain and ' admin ' in plain

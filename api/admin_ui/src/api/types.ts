@@ -688,6 +688,23 @@ export interface ConsoleContext {
   provider_names?: Record<string, string>;
 }
 
+// GET /auth/finder: one page or setting this person may open, with the one place it
+// is changed, its scope and the command that changes it. Never a setting's value.
+export interface FinderResult {
+  kind: 'page' | 'setting';
+  label: string;
+  name: string | null;
+  address: string | null;
+  place: string;
+  scope: string;
+  command: string | null;
+}
+
+export interface FinderAnswer {
+  q: string;
+  results: FinderResult[];
+}
+
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;

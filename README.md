@@ -48,7 +48,7 @@ Earlier MIT releases retain their existing permissions, including material alrea
 
 ## Admin Console
 
-The API serves the console at `/admin/ui/`. Its left panel has six areas, each page at its own address (such as `#/delivery/trunk`), and **Send a fax** at the top for people who may send:
+The API serves the console at `/admin/ui/`. Its left panel has six areas, each page at its own address (such as `#/delivery/trunk`), and **Send a fax** at the top for people who may send. **Find a page or setting** (Ctrl+K or ⌘K) searches pages and individual settings by the words for the job or their technical names — "T.38", "retention", "who can send", "caller ID" — and opens the one place each is changed, with its scope; results only ever name pages you may open. **Help** is in the panel on every page and on the sign-in page, with the steps that get you back in when sign-in itself is the problem:
 
 - **Overview**: what Faxbot is doing for you (the capabilities that acted on your faxes and the results, each in its own unit), the next improvements, everyday faxes with Send a fax, and what needs a person now, grouped by the action it needs and each opening its exact list; a serious problem moves to the top while it lasts. At the bottom, a map of every way Faxbot saves money, along a fax's path, with whether each is on, works here and has been tested.
 - **Savings & optimization**: capabilities, opportunities, facts to establish, savings results (estimates), spending, charges, invoices, and prices and plans.
@@ -108,7 +108,7 @@ Faxbot's AI assistant servers (Node and Python) work over stdio and Streamable H
 
 ## Command line
 
-The `faxbot` command does what the Admin Console does, apart from its built-in terminal, under the same six areas: after `faxbot send` and `faxbot status` come `overview`, `savings`, `faxes`, `delivery`, `recipients` and `admin`. The command names from before the six areas (`received`, `sent`, `forms`, `expected`, `numbers`, `providers`, `costs`, `access` and `system`, and renamed commands such as `costs savings`) still work, hidden from help, so scripts keep running. Every setting can be read and changed with `faxbot admin settings`. Output is readable by default and `--json` for scripts.
+The `faxbot` command does what the Admin Console does, apart from its built-in terminal, under the same six areas: after `faxbot send` and `faxbot status` come `overview`, `savings`, `faxes`, `delivery`, `recipients` and `admin`. `faxbot find WORDS` prints the same results as the console's **Find a page or setting**, each with its console address, scope and the command that changes it. The command names from before the six areas (`received`, `sent`, `forms`, `expected`, `numbers`, `providers`, `costs`, `access` and `system`, and renamed commands such as `costs savings`) still work, hidden from help, so scripts keep running. Every setting can be read and changed with `faxbot admin settings`. Output is readable by default and `--json` for scripts.
 
 ```
 docker compose exec api faxbot admin health
@@ -142,6 +142,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 
 ### Implemented
 
+- [x] Find a page or setting by the words for the job: **Find a page or setting** in the console panel (Ctrl+K or ⌘K, arrow keys and Enter) and `faxbot find WORDS` search page and field labels, technical names and synonyms ("T.38", "retention", "who can send", "caller ID") — never document content or a setting's value — and open the one place each setting is changed, with its scope and command. Results respect permissions: a forbidden page or field never appears. Every navigation page and every settings field is in the catalogue (`app/finder.py`, `GET /auth/finder`); fields changed outside the console say where instead. One shared fixture holds the console and the command to the same answers. **Help** sits in the panel on every page and on the sign-in and password pages, with recovery steps. Tested with synthetic accounts on SQLite; the console test renders from the same fixture.
 - [x] Destination-aware prices agree across recipient recommendations, plan allowances and attempt estimates. Unknown international prices stay unknown, separate destination tariffs do not consume domestic allowances, and extra provider accounts retain their own applicable rate cards. Verified with synthetic routing, HTTP and accounting checks; this correction does not claim a joint optimizer over every document, account, batch and sending time.
 
 - [x] Opt-in operational AI analysis with encrypted OpenAI-compatible credentials, OpenRouter support, bounded read-only evidence tools, durable manual and scheduled refreshes, visible freshness/failure state, and matching console/CLI controls. Verified with synthetic data and mocked model responses; live model-provider validation is separate.

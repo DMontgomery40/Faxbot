@@ -29,6 +29,7 @@ $ faxbot [OPTIONS] COMMAND [ARGS]...
 * `send`: Send a fax.
 * `status`: Show what is sending now, what waits and...
 * `overview`: Show the Overview: what Faxbot is doing...
+* `find`: Find the page that does a job, or the one...
 * `savings`: What Faxbot can do to save money here and...
 * `faxes`: Faxes received, sent and expected, forms...
 * `delivery`: How faxes come in, go out and reach your...
@@ -100,6 +101,24 @@ Show the Overview: what Faxbot is doing for you, the next improvements, everyday
 ```console
 $ faxbot overview [OPTIONS]
 ```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+## `faxbot find`
+
+Find the page that does a job, or the one place a setting is changed, by its words.
+
+**Usage**:
+
+```console
+$ faxbot find [OPTIONS] {WORDS...}
+```
+
+**Arguments**:
+
+* `WORDS...`: Words for the job or the technical name, such as retention, T.38 or &quot;who can send&quot;.  [required]
 
 **Options**:
 

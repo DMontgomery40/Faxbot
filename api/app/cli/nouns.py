@@ -35,6 +35,7 @@ from .commands import destinations as destination_commands
 from .commands import teams_annex as teams_annex_commands
 from .commands import admission as admission_commands
 from .commands import status as status_commands
+from .commands import find as find_commands
 
 # The console's six areas. Overview is one command; the others are groups.
 NOUNS = ('overview', 'savings', 'faxes', 'delivery', 'recipients', 'admin')
@@ -383,6 +384,8 @@ def register(app):
     app.command('status')(status_commands.status)
     # The console's Overview: what Faxbot is doing here and what needs attention.
     app.command('overview')(overview_commands.overview)
+    # The console's search box: the page for a job, or the one place a setting is changed (#53).
+    app.command('find')(find_commands.find_command)
     for name, home in HOMES.items():
         app.add_typer(home, name=name)
     for name, group in OLD_HOMES.items():

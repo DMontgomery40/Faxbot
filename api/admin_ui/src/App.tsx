@@ -21,6 +21,8 @@ import NavPanel, { SendFaxButton, type SendAction } from './components/shell/Nav
 import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
 import { AddressProblem, MovedNotice } from './components/shell/AddressState';
 import UserMenu from './components/shell/UserMenu';
+import Finder from './components/shell/Finder';
+import Help from './components/shell/Help';
 import { ThemeProvider } from './theme/ThemeContext';
 import { setProviderNames } from './providerLabels';
 import {
@@ -194,6 +196,7 @@ function AppContent() {
       }}>
         <Alert severity="warning" data-testid="console-unavailable">{auth.notice}</Alert>
         <Button variant="contained" onClick={() => tryAgain(client)}>Try again</Button>
+        <Help signedIn={false} />
       </Box>
     );
   }
@@ -373,9 +376,19 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
     ? { href: sendAddress, selected: pageKey === 'faxes/send', onOpen: () => navigateTo(sendAddress) }
     : undefined;
 
+  const place = shown
+    ? [shown.area.label, shown.page.group, shown.page.label].filter(Boolean).join(' › ')
+    : undefined;
+  const help = <Help docsBase={docsBase} place={place} />;
   const panel = route && (
     <NavPanel areas={visible} currentArea={shown?.area.id ?? ''} currentPage={shown?.page.id ?? ''} onNavigate={openPage}
       send={send} logo={logo}
+      tools={(
+        <Box sx={{ px: 2, pb: 1.5, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'stretch' }}>
+          <Finder client={client} onOpen={navigateTo} />
+          {help}
+        </Box>
+      )}
       footer={<UserMenu client={client} me={me} onNavigate={navigate} onSignOut={onSignOut} onIdentityChanged={onIdentityChanged} />} />
   );
 

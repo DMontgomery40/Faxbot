@@ -26,6 +26,8 @@ interface NavPanelProps {
   send?: SendAction;
   logo: React.ReactNode;
   footer: React.ReactNode;
+  // Find a page or setting, and Help: always in the panel, under Send a fax.
+  tools?: React.ReactNode;
 }
 
 // A plain click opens the page here; a click with a modifier key (new tab or
@@ -54,7 +56,7 @@ export function SendFaxButton({ send, size = 'medium', fullWidth = false, sx }: 
 
 const itemSx = { borderRadius: 2, mx: 1, mb: 0.25 };
 
-export default function NavPanel({ areas, currentArea, currentPage, onNavigate, send, logo, footer }: NavPanelProps) {
+export default function NavPanel({ areas, currentArea, currentPage, onNavigate, send, logo, footer, tools }: NavPanelProps) {
   // The area holding the current page is open. Opening another area closes the rest,
   // except the current page's area, so the panel never grows into a wall of links.
   const [open, setOpen] = useState<Record<string, boolean>>(() => ({ [currentArea]: true }));
@@ -87,6 +89,7 @@ export default function NavPanel({ areas, currentArea, currentPage, onNavigate, 
       {send && (
         <Box sx={{ px: 2, pb: 1.5 }}><SendFaxButton send={send} fullWidth /></Box>
       )}
+      {tools}
       <Box component="nav" aria-label="Console" sx={{ flex: 1, overflowY: 'auto' }}>
         <List dense disablePadding>
           {areas.map((area) => {

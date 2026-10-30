@@ -37,6 +37,7 @@ import type {
   InboundFax,
   AuthMe,
   ConsoleContext,
+  FinderAnswer,
   Page,
   AuditEntry,
   DatabaseStatus,
@@ -515,6 +516,11 @@ class AdminAPIClient {
 
   async context(): Promise<ConsoleContext> {
     return this.json('/auth/context', {}, { retryBusy: true });
+  }
+
+  // Pages and settings matching these words, among the ones this person may open.
+  async find(words: string): Promise<FinderAnswer> {
+    return this.json(`/auth/finder?q=${encodeURIComponent(words)}`);
   }
 
   async logout(): Promise<void> {

@@ -3,6 +3,7 @@ import {
   Alert, Box, Button, CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle, Paper, TextField, Typography,
 } from '@mui/material';
 import AdminAPIClient, { AdminAPIError } from '../api/client';
+import Help from './shell/Help';
 
 interface PasswordChangeProps {
   client: AdminAPIClient;
@@ -78,6 +79,7 @@ export default function PasswordChange({ client, displayName, onChanged, onSignO
             Change password
           </Button>
           <Button fullWidth onClick={onSignOut} sx={{ mt: 1, borderRadius: 2 }}>Sign out</Button>
+          <Box sx={{ mt: 1, textAlign: 'center' }}><Help signedIn={false} place="Choose a new password" /></Box>
         </Paper>
       </Container>
     </Box>
