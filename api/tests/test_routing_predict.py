@@ -5,6 +5,7 @@ SSL Fax spike of 2026-10-03 and the live engine call of 2026-10-05) are
 checked here as recorded calls, and synthetic recorded calls check what
 Faxbot learns from ``fax_engine_calls``.
 """
+from dataclasses import replace
 from datetime import datetime, timedelta
 import json
 import random
@@ -376,8 +377,9 @@ def test_a_flat_plan_costs_nothing_extra_and_says_how_much_room_is_left():
     plain = predict_from(facts(humblefax, route='humblefax', label='HumbleFax'), Shape(3, None, 'fine', 'normal'))
     assert (plain.cost, plain.marginal, plain.billed_pages) == (Money(0, 'USD'), True, 0)
     assert plain.basis.startswith('Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill')
-    budget = predict_from(facts(humblefax, route='humblefax', label='HumbleFax',
-                                plan=PlanUse(pages=1999, faxes=400, page_budget=2000)), Shape(3, None, 'fine', 'normal'))
+    budget = predict_from(replace(facts(humblefax, route='humblefax', label='HumbleFax',
+                                        plan=PlanUse(pages=1999, faxes=400, page_budget=2000)), order='automatic'),
+                          Shape(3, None, 'fine', 'normal'))
     assert budget.cost == Money(0, 'USD')
     assert budget.basis.endswith("You've used 1,999 of the 2,000 pages you set as this plan's normal-use budget this "
                                  'month, and this fax would go past it, so Faxbot sends by your other routes first '
@@ -391,13 +393,14 @@ COST = 'Included in your HumbleFax plan ($10 a month): this fax adds nothing to 
 TIME = 'about 30 seconds on the line, for typical pages at a typical fax speed.'
 
 
-def _humblefax(plan, pages=1):
-    return predict_from(facts(HUMBLEFAX_PLAN, route='humblefax', label='HumbleFax', plan=plan),
+def _humblefax(plan, pages=1, order='automatic'):
+    return predict_from(replace(facts(HUMBLEFAX_PLAN, route='humblefax', label='HumbleFax', plan=plan), order=order),
                         Shape(pages, None, 'fine', 'normal'))
 
 
 def test_a_flat_plan_past_its_normal_use_budget_says_the_cost_once_and_what_faxbot_does():
-    # The acceptance case: 245 pages used against 200 (Faxbot's start for HumbleFax) and a 1-page fax.
+    # The acceptance case: 245 pages used against 200 (Faxbot's start for HumbleFax) and a 1-page fax, ranked by
+    # Faxbot's own order (no preferred route for the number, no sending rule's order).
     over = _humblefax(PlanUse(pages=245, faxes=40, page_budget=200, fax_budget=50))
     assert (over.cost, over.marginal) == (Money(0, 'USD'), True)
     assert over.basis == (COST + TIME + " You've used 245 of the 200 pages and 40 of the 50 faxes you set as this "
@@ -415,6 +418,47 @@ def test_a_flat_plan_past_its_normal_use_budget_says_the_cost_once_and_what_faxb
     assert edge.basis.endswith("You've used 199 of the 200 pages you set as this plan's normal-use budget this month, "
                                'and this fax would go past it, so Faxbot sends by your other routes first when one of '
                                'them can take the fax.')
+
+
+# Review of D23: past the budget, the estimate promised other routes first even where the number's preferred route or
+# a sending rule's order keeps the plan first (HumbleFax preferred with a usable trunk went ['humblefax', 'sip']). What
+# it says now follows what sets the fax's order (RouteFacts.order, from plan_budget.order_of), and says all of it when
+# that is not known.
+USED = "You've used 245 of the 200 pages and 40 of the 50 faxes you set as this plan's normal-use budget this month"
+PAST = {
+    'automatic': ', so Faxbot sends by your other routes first when one of them can take the fax.',
+    'preferred': ', but this plan is your preferred route for this number, so Faxbot still sends by it first.',
+    'rule': (', but your sending rule sets the order of routes for this fax, so the budget does not change which '
+             'route goes first.'),
+    None: (', so Faxbot sends by your other routes first when one of them can take the fax, unless this plan is your '
+           'preferred route for this number or a sending rule sets the order.'),
+}
+
+
+@pytest.mark.parametrize('order', list(PAST))
+def test_a_flat_plan_past_its_budget_says_what_the_faxs_own_order_does(order):
+    over = _humblefax(PlanUse(pages=245, faxes=40, page_budget=200, fax_budget=50), order=order)
+    assert over.basis == COST + TIME + ' ' + USED + PAST[order]
+    assert (over.cost, over.marginal) == (Money(0, 'USD'), True)
+    # This fax the one going past: the same ending after "would go past it".
+    edge = _humblefax(PlanUse(pages=199, faxes=40, page_budget=200), pages=2, order=order)
+    assert edge.basis.endswith("You've used 199 of the 200 pages you set as this plan's normal-use budget this month, "
+                               'and this fax would go past it' + PAST[order])
+    # Within the budget nothing is said about the order, whatever sets it.
+    within = _humblefax(PlanUse(pages=5, faxes=3, page_budget=200, fax_budget=50), order=order)
+    assert within.basis == (COST + TIME + " You've used 5 of the 200 pages and 3 of the 50 faxes you set as this "
+                            "plan's normal-use budget this month.")
+
+
+def test_an_estimate_that_cannot_know_the_order_never_promises_other_routes_first():
+    """Facts gathered for each route (the dry run by page count) carry no order: the plan's sentence names the
+    preferred route and the sending rule that would keep it first."""
+    plain = predict_from(facts(HUMBLEFAX_PLAN, route='humblefax', label='HumbleFax',
+                               plan=PlanUse(pages=245, faxes=40, page_budget=200, fax_budget=50)),
+                         Shape(1, None, 'fine', 'normal'))
+    assert plain.basis.endswith(PAST[None])
+    with pytest.raises(ValueError):
+        _humblefax(PlanUse(pages=245, faxes=40, page_budget=200), order='cheapest')
 
 
 def test_a_flat_plan_within_its_normal_use_budget_says_only_what_is_used():

@@ -277,6 +277,10 @@ class RouteFacts:
     # A route with no card saved in Faxbot, priced by its shipped published card: the clause naming whose published
     # price it is and when it was read ("Telnyx's published price, read 13 October 2026").
     published: str | None = None
+    # What sets this route's place in the fax's order of routes, where the caller has the fax's own order
+    # (``plan_budget.order_of``): 'automatic', 'preferred' or 'rule'. None when it is not known (an estimate for each
+    # route from the page count alone); a flat plan past its normal-use budget then says what each would do.
+    order: str | None = None
 
 
 # Sentences --------------------------------------------------------------------------
@@ -539,9 +543,9 @@ def _plan(facts, shape, seconds, how, spread=None):
             f'{_count(over, "page")} past what {named} includes, at '
             f'{money_text(terms.overage_page_micros, card.currency)} a page', room, how), True)
     # The cost, then the plan's normal-use budget in a sentence of its own: the budget is your own measure of normal
-    # use, never a price, and past it Faxbot sends by your other routes first (plan_budget.use_sentence).
+    # use, never a price; past it, what Faxbot does follows what sets the fax's order (plan_budget.use_sentence).
     from .plan_budget import use_sentence
-    budget = use_sentence(plan.pages, plan.faxes, plan.page_budget, plan.fax_budget, shape.pages)
+    budget = use_sentence(plan.pages, plan.faxes, plan.page_budget, plan.fax_budget, shape.pages, facts.order)
     basis = _sentence(f'Included in {named}: this fax adds nothing to the bill', how)
     return Prediction(0, seconds, Money(0, card.currency), basis + (f' {budget}' if budget else ''), True)
 

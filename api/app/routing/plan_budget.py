@@ -913,12 +913,42 @@ def marginal(left, pages, prediction=None):
                     f'until {again}.')
 
 
-def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages):
+# What a plan past its normal-use budget leads to, by what sets the fax's order of routes (``order_of``). None: the
+# order is not known, as for an estimate made for each route from the page count alone.
+PAST_BUDGET = {
+    'automatic': ', so Faxbot sends by your other routes first when one of them can take the fax.',
+    'preferred': ', but this plan is your preferred route for this number, so Faxbot still sends by it first.',
+    'rule': (', but your sending rule sets the order of routes for this fax, so the budget does not change which '
+             'route goes first.'),
+    None: (', so Faxbot sends by your other routes first when one of them can take the fax, unless this plan is your '
+           'preferred route for this number or a sending rule sets the order.'),
+}
+
+
+def order_of(route_plan, key):
+    """What sets the place of the route ``key`` in a fax's order of routes (``routing.plan.RoutePlan``), for
+    ``use_sentence``: 'rule' when a sending rule's own order decides (``use`` or ``try_in_order``; the planner keeps
+    it whatever any budget), 'preferred' when ``key`` is first as the number's preferred route (an override ahead of
+    every budget), else 'automatic' (``order_key``: a plan past its budget goes after every route within it)."""
+    pinned = getattr(route_plan, 'pinned', None)
+    if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
+        return 'rule'
+    choice = next((item for item in route_plan.choices if item.route.key == key), None)
+    if choice is not None and choice.reason == 'preferred':
+        return 'preferred'
+    return 'automatic'
+
+
+def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages, order=None):
     """The estimate's sentence for a flat plan's normal-use budget (``predict``): how much of it is used this month
     and, once this fax of ``pages`` pages is past it, what Faxbot does about it. Past it is ``marginal``'s test (the
-    pages used and this fax's more than the page budget, or the fax budget already used), and Faxbot then sends by
-    every other reliable route first (``order_key``); going past costs nothing, which the estimate says before this.
-    None without a count of the pages."""
+    pages used and this fax's more than the page budget, or the fax budget already used); going past costs nothing,
+    which the estimate says before this. What Faxbot does then follows ``order`` (``order_of``, from the fax's own
+    order of routes): by itself Faxbot sends by every other reliable route first (``order_key``), but your preferred
+    route for the number stays first and a sending rule's order stays as you set it; with the order unknown (None)
+    the sentence says all three. None without a count of the pages."""
+    if order not in PAST_BUDGET:
+        raise ValueError(f'Unknown order of routes: {order!r}.')
     if used_pages is None:
         return None
     pages = pages if isinstance(pages, int) and pages > 0 else 1
@@ -940,7 +970,7 @@ def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages):
         past = True
     if not past:
         return sentence + '.'
-    return sentence + ', so Faxbot sends by your other routes first when one of them can take the fax.'
+    return sentence + PAST_BUDGET[order]
 
 
 # The burn-down -------------------------------------------------------------------------------------------
