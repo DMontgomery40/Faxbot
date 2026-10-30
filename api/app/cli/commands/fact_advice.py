@@ -16,6 +16,8 @@ from ..output import money
 
 def show_facts(out, result):
     out.line(result.get('sentence') or '')
+    if result.get('days') is not None:
+        out.line(f"Evidence period: last {result['days']} days")
     for item in result.get('recipients') or []:
         out.line('')
         title = f"{item['name']} ({item['display']})" if item.get('name') else item['display']
@@ -24,10 +26,15 @@ def show_facts(out, result):
             out.line(item['sentence'])
         for row in item.get('facts') or []:
             out.line(f"  {row['title']}: {row['sentence']}")
+            if row.get('unknown') or not row.get('net'):
+                out.line('    Expected and cautious benefit: unknown')
+            out.line(f"    Effort: {row['establish']}")
             out.line(f"    {row['confirm']}")
             out.line(f"    {row['step']}")
     out.line('')
     out.line(result.get('realized') or '')
+    for assumption in result.get('assumptions') or []:
+        out.line(assumption)
     out.line(result.get('note') or '')
 
 

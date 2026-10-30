@@ -879,8 +879,18 @@ def _show_relay_advice(out, result):
         out.line(f"{item['sentence']} {item['action']}")
 
 
+def _read_facts(api):
+    return api.get('/routing/recommendations/facts')
+
+
+def _show_facts(out, result):
+    from .fact_advice import show_facts
+    show_facts(out, result)
+
+
 # Each section of `faxbot savings opportunities`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
+    ('facts', 'Facts to establish', _read_facts, _show_facts),
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
     ('plans', 'Plans', _read_plans, show_plans),

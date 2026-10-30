@@ -5,6 +5,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import AdminAPIClient from '../api/client';
 import type { FactAdvice as Advice } from '../api/factAdviceTypes';
 import FactAdvice from '../components/delivery/FactAdvice';
+import Recommendations from '../components/delivery/Recommendations';
+import opportunityFacts from './opportunityFacts.json';
+import { http, HttpResponse } from 'msw';
+import { server } from '../test/server';
 
 type Request = { method: string; path: string; body?: unknown };
 const usd = (amount: string) => [{ currency: 'USD', amount }];
@@ -60,5 +64,29 @@ describe('Costs → Advice', () => {
   it('says so plainly when the advice cannot be read', async () => {
     render(<FactAdvice client={fakeClient({})} />);
     await waitFor(() => expect(screen.getByText(/couldn't work out this advice/)).toBeTruthy());
+  });
+});
+
+
+describe('Opportunities missing facts', () => {
+  it('shows the shared CLI fixture, period, unknown benefit and next step without an apply action', async () => {
+    server.use(http.get('/routing/recommendations/facts', () => HttpResponse.json(opportunityFacts)));
+    render(<Recommendations client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} focus="facts" />);
+    const section = await screen.findByTestId('recommendations-facts');
+    await screen.findByText(opportunityFacts.sentence);
+    expect(section.textContent).toContain('Evidence period: last 90 days');
+    expect(section.textContent).toContain('Expected and cautious benefit: unknown');
+    expect(section.textContent).toContain(opportunityFacts.recipients[0].facts[0].confirm);
+    expect(section.textContent).toContain(opportunityFacts.recipients[0].facts[0].step);
+    expect(section.querySelector('button')).toBeNull();
+    expect(screen.queryByTestId('recommendations-empty')).toBeNull();
+  });
+
+  it('reports a failed source separately from an empty result', async () => {
+    const counts = vi.fn();
+    render(<FactAdvice client={fakeClient({})} embedded onCount={counts} />);
+    await screen.findByText(/couldn't work out this advice/);
+    expect(counts).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByText('Portfolio planner')).toBeNull();
   });
 });

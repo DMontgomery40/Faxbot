@@ -23,18 +23,19 @@ import NumberPlacement from './NumberPlacement';
 import SiteAdvice from './SiteAdvice';
 import FaxServerRenewal from './FaxServerRenewal';
 import PotsCounterQuote from './PotsCounterQuote';
+import FactAdvice from './FactAdvice';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal' | 'pots';
+  | 'facts' | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal' | 'pots';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal', 'pots'];
+  'facts', 'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal', 'pots'];
 
 // Each section's name, for the line that stands in for a section the address names that has nothing yet; the
 // same names as the savings map's advice cards.
 const SECTION_TITLES: Record<Section, string> = {
-  sending: 'Cheaper routes per number', receiving: 'Receiving lines and numbers', plans: 'Plans worth their fee',
+  facts: 'Facts to establish', sending: 'Cheaper routes per number', receiving: 'Receiving lines and numbers', plans: 'Plans worth their fee',
   carriers: "Other carriers' prices", marker: 'Fax marker on calls', steps: 'Calls just past a billed minute',
   partners: 'Partner candidates', discovery: 'Recipients that run Faxbot', tollFree: 'Toll-free numbers on file',
   pages: 'Time lighter shading would save', relays: 'Partners that could relay', trunks: 'Your trunks compared',
@@ -95,6 +96,9 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
       <ScreenHeader title="Opportunities" />
       <AnalysisCard client={client} onNavigate={onNavigate} />
       <Stack spacing={3}>
+        <Anchor section="facts" focus={focus} count={counts.facts}>
+          <FactAdvice client={client} embedded onCount={callbacks.facts} />
+        </Anchor>
         {empty && (
           <Paper variant="outlined" sx={{ p: 3, borderRadius: 2 }}>
             <Typography variant="body1" color="text.secondary" data-testid="recommendations-empty">{NO_RECOMMENDATIONS}</Typography>

@@ -24,6 +24,8 @@ function FactCard({ row }: { row: FactRow }) {
         <Chip size="small" variant="outlined" label={KIND_LABEL[row.kind]} />
       </Box>
       <Typography variant="body2">{row.sentence}</Typography>
+      {(row.unknown || row.net.length === 0) && <Typography variant="body2">Expected and cautious benefit: unknown</Typography>}
+      <Typography variant="body2" color="text.secondary">Effort: {row.establish}</Typography>
       <Typography variant="body2" color="text.secondary">{row.confirm}</Typography>
       <Typography variant="body2" color="text.secondary">{row.step}</Typography>
     </Box>
@@ -48,29 +50,38 @@ function RecipientCard({ item }: { item: FactRecipient }) {
   );
 }
 
-export default function FactAdvice({ client }: { client: AdminAPIClient }) {
+export default function FactAdvice({ client, embedded = false, onCount }: {
+  client: AdminAPIClient; embedded?: boolean; onCount?: (count: number | null) => void;
+}) {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     setBusy(true);
+    onCount?.(null);
     setError(null);
     try {
-      setAdvice(await client.call<Advice>({ method: 'GET', path: '/routing/recommendations/facts' }));
+      const result = await client.call<Advice>({ method: 'GET', path: '/routing/recommendations/facts' });
+      setAdvice(result);
+      onCount?.(result.recipients.reduce((total, item) => total + item.facts.length, 0));
     } catch {
       setError("Faxbot couldn't work out this advice just now. Try again in a minute.");
     } finally {
       setBusy(false);
     }
-  }, [client]);
+  }, [client, onCount]);
   useEffect(() => { void load(); }, [load]);
   return (
     <Box>
-      <ScreenHeader title="Facts to establish" onRefresh={load} busy={busy}
-        subtitle="Cheaper ways to reach a recipient that one confirmed fact would open" />
+      {embedded ? <Typography variant="h6" component="h2">Facts to establish</Typography> : (
+        <ScreenHeader title="Facts to establish" onRefresh={load} busy={busy}
+          subtitle="Cheaper ways to reach a recipient that one confirmed fact would open" />
+      )}
+      {busy && !advice && <Typography role="status">Loading missing-fact advice…</Typography>}
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {advice && (
         <Stack spacing={2}>
+          <Typography variant="body2">Evidence period: last {advice.days} days</Typography>
           <Typography variant="body1" data-testid="fact-advice-sentence">{advice.sentence}</Typography>
           {advice.recipients.map((item) => <RecipientCard key={`${item.kind}-${item.number}`} item={item} />)}
           <Alert severity="info">{advice.realized}</Alert>
@@ -80,7 +91,7 @@ export default function FactAdvice({ client }: { client: AdminAPIClient }) {
           <Typography variant="body2" color="text.secondary">{advice.note}</Typography>
         </Stack>
       )}
-      <PortfolioPlanner client={client} />
+      {!embedded && <PortfolioPlanner client={client} />}
     </Box>
   );
 }

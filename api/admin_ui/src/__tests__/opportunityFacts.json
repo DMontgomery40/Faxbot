@@ -1,0 +1,45 @@
+{
+  "days": 90,
+  "state": "advice",
+  "estimate": true,
+  "sentence": "One missing fact could open a cheaper route over the last 90 days.",
+  "recipients": [
+    {
+      "number": "+12025550123",
+      "display": "+1 202-555-0123",
+      "name": "Synthetic recipient",
+      "kind": "recipient",
+      "faxes": 2,
+      "baseline": [],
+      "unpriced": 2,
+      "largest": [],
+      "sentence": "Two faxes could not be priced.",
+      "facts": [
+        {
+          "fact": "price",
+          "kind": "price",
+          "title": "A route needs its price",
+          "boundary": false,
+          "saving": [],
+          "net": [],
+          "faxes": 2,
+          "establish_cost": [],
+          "establish": "about 10 minutes of your time",
+          "confirm": "Check the destination tariff in your account.",
+          "step": "Enter the price under Prices & plans.",
+          "chance": null,
+          "break_even": null,
+          "unknown": true,
+          "realized": false,
+          "sentence": "The benefit cannot be priced until the tariff is known."
+        }
+      ]
+    }
+  ],
+  "realized": "These are scenarios, not savings.",
+  "note": "Faxbot only advises.",
+  "catalogue": [],
+  "assumptions": [
+    "Each fax is priced again at current prices."
+  ]
+}
