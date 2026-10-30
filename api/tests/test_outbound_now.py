@@ -892,6 +892,55 @@ def test_only_the_faxs_latest_certainty_item_counts(desk):
     assert set(items(board, 'needs_you')) == {reopened} and board['needs_you']['count'] == 1
 
 
+def _uncertain_ids(board):
+    return {job for job, item in items(board, 'needs_you').items() if item['kind'] == 'uncertain'}
+
+
+def _settling_parity(desk, expected):
+    """For each person: Needs attention's count, the board's Needs you and Sent's Needs review list (the list the
+    count links to) hold the same faxes, and only that person's own."""
+    for actor, own in expected:
+        listed = desk.queries.page(actor, status='reconciliation_required', limit=100)
+        assert _uncertain_ids(desk.look(actor)) == {job['id'] for job in listed['jobs']} == own, actor.principal_id
+        assert desk.queries.counts(actor)['reconciliation_required'] == listed['total'] == len(own), actor.principal_id
+
+
+def test_each_persons_count_of_faxes_to_settle_matches_the_list_it_opens(desk):
+    # Alice's: a fax that failed with a person answering, still to settle; and one settled as can't tell while its
+    # delivery still waits for review (end_settled ends it later). Only the first needs her.
+    alices_open = desk.accept(desk.alice, to=NUMBER)
+    desk.set(alices_open, state='failed', updated_at=NOW - timedelta(minutes=20), error='A person answered.')
+    _certainty(desk, alices_open)
+    alices_settled = desk.accept(desk.alice, to=OTHER)
+    desk.set(alices_settled, state='reconciliation_required')
+    _certainty(desk, alices_settled, state='settled', outcome='unknown', category='transport_ambiguous')
+    # Bob's: uncertain a moment ago with no item filed yet, and one partly sent.
+    bobs_unfiled = desk.accept(desk.bob, to=THIRD)
+    desk.set(bobs_unfiled, state='reconciliation_required')
+    bobs_partly = desk.accept(desk.bob, to=NUMBER)
+    desk.set(bobs_partly, state='failed', updated_at=NOW - timedelta(minutes=20), error='The call failed.')
+    _certainty(desk, bobs_partly, category='partly_sent')
+    _settling_parity(desk, ((desk.alice, {alices_open}), (desk.bob, {bobs_unfiled, bobs_partly}),
+                            (desk.olive, {alices_open, bobs_unfiled, bobs_partly})))
+    # Any other status still filters by the delivery's state alone.
+    assert {job['id'] for job in desk.queries.page(desk.alice, status='failed')['jobs']} == {alices_open}
+
+
+def test_without_the_certainty_table_count_list_and_board_read_the_delivery_state(desk):
+    """A database whose certainty_items table is really absent: all three count uncertain deliveries, per person."""
+    with desk.engine.begin() as connection:
+        connection.execute(sa.text('DROP TABLE certainty_events'))
+        connection.execute(sa.text('DROP TABLE certainty_items'))
+    assert 'certainty_items' not in sa.inspect(desk.engine).get_table_names()
+    alices = desk.accept(desk.alice, to=NUMBER)
+    desk.set(alices, state='reconciliation_required')
+    failed = desk.accept(desk.alice, to=OTHER)
+    desk.set(failed, state='failed', updated_at=NOW - timedelta(minutes=20), error='A person answered.')
+    bobs = desk.accept(desk.bob, to=THIRD)
+    desk.set(bobs, state='reconciliation_required')
+    _settling_parity(desk, ((desk.alice, {alices}), (desk.bob, {bobs}), (desk.olive, {alices, bobs})))
+
+
 # -- signed in through the console (a browser session) ---------------------------------------------------------------
 
 @pytest.fixture
@@ -938,8 +987,9 @@ def test_a_signed_in_console_session_reads_the_board_with_its_own_scope(browser_
     assert ended.status_code == 401
 
 
-def test_health_status_counts_the_same_uncertain_faxes_as_the_board(client):
-    """Overview's Needs attention (GET /admin/health-status) and the board's Needs you agree on uncertain results."""
+def test_health_status_counts_the_same_uncertain_faxes_as_the_board_and_the_list_it_opens(client):
+    """Overview's Needs attention (GET /admin/health-status), the board's Needs you and the list the count opens
+    (GET /admin/fax-jobs?status=reconciliation_required, Sent's Needs review) agree on uncertain results."""
     from app.routing.background import installation_engine
     jobs = [_send(client, ADMIN, f'+1202555080{index}') for index in range(4)]
     engine = installation_engine(client.app)[0]
@@ -957,3 +1007,43 @@ def test_health_status_counts_the_same_uncertain_faxes_as_the_board(client):
     health = client.get('/admin/health-status', headers=ADMIN)
     assert health.status_code == 200, health.text
     assert health.json()['jobs']['reconciliation_required'] == len(uncertain) == 2
+    listed = client.get('/admin/fax-jobs', headers=ADMIN, params={'status': 'reconciliation_required'})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()['total'] == 2 and {job['id'] for job in listed.json()['jobs']} == uncertain
+
+
+def test_a_signed_in_persons_list_of_faxes_to_settle_holds_what_their_board_counts(browser_client):
+    """Over HTTP with console sessions: each person's Needs review list (GET /admin/fax-jobs?status=
+    reconciliation_required) holds exactly the uncertain faxes their board counts, never another person's; the
+    administrator's also matches the Overview's count (GET /admin/health-status)."""
+    from api.tests.test_access_management_http import B, assign, ready_user
+    from app.routing.background import installation_engine
+    client = browser_client
+    admin, _ = ready_user(client, 'dana', role='role_administrator')
+    sender, principal = ready_user(client, 'sam')
+    personal = next(item['id'] for item in client.get('/access/resources', headers=B).json()['items']
+                    if item['kind'] == 'personal' and item['principal_id'] == principal['id'])
+    assign(client, principal['id'], 'role_fax_operator', personal)
+    sender.refresh()
+    theirs = sender.post('/fax', data={'to': NUMBER}, json=None,
+                         files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    ours = client.post('/fax', headers=B, data={'to': OTHER},
+                       files={'file': ('note.txt', b'Synthetic fax body', 'text/plain')})
+    assert theirs.status_code == ours.status_code == 202, (theirs.text, ours.text)
+    theirs, ours = theirs.json()['id'], ours.json()['id']
+    engine = installation_engine(client.app)[0]
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE outbound_deliveries SET state = 'failed', dispatch_mode = 'normal' "
+                                   'WHERE id IN (:theirs, :ours)'), {'theirs': theirs, 'ours': ours})
+    for job in (theirs, ours):
+        _certainty(SimpleNamespace(engine=engine), job)    # a person answered: open, though the delivery failed
+    for person, own in ((sender, {theirs}), (admin, {theirs, ours})):
+        board = person.get('/outbound/now')
+        assert board.status_code == 200, board.text
+        listed = person.get('/admin/fax-jobs', params={'status': 'reconciliation_required'})
+        assert listed.status_code == 200, listed.text
+        assert _uncertain_ids(board.json()) == {job['id'] for job in listed.json()['jobs']} == own
+        assert listed.json()['total'] == len(own)
+    health = admin.get('/admin/health-status')
+    assert health.status_code == 200, health.text
+    assert health.json()['jobs']['reconciliation_required'] == 2

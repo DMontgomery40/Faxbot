@@ -12,7 +12,7 @@ import uuid
 
 import sqlalchemy as sa
 
-from ..outbound_summary import certainty_items, dashboard_counts
+from ..outbound_summary import certainty_items, dashboard_counts, needs_settling
 from ..outbound_store import OutboundStore
 from .fax_resources import FaxAccessError
 from .types import AccessUnavailableError, InvalidTransactionError
@@ -121,7 +121,13 @@ class AuthorizedFaxQueries:
         with self._transaction() as (connection, now):
             visible = self._visible(connection, actor, now)
             query = self._selection().where(self.jobs.c.id.in_(visible))
-            if status:
+            if status == 'reconciliation_required':
+                # Needs review: the faxes waiting for a person to settle an uncertain result, as the Overview's
+                # attention count, the board's Needs you and Sent's settling list have them
+                # (outbound_summary.needs_settling). That includes a failed fax a person still has to settle, such
+                # as one partly sent, and leaves out one already settled.
+                query = query.where(needs_settling(self.deliveries, certainty_items(connection)))
+            elif status:
                 query = query.where(self.deliveries.c.state == status)
             if backend:
                 query = query.where(self.jobs.c.backend == backend)
