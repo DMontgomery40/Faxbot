@@ -123,8 +123,13 @@ jobs:
           pip install -r requirements.txt -r ../python_mcp/requirements.txt
           pip install -e ../sdks/python
           python -m pip check
+      - name: Build the Faxbot Asterisk image for the native proofs
+        # The copier and fax-server proofs skip at collection unless FAXBOT_NATIVE_IMAGE names an existing image;
+        # the other proofs reuse it instead of building their own.
+        run: docker build --quiet --tag faxbot-native:t38-proof asterisk
       - name: Run the Docker loopback proofs
         env:
+          FAXBOT_NATIVE_IMAGE: faxbot-native:t38-proof
           FAXBOT_NATIVE_PROOF: '1'
           FAXBOT_SSLFAX_PROOF: '1'
           FAXBOT_DOCKER_CONTEXT: default
