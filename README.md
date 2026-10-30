@@ -46,6 +46,8 @@ Earlier MIT releases retain their existing permissions, including material alrea
 - **Avoid repeating acknowledged case documents.** A case packet lists the documents a recipient has acknowledged on a one-page index and sends only new or changed ones, when an administrator records that the recipient accepts references. A delivered fax alone does not count as acknowledgement. The recipient acknowledges a document through a partner's signed receipt, the receiving team acknowledging a packet delivered to one of your own numbers, or a person recording what the recipient confirmed. Each acknowledgement is trusted for the recipient's reuse period, which is 90 days unless you set another. If the recipient cannot find a document, the next packet sends it in full, and a person can resend the whole packet as a new fax. Faxbot checks the recipient's reference setting; collecting evidence of that consent is future work. Preview packets before sending. See [case packets](docs/operations/delivery-routes.md#case-packets).
 - **Manage people and integrations.** Named users, groups, roles, mailbox permissions, scoped API keys, sessions, and mobile pairing are managed in the console. The server enforces the same permissions. See [access control](docs/security/access-control.md).
 
+Dense pages include a seven-step setup guide in their capability page and `faxbot savings capabilities setup dense_pages`. It reads saved route settings and links to the existing editors. The console remembers the review step in the current tab; it does not recover unsaved edits in other editors or verify provider compatibility.
+
 ## Admin Console
 
 The API serves the console at `/admin/ui/`. Its left panel has six areas, each page at its own address (such as `#/delivery/trunk`), and **Send a fax** at the top for people who may send:
@@ -137,6 +139,8 @@ Contributions should keep the console usable, preserve provider capability check
 Reference pages under `docs/generated/` are generated from code. The README/roadmap, agent instructions and [planning sources](planning/README.md) are maintained separately. AI prose proposals are restricted to permitted documentation pages, including when applied locally.
 
 ## Roadmap
+
+- [ ] **Guided capability setup (#56):** dense-pages guidance is available in the console and CLI with tab-local review progress. Resource-specific checks and editor draft/activation recovery remain, along with the sending-together, direct-partner, T.38 and SSL Fax flows. See [the implementation boundary](planning/issue-56-guided-setup.md).
 
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 

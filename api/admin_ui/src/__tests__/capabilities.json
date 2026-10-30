@@ -52,6 +52,7 @@
         "sentence": "Choose the route, plan or number that costs least for each fax.",
         "capabilities": [
           {
+            "setup": null,
             "key": "own_numbers",
             "name": "Faxes to your own numbers",
             "sentence": "Delivers a fax to one of your own numbers straight into Received, with no phone call.",
@@ -108,6 +109,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "toll_free",
             "name": "Approved toll-free numbers",
             "sentence": "Dials a recipient's toll-free fax number once they approve it; the recipient pays for those calls.",
@@ -174,6 +176,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "cheapest_route",
             "name": "Cheapest route per delivered fax",
             "sentence": "Sends each number by the route that cost least per delivered fax once two routes have proven themselves.",
@@ -241,6 +244,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "plan_first",
             "name": "Your plan's faxes first",
             "sentence": "Uses a monthly plan while it has room under its budget, before routes that charge per fax.",
@@ -298,6 +302,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_sending",
             "name": "Cheaper routes per number",
             "sentence": "Names numbers whose usual route cost more per delivered fax than another, with a button to switch.",
@@ -365,6 +370,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_carriers",
             "name": "Other carriers' prices",
             "sentence": "Prices your last 30 days of faxes at each carrier's published prices, so you can see what switching would change.",
@@ -421,6 +427,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_billing_steps",
             "name": "Calls just past a billed minute",
             "sentence": "Finds numbers whose calls end just past a billed minute, where one page less or a faster mode would cost less.",
@@ -477,6 +484,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_toll_free",
             "name": "Toll-free numbers on file",
             "sentence": "Lists recipients with a toll-free fax number, so you can record their approval and stop paying for those calls.",
@@ -533,6 +541,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_fax_marker",
             "name": "Fax marker on calls",
             "sentence": "Compares calls marked as fax with calls that were not, on delivery and cost per delivered fax.",
@@ -589,6 +598,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_sites",
             "name": "Calls by state",
             "sentence": "Says whether your carriers price US calls by state, and when another site's trunk would cost less.",
@@ -655,6 +665,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "measured_account",
             "name": "Account chosen after measuring its pages",
             "sentence": "Measures the pages each of your sending accounts would really send, then sends by the account whose fax costs least.",
@@ -712,6 +723,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "caller_id_prices",
             "name": "Prices by the caller ID a call shows",
             "sentence": "Prices each call by the caller ID it shows, where a carrier charges less for some caller IDs, so the cheapest route is chosen on the real price.",
@@ -783,6 +795,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "dialing_guard",
             "name": "Where Faxbot may dial",
             "sentence": "Holds a fax to a kind of number you have not allowed, such as premium-rate numbers or a new country, so no call is billed there by mistake.",
@@ -846,6 +859,67 @@
         "sentence": "Send fewer pages, and keep each page on the line for less time.",
         "capabilities": [
           {
+            "setup": {
+              "routes": [
+                {
+                  "route": "sip",
+                  "long_pages": true,
+                  "long_pages_chosen": false,
+                  "long_pages_possible": true,
+                  "trim_blank": true,
+                  "provider_says": "receiver",
+                  "source_url": "https://www.itu.int/rec/T-REC-T.30",
+                  "read_on": "2026-10-07",
+                  "label": "Telnyx",
+                  "sentence": "Faxbot puts several pages on one long page when the receiving machine takes long pages and it saves pages or time."
+                }
+              ],
+              "cancel": "Leaving setup does not undo settings already saved in direct settings. Only review progress is kept in this browser tab; no document or agreement is stored here.",
+              "steps": [
+                {
+                  "key": "explain",
+                  "title": "Understand dense pages",
+                  "sentence": "Dense pages can put several short pages on one longer fax page. The original document is kept. The capability status and route states below describe this installation now, not a setup promise.",
+                  "address": null
+                },
+                {
+                  "key": "prerequisites",
+                  "title": "Check what it needs",
+                  "sentence": "Choose a sending cloud route. You need settings:write to change its page setting. Your provider must carry long pages unchanged; check its documented limits or obtain confirmation from the provider. Check the recipient machine on its recipient page: unknown length stays at A4. A recipient can refuse packing there. Any required recipient agreement must come from the recipient, never from finishing this guide.",
+                  "address": "recipients/list"
+                },
+                {
+                  "key": "edit",
+                  "title": "Open the route editor",
+                  "sentence": "In Providers & accounts, open the cloud provider and its Long pages control. Its scope is the named provider route, not one recipient. A recipient choice of Never still prevents packing. Keep the default off until the provider is checked. Direct settings remain available throughout this guide.",
+                  "address": "delivery/connections"
+                },
+                {
+                  "key": "review",
+                  "title": "Review the effect before changing it",
+                  "sentence": "Review all recipients using that route, their learned page limits and their packing choices. If packing is ineligible, Faxbot keeps ordinary pages. This guide changes no routing or fallback. Already prepared and queued attempts retain their captured identity, provider and document layout. Fewer pages may affect per-page billing; shorter calls may affect per-minute billing. Allowances, billing increments and unknown prices can leave money unchanged or unknown.",
+                  "address": "savings/prices"
+                },
+                {
+                  "key": "save",
+                  "title": "Save only in direct settings",
+                  "sentence": "The Long pages switch saves immediately for that route; it has no later Apply step. Each recipient page has its own Save for this number boundary. Changes affect later document preparation, not documents already prepared. This guide has no editable settings or pending activation of its own. Unsaved edits in another editor are not recovered by this guide.",
+                  "address": "delivery/connections"
+                },
+                {
+                  "key": "verify",
+                  "title": "Understand what was checked",
+                  "sentence": "Reading saved settings does not prove that a provider preserves long pages or that a recipient can receive them. This guide performs only local reads. Any test fax must use the separate Send a fax action with a chosen document and recipient; no fax, email or remote account change is triggered by Next, leaving or finishing setup.",
+                  "address": null
+                },
+                {
+                  "key": "status",
+                  "title": "Return to status and results",
+                  "sentence": "Return to the capability status and refresh it after saving elsewhere. Its results count actual use, not reviewed steps. With no eligible delivery yet there is no measured result. Inspect Sent for an attempt and Savings results for the separate page, time and cost figures.",
+                  "address": "savings/results"
+                }
+              ]
+            },
             "key": "dense_pages",
             "name": "Dense pages",
             "sentence": "Stacks short pages onto longer fax pages where the receiving machine allows, and leaves out blank page bottoms, so fewer pages and seconds are billed.",
@@ -902,6 +976,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "encoded_pages",
             "name": "Encoded pages (experimental)",
             "sentence": "Sends a whole document as a few dense fax pages that the recipient's Faxbot turns back into the original, for recipients who agreed.",
@@ -974,6 +1049,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "fax_friendly",
             "name": "Lighter shading",
             "sentence": "Lightens shaded areas and removes specks before a page goes on a line billed by time, so pages take less time to send.",
@@ -1044,6 +1120,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "fax_over_ip",
             "name": "Fax over IP (T.38)",
             "sentence": "Carries fax pages as data over your SIP trunk, so pages go through faster than audio fax and calls are shorter.",
@@ -1110,6 +1187,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "measured_coding",
             "name": "Smallest page coding",
             "sentence": "Measures each fax's pages in every coding the call may use and sends the smallest, so pages take less time on the line.",
@@ -1166,6 +1244,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "sslfax",
             "name": "Faster pages",
             "sentence": "Sends pages over SSL Fax when the other fax machine offers it, so calls take less time.",
@@ -1233,6 +1312,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_shading",
             "name": "Time lighter shading would save",
             "sentence": "While Lighter shading is set to Never, measures your recent faxes and says how much time it would have saved.",
@@ -1289,6 +1369,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "header_notice",
             "name": "Header notice instead of a cover page",
             "sentence": "Prints your notice in a band at the top of every page, so you can leave out the cover page and send one page fewer.",
@@ -1367,6 +1448,7 @@
         "sentence": "Send what a recipient already has only once, and share calls where recipients agree.",
         "capabilities": [
           {
+            "setup": null,
             "key": "case_packets",
             "name": "Case packets",
             "sentence": "Leaves documents a recipient already accepted out of a case packet, so fewer pages are sent.",
@@ -1438,6 +1520,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "direct_delivery",
             "name": "Direct delivery",
             "sentence": "Sends documents to verified partners over the internet instead of placing a fax call.",
@@ -1495,6 +1578,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "fax_images",
             "name": "Fax images to partners",
             "sentence": "Sends a partner the exact fax pages a call would carry, over the internet, with no phone call.",
@@ -1562,6 +1646,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "reuse",
             "name": "Send once and reuse",
             "sentence": "Sends a partner only what it lacks: one copy for several of its numbers, a reference to a document it already holds, or only the changes from the version it has.",
@@ -1630,6 +1715,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "sending_together",
             "name": "Sending together",
             "sentence": "Sends several short faxes to the same number in one call, on a line that charges for each call.",
@@ -1706,6 +1792,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "separator_pages",
             "name": "Fewer separator pages",
             "sentence": "Marks each document in a shared call with an index page or a line on each page instead of a separator page.",
@@ -1797,6 +1884,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "court_profile",
             "name": "California court profile",
             "sentence": "Files with a California court and serves papers by fax as rules 2.304 to 2.306 require (the MC-005 cover, the pages exactly as given and the transmission record), so a filing is not refused and sent again.",
@@ -1860,6 +1948,7 @@
         "sentence": "Agree better ways to deliver with the organizations you fax most.",
         "capabilities": [
           {
+            "setup": null,
             "key": "partner_tunnel",
             "name": "Partner fax over a private tunnel",
             "sentence": "Places a fax call straight to a partner's fax engine inside your own encrypted tunnel, with no carrier and nothing per minute.",
@@ -1938,6 +2027,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "relay",
             "name": "Partner relays",
             "sentence": "Sends faxes abroad through a partner that places them as local calls in its own country.",
@@ -2005,6 +2095,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "digital_routes",
             "name": "Direct messages and FHIR",
             "sentence": "Delivers to a recipient's confirmed Direct address or FHIR server instead of placing a fax call.",
@@ -2072,6 +2163,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_partners",
             "name": "Partner candidates",
             "sentence": "Names the numbers whose faxes cost the most again and again, so you can enroll them as direct partners.",
@@ -2128,6 +2220,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_discovery",
             "name": "Recipients that run Faxbot",
             "sentence": "Finds recipients whose fax line is answered by a Faxbot, so you can send to them with no call.",
@@ -2184,6 +2277,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_relays",
             "name": "Partners that could relay",
             "sentence": "Names partners whose signed local price would have cost less than your own calls.",
@@ -2241,6 +2335,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "partner_windows",
             "name": "Line windows and preflight with partners",
             "sentence": "Asks a partner's Faxbot before paying to send by phone, and starts the call in a window the partner grants, so calls to its busy lines queue instead of being retried.",
@@ -2298,6 +2393,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_registered_senders",
             "name": "Registered senders",
             "sentence": "Sends a recipient that accepts faxes only from a registered number by the account and caller ID registered with it, so its faxes are not refused and sent again.",
@@ -2361,6 +2457,7 @@
         "sentence": "Wait for the right moment, and resend only what is missing.",
         "capabilities": [
           {
+            "setup": null,
             "key": "busy_hours",
             "name": "Calls at the right hour",
             "sentence": "Waits out a number's usual busy hours when a failed call there could be charged.",
@@ -2413,6 +2510,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "free_line",
             "name": "Wait for a free line",
             "sentence": "Calls a number only while it has a free line, so a fax waits instead of paying for a busy call.",
@@ -2465,6 +2563,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "continuation",
             "name": "Only the missing pages",
             "sentence": "Finishes a fax whose call broke by sending only the pages the call did not confirm.",
@@ -2521,6 +2620,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "partner_repair",
             "name": "Missing pages to partners",
             "sentence": "After a broken call to a partner, sends only the pages the partner is missing, with no new call.",
@@ -2589,6 +2689,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "power_aware",
             "name": "Power-aware sending",
             "sentence": "Starts a call only when your UPS has the runtime to finish it, so a power cut does not waste a call and its pages.",
@@ -2646,6 +2747,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "answer_cap",
             "name": "50-second answer cap",
             "sentence": "Hangs up a call that no fax machine answers within 50 seconds, on a trunk billed by the whole minute, so an unanswered call is not billed a second minute.",
@@ -2708,6 +2810,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "station_check",
             "name": "Station check",
             "sentence": "Compares the fax number the far machine shows with the number you dialled before any page, and says so in Sent details, or hangs up before any page where you choose, so a wrong number is caught.",
@@ -2760,6 +2863,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "keys_after_answer",
             "name": "Keys after answer",
             "sentence": "Presses the keys a phone menu asks for before the fax machine answers, so a fax to a number behind a menu goes through instead of failing and being retried.",
@@ -2827,6 +2931,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "route_problems",
             "name": "Route problems told apart from number problems",
             "sentence": "Notices when calls through one route fail together, holds that route back and keeps the lesson off each number, so working numbers are not retried or abandoned for a route problem.",
@@ -2890,6 +2995,7 @@
         "sentence": "Keep only the numbers, lines and plans you need, and turn away junk calls.",
         "capabilities": [
           {
+            "setup": null,
             "key": "blocked_senders",
             "name": "Junk callers turned away",
             "sentence": "Declines calls from blocked numbers before Faxbot answers, so they are never answered or received.",
@@ -2956,6 +3062,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_plans",
             "name": "Plans worth their fee",
             "sentence": "Says whether each monthly plan, such as an unlimited fax plan, is worth its fee at your traffic.",
@@ -3013,6 +3120,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_receiving",
             "name": "Receiving lines and numbers",
             "sentence": "Says which of your numbers could share lines on your trunk, and which quiet numbers cost more to keep than they bring in.",
@@ -3069,6 +3177,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_trunks",
             "name": "Your trunks compared",
             "sentence": "Compares your trunks' monthly fees and busy times, and says when one trunk's faxes fit on another.",
@@ -3126,6 +3235,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_numbers",
             "name": "Where each number should live",
             "sentence": "Says where each of your fax numbers costs least to receive on, and the steps to move it.",
@@ -3182,6 +3292,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_caller_names",
             "name": "Caller-name lookup",
             "sentence": "Shows which of your Telnyx numbers pay for caller-name lookup, which Faxbot never uses, so you can turn it off.",
@@ -3249,6 +3360,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "copier_extensions",
             "name": "Copiers as extensions of Faxbot",
             "sentence": "Lets a copier with an IP fax option register to Faxbot and fax through your routes, so its own analog line can go.",
@@ -3315,6 +3427,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_line_inventory",
             "name": "Lines and carrier closing dates",
             "sentence": "Matches your fax lines to carriers' discontinuance lists and contract end dates, so you move a line before its price changes or it closes.",
@@ -3372,6 +3485,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_copper_closures",
             "name": "Copper closures",
             "sentence": "Shows when the copper network under your French lines closes, commune by commune, so you move each line in time.",
@@ -3429,6 +3543,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_renewal",
             "name": "Fax server renewal",
             "sentence": "Sets your fax server's renewal beside the channels it really used at peak and the faxes Faxbot already handles, so you renew only the channels you need.",
@@ -3486,6 +3601,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_pots",
             "name": "Fax lines in a POTS-replacement order",
             "sentence": "Works out what taking the fax lines out of a POTS-replacement quote removes from it, and what one shared trunk costs for them instead.",
@@ -3550,6 +3666,7 @@
         "sentence": "Check what you were billed, and find the next change worth making.",
         "capabilities": [
           {
+            "setup": null,
             "key": "charge_checks",
             "name": "Charge checks",
             "sentence": "Matches what your carriers and fax services billed against your faxes, and points out charges and invoice amounts your faxes don't explain.",
@@ -3606,6 +3723,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_setup_packs",
             "name": "Suggested packs",
             "sentence": "Gathers the settings and rules that would save money here into packs you review and apply.",
@@ -3651,6 +3769,7 @@
             "affected": null
           },
           {
+            "setup": null,
             "key": "advice_country_rules",
             "name": "Country service rules",
             "sentence": "Shows the rules a country sets for fax services, with their sources, and which of your accounts you confirmed meet them.",

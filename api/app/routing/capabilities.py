@@ -840,7 +840,15 @@ def _view(key, capability, item, here, label, now, findings):
         # What it did here, counted from its own records (capability_here.py). Advice and charge checks find things
         # rather than act on faxes, so their count stays out of the Overview's "What Faxbot is doing".
         used = {'used': 0 if capability.findings else counted[0], 'sentence': counted[1]}
+    setup = None
+    if key == 'dense_pages':
+        from ..pages.views import route_views
+        from ..pages.capability import records_for
+        from .capability_setup import dense_pages_guide
+        setup = dense_pages_guide(route_views(
+            here.engine, [account.key for account in here.sending], records=here.store(records_for)))
     return {
+        'setup': setup,
         'key': key, 'name': item['name'], 'sentence': item['sentence'], 'example': capability.example,
         'outcome': capability.outcome,
         # This capability's own page.

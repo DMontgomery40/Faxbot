@@ -234,3 +234,13 @@ describe('When the read is refused or fails', () => {
     expect(screen.queryByTestId(`capability-outcome-${answer.outcomes[0].key}`)).toBeNull();
   });
 });
+
+it('refreshes saved capability state and removes setup when read permission is lost', async () => {
+  serve();
+  render(<Capabilities client={client()} capability="dense_pages" />);
+  await screen.findByRole('button', { name: 'Guided setup' });
+  serve({ detail: 'Forbidden' }, 403);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh capability status' }));
+  await screen.findByTestId('capabilities-denied');
+  expect(screen.queryByRole('button', { name: 'Guided setup' })).toBeNull();
+});

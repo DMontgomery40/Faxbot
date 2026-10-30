@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
 import type { Capability, CapabilityOutcome, CapabilityPrerequisite } from '../../api/capabilityTypes';
 import type { AdminDestination } from '../../navigation';
+import CapabilitySetup from './CapabilitySetup';
 import { StateChips } from './CapabilityList';
 import { AddressLink, CAPABILITIES_ADDRESS, type Navigate } from './text';
 
@@ -49,6 +50,7 @@ export default function CapabilityPage({ item, outcome, onNavigate }: {
       </Typography>
       <Typography variant="h4" component="h1">{item.name}</Typography>
       <Box sx={{ my: 1 }}><StateChips item={item} /></Box>
+      {item.setup && <CapabilitySetup key={item.key} item={item} onNavigate={onNavigate} />}
       <Stack spacing={2} sx={{ maxWidth: 900 }}>
         <Box>
           <Typography variant="body1">{item.sentence}</Typography>

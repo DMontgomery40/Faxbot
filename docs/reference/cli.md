@@ -725,6 +725,7 @@ $ faxbot savings capabilities [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `show`: Show one capability: what it does, an...
+* `setup`: Read guided setup and current saved state.
 
 #### `faxbot savings capabilities show`
 
@@ -739,6 +740,24 @@ $ faxbot savings capabilities show [OPTIONS] {KEY}
 **Arguments**:
 
 * `KEY`: The capability, as listed in brackets by faxbot savings capabilities.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot savings capabilities setup`
+
+Read guided setup and current saved state. Changes use the existing direct settings commands.
+
+**Usage**:
+
+```console
+$ faxbot savings capabilities setup [OPTIONS] {KEY}
+```
+
+**Arguments**:
+
+* `KEY`: [required]
 
 **Options**:
 

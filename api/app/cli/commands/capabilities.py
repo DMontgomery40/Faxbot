@@ -136,3 +136,32 @@ def capabilities_show(key: str = typer.Argument(..., metavar='KEY',
     if item is None:
         raise CliError(f'There is no capability {key}. List them with: {COMMAND}')
     state.out().result(item, lambda out: [out.line(line) for line in show_lines(result, key)])
+
+
+def setup_lines(item):
+    guide = item['setup']
+    lines = [f"Guided setup: {item['name']}", states(item), item['sentence'],
+             f"For example: {item['example']}"]
+    for index, step in enumerate(guide['steps'], 1):
+        lines += [f"{index}. {step['title']}", step['sentence']]
+        if step['address']:
+            lines.append(f"Console: #/{step['address']}")
+    lines.append('Saved route state (read now):')
+    lines += [f"{route['label']}: {'On' if route['long_pages'] else 'Off'} — {route['sentence']}"
+              for route in guide['routes']]
+    if not guide['routes']:
+        lines.append('No delivery routes are configured.')
+    lines += [guide['cancel'], 'Reviewing these steps does not verify or enable the capability.',
+              f"Current capability status: {states(item)}", item['here']['sentence'] or 'No measured result yet.',
+              f"Refresh status: {COMMAND} show {item['key']}"]
+    return lines
+
+
+@capabilities.command('setup')
+def capabilities_setup(key: str = typer.Argument(..., metavar='KEY')):
+    """Read guided setup and current saved state. Changes use the existing direct settings commands."""
+    result = state.api().get('/routing/capabilities')
+    _, item = find(result, key)
+    if item is None or not item.get('setup'):
+        raise CliError('Guided setup is currently available for dense_pages. Use show KEY for direct settings.')
+    state.out().result(item, lambda out: [out.line(line) for line in setup_lines(item)])

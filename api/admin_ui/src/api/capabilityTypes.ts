@@ -41,7 +41,14 @@ export interface CapabilitySetting {
   command: string | null;
 }
 
+export interface CapabilitySetupGuide {
+  cancel: string;
+  routes: Array<{ route: string; label: string; long_pages: boolean; sentence: string }>;
+  steps: Array<{ key: string; title: string; sentence: string; address: string | null }>;
+}
+
 export interface Capability {
+  setup?: CapabilitySetupGuide | null;
   key: string;
   name: string;
   sentence: string;

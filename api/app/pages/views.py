@@ -174,10 +174,10 @@ def route_sentence(view, label):
             'pages to one of your own numbers on your phone line, and compare what arrives.')
 
 
-def route_views(engine, routes=None):
+def route_views(engine, routes=None, *, records=None):
     """Providers: long pages per route, with one sentence each."""
     from ..routing.plan import route_label
-    records = records_for(engine)
+    records = records if records is not None else records_for(engine)
     keys = routes if routes is not None else sorted(capabilities.page_models())
     result = []
     for route in keys:

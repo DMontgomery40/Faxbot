@@ -776,6 +776,8 @@ def test_the_fixture_is_an_answer_from_the_modules():
             (p.kind, p.sentence, p.address) for p in capability.prerequisites], f'{key}: {regenerate}'
         if item['setting']['command']:
             assert item['setting']['command'] == capability.command, f'{key}: {regenerate}'
+    from app.routing.capability_setup import dense_pages_guide
+    assert items['dense_pages']['setup'] == dense_pages_guide(items['dense_pages']['setup']['routes'])
     # Every state the console and the command must show is in it at least once.
     filters = {name for item in items.values() for name in item['filters']}
     assert filters == {key for key, _, _ in capabilities.FILTERS}
@@ -867,3 +869,38 @@ def test_capabilities_need_settings_read(installation):
         assert made.status_code == 200, made.text
         refused = client.get('/routing/capabilities', headers={'X-API-Key': made.json()['token']})
         assert refused.status_code == 403
+
+
+def test_dense_pages_setup_reads_the_same_saved_route_state_as_the_editor(installation):
+    from app.routing.capability_setup import dense_pages_guide
+    with installation.start() as client:
+        result = client.get('/routing/capabilities', headers=ADMIN)
+        assert result.status_code == 200, result.text
+        items = _by_key(result.json())
+        guide = items['dense_pages']['setup']
+        assert guide == dense_pages_guide(guide['routes'])
+        canonical = {row['route']: row for row in client.get('/routing/page-routes', headers=ADMIN).json()['routes']}
+        assert guide['routes'] == [canonical[row['route']] for row in guide['routes']]
+        assert all(item['setup'] is None for key, item in items.items() if key != 'dense_pages')
+    views = []
+
+    def read_editor(client):
+        views.extend(client.get('/routing/page-routes', headers=ADMIN).json()['routes'])
+
+    body, _ = scenario(installation, then=read_editor)
+    guide = _by_key(body)['dense_pages']['setup']
+    assert len(guide['routes']) > 0
+    expected = {row['route']: row for row in views}
+    assert guide['routes'] == [expected[row['route']] for row in guide['routes']]
+
+
+def test_cli_dense_pages_setup_uses_shared_guide_and_rejects_unsupported_flows(cli):
+    result = cli('savings', 'capabilities', 'setup', 'dense_pages')
+    assert result.exit_code == 0, result.stdout
+    assert '7. Return to status and results' in result.stdout
+    assert 'does not prove' in result.stdout
+    assert 'Saved route state (read now):' in result.stdout
+    assert cli.json('savings', 'capabilities', 'setup', 'dense_pages')['setup']['steps'][0]['key'] == 'explain'
+    unknown = cli('savings', 'capabilities', 'setup', 'sslfax')
+    assert unknown.exit_code != 0
+    assert 'currently available for dense_pages' in unknown.stderr

@@ -2,7 +2,7 @@
 // GET /routing/capabilities. The address carries the view: ?show=ready filters the list, ?key=<key> opens one
 // capability, so Back, reload and a copied link all return to it. Never money: amounts stay on Savings.
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Box, CircularProgress, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Typography } from '@mui/material';
 import AdminAPIClient, { AdminAPIError } from '../../api/client';
 import type { Capabilities as CapabilitiesView } from '../../api/capabilityTypes';
 import { ScreenHeader } from '../access/AccessViews';
@@ -28,6 +28,7 @@ export default function Capabilities({ client, show = null, capability = null, o
     try {
       setData(await client.getCapabilities());
     } catch (failure) {
+      setData(null);
       setError(failure);
     } finally {
       setBusy(false);
@@ -50,7 +51,10 @@ export default function Capabilities({ client, show = null, capability = null, o
         </Box>
       );
     }
-    return <CapabilityPage item={found[0].item} outcome={found[0].outcome} onNavigate={onNavigate} />;
+    return <Box>
+      <Button disabled={busy} onClick={() => void load()}>Refresh capability status</Button>
+      <CapabilityPage item={found[0].item} outcome={found[0].outcome} onNavigate={onNavigate} />
+    </Box>;
   }
 
   return (
