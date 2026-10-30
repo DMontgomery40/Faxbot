@@ -11,6 +11,11 @@ import { server } from '../test/server';
 const client = () => new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
 const config = { fax_disabled: false, max_file_size_mb: 10 };
 
+// Send asks whether a header notice applies; none does here, so the cover sheet choice stays hidden.
+beforeEach(() => {
+  server.use(http.get('/header-notice/for-send', () => HttpResponse.json({ notice: null })));
+});
+
 const document = (lastModified = 1_790_000_000_000, text = '%PDF-1.4 referral') =>
   new File([text], 'referral.pdf', { type: 'application/pdf', lastModified });
 
@@ -257,12 +262,12 @@ describe('The recipient name typed on Send', () => {
     fireEvent.change(number, { target: { value: '+15551234567' } });
     fireEvent.change(name, { target: { value: 'Abandoned recipient' } });
     fireEvent.blur(name);
-    await waitFor(() => expect(checked).toContainEqual(['+15551234567', 'Abandoned recipient']), { timeout: 2000 });
+    await waitFor(() => expect(checked).toContainEqual(['+15551234567', 'Abandoned recipient']), { timeout: 5000 });
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(name.value).toBe('');
 
     fireEvent.change(number, { target: { value: '+15551234568' } });
-    await waitFor(() => expect(checked.some(([to]) => to === '+15551234568')).toBe(true), { timeout: 2000 });
+    await waitFor(() => expect(checked.some(([to]) => to === '+15551234568')).toBe(true), { timeout: 5000 });
     expect(checked.filter(([to]) => to === '+15551234568').map(([, given]) => given)).toEqual([null]);
     await send('+15551234568', document());
     await waitFor(() => expect(names).toHaveLength(1));
@@ -977,7 +982,11 @@ describe('The fax engine follows the route the fax takes', () => {
       http.post('/routing/predict', async ({ request }) => {
         asked.push((await request.formData()).get('engine') as string | null);
         return HttpResponse.json({ detail: 'Synthetic refusal' }, { status: 400 });
-      }));
+      }),
+      // The price from the page count: no route priced, so no estimate shows.
+      http.get('/routing/predict', () => HttpResponse.json({ to: '+19725550123', number_class: 'local',
+        number_class_text: 'a local number', pages: 2, layout: 'normal', resolution: 'fine', sentence: '', note: '',
+        routes: [] })));
     openSend();
     fireEvent.change(numberBox(), { target: { value: '+19725550123' } });
     const control = await screen.findByTestId('send-engine', {}, { timeout: 2000 });

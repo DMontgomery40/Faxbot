@@ -92,6 +92,14 @@ describe('Sent: a fax refused while held', () => {
         events: [{ id: 'e1', attempt_id: null, kind: 'recipient_named', created_at: '2026-10-10T20:45:00', details: {} }],
         events_truncated: false })),
       http.get('/direct/deliveries', () => HttpResponse.json({ deliveries: [] })),
+      // The rest of the details: nothing to add for this fax.
+      http.get(`/court/faxes/${id}`, () => HttpResponse.json({ court: null })),
+      http.get(`/direct/admission/faxes/${id}`, () => HttpResponse.json({ sentences: [], waiting: false })),
+      http.get(`/header-notice/faxes/${id}`, () => HttpResponse.json({ notice: null, sentence: null })),
+      http.get(`/intake/sources/faxes/${id}`, () => HttpResponse.json({ detail: 'This fax did not come from a connector.' },
+        { status: 404 })),
+      http.get(`/routing/after-answer/faxes/${id}`, () => HttpResponse.json({ sentences: [] })),
+      http.get(`/routing/stations/faxes/${id}`, () => HttpResponse.json({ sentences: [] })),
     );
     render(<JobsList client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} />);
     const cell = await screen.findByTestId('job-error');
