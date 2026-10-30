@@ -267,8 +267,6 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   // Every screen names the trunk by its carrier, from the context in hand.
   setProviderNames(context.provider_names);
   const [mobileOpen, setMobileOpen] = useState(false);
-  // A fax Send just queued, opened in Sent when the person follows it.
-  const [jobToOpen, setJobToOpen] = useState<string | null>(null);
 
   const permissions = useMemo(() => new Set(me.permissions), [me.permissions]);
   const pluginsEnabled = Boolean(context.provider_view?.plugins_enabled);
@@ -377,10 +375,9 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const pageContext: PageContext = {
     client, me, permissions, context, adminConfig, contextLoading, contextError, docsBase, canSetUp,
     params: shown ? parseAddress(shown.address)?.params ?? new URLSearchParams() : new URLSearchParams(),
-    navigate, replace, goHome, jobToOpen,
+    navigate, replace, goHome,
     // A fax to open travels in the address, so it can be copied, reloaded and gone Back to.
     openJob: (jobId) => navigateTo(pageAddress('faxes', 'sent', new URLSearchParams({ fax: jobId }))),
-    jobOpened: () => setJobToOpen(null),
   };
 
 

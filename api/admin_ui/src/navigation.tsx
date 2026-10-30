@@ -224,10 +224,8 @@ export interface PageContext {
   // The same address change without a history entry, for typing in a search box.
   replace?: (destination: AdminDestination) => void;
   goHome: () => void;
-  // A fax Send just queued, opened in Sent when the person follows it.
-  jobToOpen: string | null;
+  // Opens a fax in Sent through its address (?fax=…), such as one Send just queued.
   openJob: (jobId: string) => void;
-  jobOpened: () => void;
 }
 
 export interface NavPage {
@@ -396,7 +394,7 @@ export const NAVIGATION: NavArea[] = [
           {ctx.permissions.has('settings:read') && <DigitalReceived client={ctx.client} />}
         </>) },
       { id: 'sent', label: 'Sent', icon: <ListAltIcon />, gate: { navigation: 'jobs' },
-        render: (ctx) => <JobsList client={ctx.client} openJobId={ctx.jobToOpen} onOpened={ctx.jobOpened} onSendFax={sendFax(ctx)}
+        render: (ctx) => <JobsList client={ctx.client} onSendFax={sendFax(ctx)}
           canApprove={ctx.permissions.has('fax:approve')} onNavigate={ctx.navigate}
           status={readSentStatus(ctx.params.get('status'))} heldOnly={ctx.params.get('show') === 'held'}
           sinceHours={readSentSince(ctx.params.get('since'))}

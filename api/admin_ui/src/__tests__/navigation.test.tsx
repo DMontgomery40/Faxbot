@@ -243,6 +243,45 @@ describe('the console shell', () => {
     expect(await screen.findByRole('heading', { name: 'Groups' })).toBeTruthy();
   });
 
+  it('opens a sent fax at its own address over the filtered list, closes it on Back and reopens it on Forward', async () => {
+    const id = 'c'.repeat(32);
+    const job = {
+      id, to_number: '+15550100001', status: 'failed', backend: 'phaxio', pages: 1,
+      created_at: '2026-10-03T12:00:00', updated_at: '2026-10-03T12:01:00',
+      delivery_state: 'failed', dispatch_mode: 'normal', delivery_version: 3,
+    };
+    server.use(
+      http.get('/admin/fax-jobs', () => HttpResponse.json({ total: 1, jobs: [job] })),
+      http.get(`/admin/fax-jobs/${id}`, () => HttpResponse.json(job)),
+      http.get(`/admin/fax-jobs/${id}/delivery`, () => HttpResponse.json({
+        version: 3, state: 'failed', dispatch_mode: 'normal', provider_id: 'phaxio', profile_id: 'p',
+        revision_id: 'r', attempt: null, can_bind_provider_identity: false, bind_refusal_reason: null,
+        events: [], events_truncated: false,
+      })),
+      http.get('/direct/deliveries', () => HttpResponse.json({ deliveries: [] })),
+    );
+    window.history.replaceState(null, '', '/#/faxes/sent?status=failed');
+    await signIn();
+    const link = await screen.findByRole('link', { name: /\+15550100001/ });
+    expect(link.getAttribute('href')).toBe(`#/faxes/sent?status=failed&fax=${id}`);
+    fireEvent.click(link);
+    await waitFor(() => expect(window.location.hash).toBe(`#/faxes/sent?status=failed&fax=${id}`));
+    expect(await screen.findByRole('dialog', { name: 'Fax details' })).toBeTruthy();
+    // Back: the address loses the fax and keeps the filter; the details close over the same list.
+    act(() => {
+      window.history.replaceState(null, '', '#/faxes/sent?status=failed');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Fax details' })).toBeNull());
+    expect(screen.getByRole('link', { name: /\+15550100001/ })).toBeTruthy();
+    // Forward, or the copied link: the same fax opens again.
+    act(() => {
+      window.history.replaceState(null, '', `#/faxes/sent?status=failed&fax=${id}`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    expect(await screen.findByRole('dialog', { name: 'Fax details' })).toBeTruthy();
+  });
+
   it('opens an old bookmark at the new page with its query, says once where it moved from, and adds no history', async () => {
     grant('settings:read');
     window.history.replaceState(null, '', '/#/costs/savings?part=sslfax');
