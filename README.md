@@ -343,7 +343,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [ ] Live combined call over a real trunk for sending together, and live automatic audio switching after a failed T.38 call.
 - [ ] Live per-number fax memory: a real number whose fax over IP calls fail and whose next fax then goes through as audio fax. For received calls, a real carrier caller whose fax over IP calls to Faxbot fail and then succeed when Faxbot answers with audio fax; only that evidence would justify answering such callers with audio fax, which stays off until then.
 - [ ] Live sign-off of the Avaya IP Office, Avaya Aura, BT One Voice, Gamma and Telstra SIP Connect presets on real systems.
-- [ ] Live SSL Fax calls over a real trunk, sent and received, with a fax machine that offers SSL Fax.
+- [x] Live SSL Fax calls over a real trunk, sent and received: proven between two Faxbot installations over Telnyx on 10 October 2026 (see the SSL Fax engine line above). Not yet tried with another vendor's fax server that offers SSL Fax.
 - [ ] Live route choice by cost per delivered fax, once a number has delivered faxes on two metered routes.
 - [ ] Live Telnyx Fax API: create the Fax Application from the console, assign it an outbound voice profile in Telnyx (leaving the fax number on the trunk, unless Telnyx refuses to send from it otherwise), send one fax to a working fax machine and one to a busy number, check the status reads and the signed results notices, and compare its cost per delivered fax with the trunk (by the minute) and HumbleFax (flat plan) on the same documents.
 - [ ] Live Sinch: a fax sent through Sinch, a fax received on the Sinch number, the charge Sinch reports for the sent fax, and route choice with Sinch beside the trunk and HumbleFax.
