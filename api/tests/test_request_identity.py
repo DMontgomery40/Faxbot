@@ -95,3 +95,37 @@ def test_identity_matches_its_fingerprint_or_an_earlier_version_only():
     assert identity.legacy_fingerprints == ('b' * 64,)
     with pytest.raises(ValueError):
         RequestIdentity('key:abc', 'a' * 64, 'a' * 64, ('not-a-digest',))
+
+
+@pytest.mark.asyncio
+async def test_empty_upload_is_rejected_without_producing_an_identity():
+    upload = UploadFile(io.BytesIO(b''), filename='empty.txt')
+    with pytest.raises(UploadPreparationError) as error:
+        await fingerprint_upload(upload, to='+12025550123', queue_only=False, max_bytes=100)
+    assert error.value.status_code == 400
+    assert upload.file.tell() == 0
+    assert not upload.file.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancelled', [False, True], ids=['read-error', 'cancelled'])
+async def test_interrupted_hashing_rewinds_original_upload_and_preserves_error(cancelled):
+    import asyncio
+
+    error = asyncio.CancelledError() if cancelled else OSError('synthetic spool read failure')
+
+    class InterruptedSpool(io.BytesIO):
+        def read(self, size=-1):
+            if self.tell() > 0:
+                raise error
+            return super().read(size)
+
+    data = b'a' * (64 * 1024 + 1)
+    spool = InterruptedSpool(data)
+    upload = UploadFile(spool, filename='original.txt')
+    with pytest.raises(type(error)) as caught:
+        await fingerprint_upload(upload, to='+12025550123', queue_only=False, max_bytes=len(data))
+    assert caught.value is error
+    assert spool.tell() == 0
+    assert not spool.closed
+    assert spool.getvalue() == data
