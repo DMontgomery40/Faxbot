@@ -1,14 +1,14 @@
 // Fax numbers Faxbot has sent to: which routes worked, what they cost, and the
 // route order for the next fax. Table on desktop, cards on mobile.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Box, Button, Card, CardContent, Chip, FormControlLabel, List, ListItem, ListItemText, Paper, Stack, Switch,
+  Alert, Box, Button, Card, CardContent, Chip, FormControlLabel, List, ListItem, ListItemText, Paper, Stack, Switch,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material';
 import PhoneIcon from '@mui/icons-material/Phone';
 import AdminAPIClient from '../../api/client';
 import type { DeliveredCost, Destination, DestinationDetail, DirectPartner } from '../../api/deliveryTypes';
-import { EmptyState, Field, FormDialog, useSmallScreens } from '../access/AccessViews';
+import { EmptyState, Field, useSmallScreens } from '../access/AccessViews';
 import { DeliveryError, formatMoney, formatMoneyList, formatPercent } from './shared';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 import { SendingTogetherPanel } from './SendingTogether';
@@ -24,6 +24,7 @@ import FaxMachinePanel from './FaxMachinePanel';
 import { RecipientCoverSwitch } from '../HeaderNotice';
 import { RecipientStationCheck } from '../StationCheck';
 import { RecipientAfterAnswer } from './AfterAnswer';
+import { recipientAddress, recipientFromAddress } from './recipientAddress';
 
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
@@ -86,7 +87,7 @@ function DeliveredCosts({ routes }: { routes: DeliveredCost[] }) {
   );
 }
 
-export function DestinationDialog({ client, number, canWrite, onClose, onSaved }: {
+export function DestinationDetailPage({ client, number, canWrite, onClose, onSaved }: {
   client: AdminAPIClient;
   number: string | null;
   canWrite: boolean;
@@ -102,11 +103,16 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   const [callsAtOnce, setCallsAtOnce] = useState('');
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => { heading.current?.focus(); }, [number]);
 
   useEffect(() => {
     if (!number) return;
     let current = true;
     setDetail(null);
+    setSaved(false);
     setError(null);
     client.getDestination(number).then((loaded) => {
       if (!current) return;
@@ -121,15 +127,17 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   }, [client, number]);
 
   const save = async () => {
-    if (!detail) return;
+    if (!detail || !canWrite || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await client.updateDestination(detail.number, {
+      const updated = await client.updateDestination(detail.number, {
         display_name: name.trim() || null, notes: notes.trim() || null, preferred_route: preferred || null,
         accepts_references: references, max_calls: callsAtOnce === '' ? null : Number(callsAtOnce),
         version: detail.version,
       });
+      setDetail({ ...detail, ...updated });
+      setSaved(true);
       onSaved();
     } catch (failure) {
       setError(failure);
@@ -144,8 +152,16 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
   ];
 
   return (
-    <FormDialog open={number !== null} title={detail?.display_name || detail?.number || number || ''} submitLabel="Save" busy={busy}
-      error={null} canSubmit={canWrite && detail !== null} onSubmit={() => void save()} onClose={onClose}>
+    <Box component="section" aria-label="Recipient details">
+      <Button component="a" href="#/recipients/list" onClick={onClose}>All recipients</Button>
+      <Typography variant="h5" component="h2" tabIndex={-1} ref={heading}>
+        {detail?.display_name || detail?.number || number}
+      </Typography>
+      <Typography color="text.secondary" sx={{ my: 2 }}>
+        Each section saves separately. Leaving this page does not undo saved changes.
+      </Typography>
+      {!canWrite && <Alert severity="info">You can read these settings but do not have permission to change them.</Alert>}
+      {!detail && !error && <Typography role="status">Loading recipient…</Typography>}
       <DeliveryError error={error} onClose={() => setError(null)} />
       {detail && (
         <>
@@ -175,28 +191,40 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
               ))}
             </>
           )}
-          <Field label="Name" value={name} onChange={setName} disabled={!canWrite} />
-          <TextField select fullWidth margin="normal" label="Preferred route" value={preferred}
-            onChange={(e) => setPreferred(e.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}
-            helperText={preferred ? 'Faxbot tries this route first for this number.' : 'Faxbot picks the cheapest route that works reliably.'}
-            disabled={!canWrite}>
-            <option value="">Cheapest reliable route</option>
-            {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </TextField>
-          <TextField select fullWidth margin="normal" label="Calls at once to this number" value={callsAtOnce}
-            onChange={(e) => setCallsAtOnce(e.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}
-            helperText={CALLS_AT_ONCE_HELP} disabled={!canWrite}>
-            <option value="">One at a time (most fax machines)</option>
-            {[2, 3, 4, 5, 10].map((count) => <option key={count} value={String(count)}>{count} at once</option>)}
-            <option value="0">No limit</option>
-          </TextField>
-          <TextField fullWidth margin="normal" label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)}
-            multiline minRows={2} disabled={!canWrite} />
-          <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={references} onChange={(e) => setReferences(e.target.checked)} disabled={!canWrite} />}
-            label="Accepts a one-page index instead of documents it already received for a case" />
+          <Typography variant="h6" component="h3" sx={{ mt: 2 }}>Identity and route policy</Typography>
+          <Typography color="text.secondary">Save identity and routing saves only the name, notes, preferred route, call limit and case-index agreement below. It affects future faxes to this number.</Typography>
+          <Box onChangeCapture={() => setSaved(false)}>
+            <Field label="Name" value={name} onChange={setName} disabled={!canWrite} />
+            <TextField select fullWidth margin="normal" label="Preferred route" value={preferred}
+              onChange={(e) => setPreferred(e.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}
+              helperText={preferred ? 'Faxbot tries this route first for this number.' : 'Faxbot picks the cheapest route that works reliably.'}
+              disabled={!canWrite}>
+              <option value="">Cheapest reliable route</option>
+              {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </TextField>
+            <TextField select fullWidth margin="normal" label="Calls at once to this number" value={callsAtOnce}
+              onChange={(e) => setCallsAtOnce(e.target.value)} SelectProps={{ native: true }} InputLabelProps={{ shrink: true }}
+              helperText={CALLS_AT_ONCE_HELP} disabled={!canWrite}>
+              <option value="">One at a time (most fax machines)</option>
+              {[2, 3, 4, 5, 10].map((count) => <option key={count} value={String(count)}>{count} at once</option>)}
+              <option value="0">No limit</option>
+            </TextField>
+            <TextField fullWidth margin="normal" label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)}
+              multiline minRows={2} disabled={!canWrite} />
+            <FormControlLabel sx={{ mt: 1 }} control={<Switch checked={references} onChange={(e) => setReferences(e.target.checked)} disabled={!canWrite} />}
+              label="Accepts a one-page index instead of documents it already received for a case" />
+            {canWrite && <Button variant="contained" disabled={busy} onClick={() => void save()} sx={{ my: 2 }}>
+              {busy ? 'Saving…' : 'Save identity and routing'}
+            </Button>}
+            {saved && <Alert severity="success">Identity and routing saved. Other sections save separately.</Alert>}
+          </Box>
+          <Typography variant="h6" component="h3" sx={{ mt: 2 }}>Delivery capabilities and agreements</Typography>
+          <Typography color="text.secondary">Each control below saves or applies its own change. Recipient agreements and prerequisites must be satisfied before enabling a capability.</Typography>
           <RecipientCoverSwitch client={client} number={detail.number} canWrite={canWrite} />
           <RecipientStationCheck client={client} number={detail.number} canWrite={canWrite} />
           <RecipientAfterAnswer client={client} number={detail.number} canWrite={canWrite} />
+          <Button component="a" href="#/recipients/partners">Manage partners and verification</Button>
+          <Button component="a" href="#/faxes/cases">Open case documents and packets</Button>
           <SendingTogetherPanel client={client} number={detail.number} canWrite={canWrite} />
           <EncodedPagesPanel client={client} number={detail.number} canWrite={canWrite} />
           <RecipientFaxLimitsPanel client={client} number={detail.number} canWrite={canWrite} />
@@ -209,7 +237,7 @@ export function DestinationDialog({ client, number, canWrite, onClose, onSaved }
           <FaxMachinePanel client={client} number={detail.number} canWrite={canWrite} />
         </>
       )}
-    </FormDialog>
+    </Box>
   );
 }
 
@@ -241,11 +269,22 @@ export default function Destinations({ client, destinations, canWrite, onChanged
   suggested?: string[] | null;
 }) {
   const { isMobile } = useSmallScreens();
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(() => recipientFromAddress(window.location.hash));
+  useEffect(() => {
+    const follow = () => setOpen(recipientFromAddress(window.location.hash));
+    window.addEventListener('hashchange', follow);
+    return () => window.removeEventListener('hashchange', follow);
+  }, []);
   const [lookup, setLookup] = useState('');
   const numberFormat = useNumberFormat(client);
 
-  const saved = () => { setOpen(null); onChanged(); };
+  const show = (number: string) => {
+    window.location.hash = recipientAddress(number);
+    setOpen(number);
+  };
+
+  if (open) return <DestinationDetailPage key={open} client={client} number={open} canWrite={canWrite}
+    onClose={() => setOpen(null)} onSaved={onChanged} />;
 
   return (
     <Box>
@@ -253,7 +292,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
         <TextField size="small" label="Fax number" value={lookup} onChange={(e) => setLookup(e.target.value)}
           type="tel" placeholder={numberPlaceholder(numberFormat)}
           sx={{ minWidth: 220 }} />
-        <Button variant="outlined" disabled={!lookup.trim()} onClick={() => setOpen(lookup.trim())} sx={{ borderRadius: 2 }}>
+        <Button variant="outlined" disabled={!lookup.trim()} onClick={() => show(lookup.trim())} sx={{ borderRadius: 2 }}>
           Look up
         </Button>
       </Box>
@@ -273,7 +312,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                 )}
                 <Box mt={1} display="flex" gap={1} alignItems="center">
                   {destination.preferred_route && <Chip size="small" label="Preferred route set" />}
-                  <Button size="small" onClick={() => setOpen(destination.number)}>Details</Button>
+                  <Button component="a" href={recipientAddress(destination.number)} size="small">Details</Button>
                 </Box>
               </CardContent>
             </Card>
@@ -308,7 +347,7 @@ export default function Destinations({ client, destinations, canWrite, onChanged
                   <TableCell>{partnerText(destination, partners, suggested)}</TableCell>
                   <TableCell>{destination.accepts_references ? 'Takes a one-page list instead' : 'Full documents'}</TableCell>
                   <TableCell align="right">
-                    <Button size="small" onClick={() => setOpen(destination.number)} aria-label={`Details for ${destination.number}`}>Details</Button>
+                    <Button component="a" href={recipientAddress(destination.number)} size="small" aria-label={`Details for ${destination.number}`}>Details</Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -316,7 +355,6 @@ export default function Destinations({ client, destinations, canWrite, onChanged
           </Table>
         </TableContainer>
       )}
-      <DestinationDialog client={client} number={open} canWrite={canWrite} onClose={() => setOpen(null)} onSaved={saved} />
     </Box>
   );
 }

@@ -929,6 +929,7 @@ def test_routing_destinations_costs_and_rate_cards(cli, tmp_path):
     assert cli('recipients', 'show', '+12025550123').exit_code == 0
     # The console's words: the preferred way to send, and what a case packet sends.
     shown = cli('recipients', 'show', '+12025550123').stdout
+    assert '#/recipients/list?recipient=%2B12025550123' in shown
     assert re.search(r'Preferred way to send\s+Cheapest reliable', shown) and 'automatic' not in shown
     assert re.search(r'Case packets\s+Takes a one-page list instead', shown) and 'Accepts references' not in shown
     listed = cli('recipients', 'list').stdout

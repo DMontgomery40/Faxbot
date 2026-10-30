@@ -54,7 +54,7 @@ The API serves the console at `/admin/ui/`. Its left panel has six areas, each p
 - **Savings & optimization**: capabilities, opportunities, facts to establish, savings results (estimates), spending, charges, invoices, and prices and plans.
 - **Faxes**: Received (with each fax's owner), Sent (route, cost, delivery attempts), Send a fax (route and cost before sending), Expected, Forms and Case packets.
 - **Delivery setup**: under Numbers & mailboxes, every number Faxbot carries, mailboxes, number moves, blocked senders and sending identity; under Documents in and out, staff email delivery and the email and folders that bring documents in; under Connections, the providers and accounts in use, routing rules, one page per provider in use (the trunk named by its carrier), and **Add or change a provider**, which opens the Setup wizard.
-- **Recipients**: the numbers you fax and their route order, and direct-delivery partners.
+- **Recipients**: the numbers you fax and their route order, addressed recipient details with independent saves, and direct-delivery partners. `faxbot recipients show NUMBER` also prints the recipient’s console address.
 - **Administration**: under People & access, users, groups, roles, who has access, keys and phones, and sessions; under Installation, setup, security, documents and retention, AI analysis and the NPI record; under Monitoring, system health, the audit log and logs; and Developer (API and SDKs, AI assistants, terminal, scripts and checks, provider plugins).
 
 Every address from before the six areas still opens the page that does that job now, with its query, and says once where the page moved from. An address that names no page, or a page you may not open, shows its own short message instead.
@@ -137,6 +137,10 @@ Contributions should keep the console usable, preserve provider capability check
 Reference pages under `docs/generated/` are generated from code. The README/roadmap, agent instructions and [planning sources](planning/README.md) are maintained separately. AI prose proposals are restricted to permitted documentation pages, including when applied locally.
 
 ## Roadmap
+
+Recipient details now have a copyable address (`#/recipients/list?recipient=%2B12025550123`), also printed by `faxbot recipients show NUMBER`. Identity and routing save independently of the delivery panels; leaving the page does not undo a saved section. Case packets link to that same recipient page. This is a partial implementation of #62: recipient-specific capability evaluation, full section organization and unsaved-edit protection remain unfinished, and the changed UI still needs its runtime test gate.
+
+- [ ] Finish recipient detail pages (#62): recipient-specific capability applicability and prerequisites, complete section organization, unsaved-edit protection, and rendered/parity/settings validation. The addressed page and explicit identity/routing save boundary are present; runtime checks could not run in the constrained development worktree.
 
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 

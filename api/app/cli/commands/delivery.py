@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from urllib.parse import urlencode
 
 import typer
 
@@ -52,6 +53,11 @@ def preferred_text(item):
     if route == 'direct':
         return 'Direct delivery'
     return next((known['label'] for known in item.get('routes') or [] if known.get('route') == route), route)
+
+
+def recipient_console_address(number):
+    """The recipient's durable address, relative to the installation's console."""
+    return '#/recipients/list?' + urlencode({'recipient': number})
 
 
 def calls_at_once_text(value):
@@ -136,7 +142,8 @@ def routing_destination(number: str = typer.Argument(..., help='Fax number.'),
 
     def human(out):
         partner = view.get('direct_partner') or {}
-        out.fields([('Fax number', view['number']), ('Name', view.get('display_name')), ('Notes', view.get('notes')),
+        out.fields([('Console page', recipient_console_address(view['number'])),
+                    ('Fax number', view['number']), ('Name', view.get('display_name')), ('Notes', view.get('notes')),
                     ('Preferred way to send', preferred_text(view)),
                     ('Case packets', references_text(view.get('accepts_references'))),
                     ('Calls at once to this number', calls_at_once_text(view.get('max_calls'))),

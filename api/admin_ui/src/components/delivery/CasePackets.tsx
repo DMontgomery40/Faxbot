@@ -17,7 +17,7 @@ import { WHY_LABEL, pagesText } from './caseText';
 import type { AdminDestination } from '../../navigation';
 import { ScreenHeader } from '../access/AccessViews';
 import { DeliveryError } from './shared';
-import { DestinationDialog } from './Destinations';
+import { recipientAddress } from './recipientAddress';
 import { numberPlaceholder, useNumberFormat } from '../common/numbers';
 
 interface Draft { file: File; title: string; version: string; source: string }
@@ -41,7 +41,6 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
   const [sent, setSent] = useState<CasePacket | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<'look' | 'preview' | 'send' | null>(null);
-  const [details, setDetails] = useState<string | null>(null);
   // The newest cases this installation sent packets for; null until loaded or when they could not be read.
   const [cases, setCases] = useState<CaseSummary[] | null>(null);
   const [purpose, setPurpose] = useState('');
@@ -151,7 +150,7 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
                 ? 'This recipient accepts a one-page list instead of documents it already has.'
                 : 'This recipient wants every document in full, even ones it already has.'}
             </Typography>
-            <Button size="small" onClick={() => setDetails(held.to)}>Recipient details</Button>
+            <Button component="a" size="small" href={recipientAddress(held.to)}>Recipient details</Button>
           </Box>
           <CaseLedgerTable key={`${held.case_id} ${held.to}`} client={client} caseId={held.case_id} held={held}
             canSend={canSend} canWrite={canWrite} onChanged={reload} onError={setError} onNavigate={onNavigate} />
@@ -293,8 +292,6 @@ export default function CasePackets({ client, canSend, canWrite, onNavigate }: {
         </Box>
       )}
 
-      <DestinationDialog client={client} number={details} canWrite={canWrite} onClose={() => setDetails(null)}
-        onSaved={() => { setDetails(null); void lookUp(); }} />
     </Box>
   );
 }

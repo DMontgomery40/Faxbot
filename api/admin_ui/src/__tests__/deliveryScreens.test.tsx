@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
@@ -6,6 +6,8 @@ import DeliveryRoutes from '../components/DeliveryRoutes';
 import Savings from '../components/delivery/Savings';
 import Recommendations, { NO_RECOMMENDATIONS } from '../components/delivery/Recommendations';
 import { backend, emptySavings, server } from '../test/server';
+
+beforeEach(() => { window.history.replaceState(null, '', '#/recipients/list'); });
 
 type Recorded = { method: string; path: string; body: unknown };
 
@@ -64,6 +66,35 @@ function routingHandlers(record: (request: Request) => Promise<void>) {
 }
 
 describe('delivery routes', () => {
+  it('opens a copied recipient address read-only and returns to the list', async () => {
+    routingHandlers(async () => undefined);
+    window.history.replaceState(null, '', '#/recipients/list?recipient=%2B12025550123');
+    render(<DeliveryRoutes client={client()} canWrite={false} section="numbers" />);
+    const page = await screen.findByRole('region', { name: 'Recipient details' });
+    const name = await within(page).findByLabelText('Name') as HTMLInputElement;
+    expect(name.disabled).toBe(true);
+    expect(within(page).queryByRole('button', { name: 'Save identity and routing' })).toBeNull();
+    expect(within(page).getByText(/do not have permission to change/)).toBeTruthy();
+    expect(within(page).getByRole('heading', { name: 'County clinic' })).toBe(document.activeElement);
+    fireEvent.click(within(page).getByRole('link', { name: 'All recipients' }));
+    expect(await screen.findByRole('link', { name: 'Details for +12025550123' })).toBeTruthy();
+  });
+
+  it('keeps identity edits visible when saving fails', async () => {
+    routingHandlers(async () => undefined);
+    server.use(http.patch('/routing/destinations/:number', () =>
+      HttpResponse.json({ detail: 'Recipient changed; reload before saving.' }, { status: 409 })));
+    window.history.replaceState(null, '', '#/recipients/list?recipient=%2B12025550123');
+    render(<DeliveryRoutes client={client()} canWrite section="numbers" />);
+    const page = await screen.findByRole('region', { name: 'Recipient details' });
+    const name = await within(page).findByLabelText('Name');
+    fireEvent.change(name, { target: { value: 'Updated recipient' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save identity and routing' }));
+    expect(await within(page).findByText('Recipient changed; reload before saving.')).toBeTruthy();
+    expect((name as HTMLInputElement).value).toBe('Updated recipient');
+    expect(within(page).queryByText('Identity and routing saved. Other sections save separately.')).toBeNull();
+  });
+
   it('shows money as money and saves a preferred route for a number', async () => {
     const { calls, record } = recorder();
     routingHandlers(record);
@@ -72,14 +103,18 @@ describe('delivery routes', () => {
     expect(screen.getAllByText('$1.25').length).toBeGreaterThan(0);
     expect(screen.getByText(/10 faxes, 9 delivered, 33 minutes, 120 pages/)).toBeTruthy();
     expect(screen.getByText('$0.005 per minute')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Details for +12025550123' }));
-    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(screen.getByRole('link', { name: 'Details for +12025550123' }));
+    const dialog = await screen.findByRole('region', { name: 'Recipient details' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(window.location.hash).toBe('#/recipients/list?recipient=%2B12025550123');
     expect(await within(dialog).findByText('The cheapest route that works reliably for this number.')).toBeTruthy();
     expect(within(dialog).getByText(/about \$0\.005 a minute, at least 1 minute/)).toBeTruthy();
     expect(within(dialog).getByText(/about \$0\.07 a page/)).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Preferred route'), { target: { value: 'phaxio' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await screen.findByText('Spending');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save identity and routing' }));
+    await screen.findByText('Identity and routing saved. Other sections save separately.');
+    expect(screen.getByRole('region', { name: 'Recipient details' })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls.find((call) => call.method === 'PATCH')?.body).toEqual({
       display_name: 'County clinic', notes: null, preferred_route: 'phaxio', accepts_references: false, max_calls: null, version: 3,
@@ -155,7 +190,7 @@ describe('delivery routes', () => {
     const lookup = await screen.findByPlaceholderText('0121 234 5678');
     fireEvent.change(lookup, { target: { value: '01782 684953' } });
     fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
-    expect(await screen.findByRole('dialog', { name: '+441782684953' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '+441782684953' })).toBeTruthy();
     expect(looked).toEqual(['01782 684953']);
   });
 });

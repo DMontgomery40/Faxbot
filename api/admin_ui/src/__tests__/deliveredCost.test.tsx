@@ -47,7 +47,7 @@ describe('Recipients', () => {
     expect(screen.getByRole('columnheader', { name: 'Per delivered fax' })).toBeTruthy();
     const row = screen.getByText('County clinic').closest('tr') as HTMLElement;
     expect(within(row).getByText('Telnyx: $0.0089 · HumbleFax: Included in your plan')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: `Details for ${NUMBER}` }));
+    fireEvent.click(screen.getByRole('link', { name: `Details for ${NUMBER}` }));
     const section = await screen.findByTestId('delivered-costs');
     expect(within(section).getByText('Cost per delivered fax, last 30 days')).toBeTruthy();
     expect(within(section).getByText('Telnyx: $0.0089 per delivered fax')).toBeTruthy();

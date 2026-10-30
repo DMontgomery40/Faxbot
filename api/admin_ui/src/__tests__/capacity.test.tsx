@@ -62,13 +62,13 @@ describe('a recipient', () => {
       }),
     );
     render(<Destinations client={client()} destinations={[destination]} canWrite onChanged={() => undefined} />);
-    fireEvent.click(screen.getByRole('button', { name: `Details for ${NUMBER}` }));
-    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(screen.getByRole('link', { name: `Details for ${NUMBER}` }));
+    const dialog = await screen.findByRole('region', { name: 'Recipient details' });
     const choice = await within(dialog).findByLabelText('Calls at once to this number') as HTMLSelectElement;
     expect(choice.value).toBe('');
     expect(within(dialog).getByText(CALLS_AT_ONCE_HELP)).toBeTruthy();
     fireEvent.change(choice, { target: { value: '0' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save identity and routing' }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(patched[0]).toMatchObject({ max_calls: 0, version: 2 });
   });
