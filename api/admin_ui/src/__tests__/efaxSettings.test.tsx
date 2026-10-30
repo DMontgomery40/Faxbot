@@ -40,7 +40,7 @@ async function choose(name: 'Sending' | 'Receiving', option: string) {
   fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: option }));
 }
 
-const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+const next = () => fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
 describe('eFax in the Setup Wizard', () => {

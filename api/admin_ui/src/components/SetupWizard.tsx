@@ -139,7 +139,7 @@ function editorValues(data: Settings): WizardConfig {
   };
 }
 
-// Which wizard fields each step saves when the person leaves it.
+// Which wizard fields each explicit Save and continue action saves.
 function stepFields(step: number, data: Settings | null): string[] {
   if (step === 0) return [...PROVIDER_FIELDS, 'fax_default_country', 'time_zone', 'sip_trunk_preset'];
   if (step === 1) {
@@ -420,7 +420,13 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
         const desired = await client.getSettings();
         if (epoch !== requestEpoch.current) return false;
         if (!desired._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
+        // Back can leave drafts on other steps. Saving this step must neither
+        // submit those drafts nor discard them when the saved settings reload.
+        const savedFields = new Set(stepFields(step, settings));
+        const retainedDrafts = Object.fromEntries(Object.entries(config).filter(
+          ([field, value]) => !savedFields.has(field) && value !== baseline[field]));
         hydrate(desired);
+        setConfig({ ...editorValues(desired), ...retainedDrafts });
       } catch {
         if (epoch !== requestEpoch.current) return false;
         setNotice({ severity: 'warning', text: 'The page could not refresh. Reload before making more changes.' });
@@ -445,9 +451,20 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
     }
   };
 
-  // Leaving a step saves it; a step that cannot be saved stays open with the reason.
+  // Back only navigates. Forward saves explicitly and stays here on failure.
   const goTo = async (step: number) => {
     if (loading || busy || actionFence.current) return;
+    if (step < activeStep) {
+      // The trunk owns its draft separately; do not unmount and lose its edits.
+      if (activeStep === 1 && trunkDirty) {
+        setNotice({ severity: 'warning', text: 'Save the fax line settings first, or undo your changes there.' });
+        return;
+      }
+      stopWatching();
+      setNotice(null);
+      setActiveStep(step);
+      return;
+    }
     if (await saveStep(activeStep)) {
       stopWatching();
       setActiveStep(step);
@@ -675,7 +692,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
           if (next.receiving !== receiving) handleConfigChange('receiving', next.receiving);
         }} />
       {!sending && !receiving && <Alert severity="warning" sx={{ mt: 2 }} data-testid="no-provider">No fax provider set up yet. <Link href={docsLink('providers', docsBase)} target="_blank" rel="noreferrer">Provider setup</Link></Alert>}
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Next saves these choices.</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Save and continue saves these choices. Back never saves.</Typography>
       {settings?.numbers && <Box sx={{ mt: 3 }}>
         <CountryField label="Installation country" helperText={COUNTRY_HELP} disabled={!canEdit}
           value={String(config.fax_default_country ?? settings.numbers.default_country)}
@@ -736,7 +753,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
     return <Box>
       <Typography variant="h6" gutterBottom>Finish</Typography>
       <Typography sx={{ mb: 2 }}>{directionSummary(sending, receiving)}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Each step saved its settings when you moved on.</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>Settings were saved only by Save and continue or a section’s own Save action.</Typography>
       {settings && (sending || receiving) && (pendingRestart
         ? <Alert severity="info" sx={{ mb: 2 }}>Restart Faxbot first; then you can send and receive a test fax here.</Alert>
         : <Box sx={{ mb: 2 }}><WizardTestFax client={client} sending={sending} receiving={receiving}
@@ -757,7 +774,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
   return <Box>
     <Typography variant="h4" component="h1" gutterBottom>Setup Wizard</Typography>
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-      <Typography>Choose providers, connect them and review security. Each step saves when you move on.</Typography>
+      <Typography>Choose providers, connect them and review security. Save and continue saves this step. Back keeps wizard edits as drafts; it never saves. A section’s own Save action saves separately.</Typography>
       <Button variant="outlined" onClick={() => { if (!actionFence.current) void loadSettings(); }} disabled={loading || busy}>Reload{changedFields.length ? ' (discard changes)' : ''}</Button>
     </Box>
     {loading && <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}><CircularProgress size={24} /><Typography>Loading settings…</Typography></Box>}
@@ -771,7 +788,7 @@ function SetupWizard({ client, onDone, docsBase, canRestart = true, isOwner = tr
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
         <Button disabled={activeStep === 0 || loading || busy} onClick={() => { void goTo(activeStep - 1); }}>Back</Button>
         {last ? <Button variant="contained" onClick={() => { if (!actionFence.current) onDone?.(); }} disabled={loading || busy || !onDone}>Done</Button> :
-          <Button variant="contained" disabled={loading || busy} onClick={() => { void goTo(activeStep + 1); }}>Next</Button>}
+          <Button variant="contained" disabled={loading || busy} onClick={() => { void goTo(activeStep + 1); }}>{activeStep < PACKS_STEP ? 'Save and continue' : 'Continue'}</Button>}
       </Box>
     </>}
     {busy && <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 2 }}><CircularProgress size={20} /><Typography>Working…</Typography></Box>}

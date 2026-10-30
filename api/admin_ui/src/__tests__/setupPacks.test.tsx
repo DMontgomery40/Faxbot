@@ -219,7 +219,7 @@ describe('Setup → Suggested Packs', () => {
     const labels = Array.from(document.querySelectorAll('.MuiStepLabel-label')).map((node) => node.textContent);
     expect(labels).toEqual(['Choose Providers', 'Connect Providers', 'Security', 'Delivery Options', 'Suggested Packs', 'Finish']);
     for (let step = 0; step < 4; step += 1) {
-      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
       await waitFor(() => expect(screen.queryByText('Working…')).toBeNull());
     }
     await screen.findByText('Suggested Packs', { selector: 'h6' });

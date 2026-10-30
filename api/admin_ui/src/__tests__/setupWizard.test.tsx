@@ -66,7 +66,7 @@ async function choose(name: 'Sending' | 'Receiving', option: string) {
   fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: option }));
 }
 
-const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+const next = () => fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
 
 async function start(data: Json, presets: Json[] = PRESETS) {
   const writes = backend(data);
@@ -81,6 +81,59 @@ function sectionHeadings() {
 }
 
 describe('Setup Wizard providers for sending and receiving', () => {
+  it('Back keeps credential edits as drafts and sends no settings write', async () => {
+    const writes = await start(settingsFixture((data) => withDirections(data, 'phaxio', 'phaxio')));
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-draft-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    expect(writes).toEqual([]);
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('synthetic-draft-key');
+    expect(writes).toEqual([]);
+    next();
+    await screen.findByText('Security', { selector: 'h6' });
+    expect(writes).toEqual([{ expected_revision_id: 'rev-a', phaxio_api_key: 'synthetic-draft-key' }]);
+  });
+
+  it('Back permits an invalid draft without validating or saving it', async () => {
+    const writes = await start(settingsFixture());
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    next();
+    await screen.findByText('Security', { selector: 'h6' });
+    fireEvent.change(screen.getByLabelText('Document links for fax services work for (minutes)'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect(writes).toEqual([]);
+    next();
+    await screen.findByText('Security', { selector: 'h6' });
+    expect((screen.getByLabelText('Document links for fax services work for (minutes)') as HTMLInputElement).value).toBe('0');
+    next();
+    expect(await screen.findByText(/must be a positive whole number/)).toBeTruthy();
+    expect(writes).toEqual([]);
+  });
+
+  it('saving an earlier step preserves later drafts without submitting them', async () => {
+    const writes = await start(settingsFixture((data) => withDirections(data, 'phaxio', 'phaxio')));
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-draft-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await screen.findByText('Choose Providers', { selector: 'h6' });
+    await choose('Receiving', 'HumbleFax');
+    next();
+    await screen.findByText('Connect Providers', { selector: 'h6' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).not.toHaveProperty('phaxio_api_key');
+    expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('synthetic-draft-key');
+    next();
+    await screen.findByText('Security', { selector: 'h6' });
+    expect(writes[1]).toEqual({ expected_revision_id: 'rev-2', phaxio_api_key: 'synthetic-draft-key' });
+  });
+
   it('connects one cloud provider for both directions in one section', async () => {
     const writes = await start(settingsFixture((data) => withDirections(data, 'phaxio', 'phaxio')));
     expect(screen.getByText('Sending: Phaxio · Receiving: Phaxio')).toBeTruthy();

@@ -53,7 +53,7 @@ The API serves the console at `/admin/ui/`. Its left panel has six areas, each p
 - **Overview**: what Faxbot is doing for you (the capabilities that acted on your faxes and the results, each in its own unit), the next improvements, everyday faxes with Send a fax, and what needs a person now, grouped by the action it needs and each opening its exact list; a serious problem moves to the top while it lasts. At the bottom, a map of every way Faxbot saves money, along a fax's path, with whether each is on, works here and has been tested.
 - **Savings & optimization**: capabilities, opportunities, facts to establish, savings results (estimates), spending, charges, invoices, and prices and plans.
 - **Faxes**: Received (with each fax's owner), Sent (route, cost, delivery attempts), Send a fax (route and cost before sending), Expected, Forms and Case packets.
-- **Delivery setup**: under Numbers & mailboxes, every number Faxbot carries, mailboxes, number moves, blocked senders and sending identity; under Documents in and out, staff email delivery and the email and folders that bring documents in; under Connections, the providers and accounts in use, routing rules, one page per provider in use (the trunk named by its carrier), and **Add or change a provider**, which opens the Setup wizard.
+- **Delivery setup**: under Numbers & mailboxes, every number Faxbot carries, mailboxes, number moves, blocked senders and sending identity; under Documents in and out, staff email delivery and the email and folders that bring documents in; under Connections, the providers and accounts in use, routing rules, one page per provider in use (the trunk named by its carrier), and **Add or change a provider**, which opens the Setup wizard. In the wizard, **Save and continue** saves the current step; **Back** keeps wizard edits as drafts without saving. Sections with their own Save button save separately.
 - **Recipients**: the numbers you fax and their route order, and direct-delivery partners.
 - **Administration**: under People & access, users, groups, roles, who has access, keys and phones, and sessions; under Installation, setup, security, documents and retention, AI analysis and the NPI record; under Monitoring, system health, the audit log and logs; and Developer (API and SDKs, AI assistants, terminal, scripts and checks, provider plugins).
 
@@ -375,6 +375,11 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 - [ ] Live exchange of a registered form between two installations, including a form fetched by the receiver and a mismatch that a person resolves by fax.
 - [ ] Route choice by each plan's budget (the rules' "cheapest marginal" method), and a live check: one fax each way through HumbleFax and Telnyx with the plan counters compared.
 - [ ] Live plan allocation: a real eFax or HumbleFax month near its allowance with two faxes waiting at once, the plan's own count compared with Faxbot's afterwards, and quotes that price a plan after the pages held for waiting faxes.
+
+### Connection setup follow-up (#57)
+
+- Back in the Setup wizard navigates without saving or validating wizard drafts. Saving an earlier step retains later drafts. Unsaved trunk edits must be saved with the trunk's own button or undone before leaving that step.
+- Still planned: focused connection tasks outside first install, account/trunk/digital detail pages and matching `faxbot delivery connections show NAME`, effect review and activation, shared provider-wide scope labels, and the full S02–S10 preservation and parity checks. See [the implementation handoff](planning/issue-57-connection-follow-up.md). This ticket remains partial.
 
 ### Proposed enterprise foundation
 

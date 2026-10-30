@@ -360,7 +360,7 @@ describe('Credentials set in .env', () => {
     server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
     render(<SetupWizard client={client()} />);
     await screen.findByText('Choose Providers', { selector: 'h6' });
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
     const access = await screen.findByLabelText('Access Key');
     expect((access as HTMLInputElement).value).toBe('Set in .env');
     expect((access as HTMLInputElement).disabled).toBe(true);
@@ -508,7 +508,7 @@ describe('Settings authentication and receiving', () => {
 });
 
 describe('Setup Wizard delivery options', () => {
-  const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  const next = () => fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
 
   it('states authentication is required and saves direct delivery and intake email from the delivery step', async () => {
     const writes = settingsHandlers(settingsFixture((data) => { data.intake.email_enabled = false; }));
@@ -600,7 +600,7 @@ describe('Installation country', () => {
       return null;
     });
     server.use(http.get('/plugins', () => HttpResponse.json({ items: [] })));
-    const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    const next = () => fireEvent.click(screen.getByRole('button', { name: /^(Save and continue|Continue)$/ }));
     render(<SetupWizard client={client()} />);
     await screen.findByText('Choose Providers', { selector: 'h6' });
     await chooseCountry('United Kingdom', 'GB');
