@@ -1,0 +1,15 @@
+{
+  "coverage": "source declarations; no live installation state or provider verification",
+  "source_files": {
+    "api/app/callback_locator.py": "9faecd06f0a17c77e2f4d7253a4ceac1bcfdf3fc081fb3fc09b8af16eb78fd32",
+    "api/app/config_values.py": "cd8565cc96952841684785a391b0bd063e6ddaa87722f283c4258b555f24ad95",
+    "api/app/main.py": "ff6bfdbbd3fcfcd8629f78dc0cae1a4f5af52c02083dd90f48c41c93a5b8f8b7",
+    "api/app/outbound_callbacks.py": "634458c8901c2118c2b165579cb48fc8ae7eddf2da73bcb476b9c88da2862625",
+    "api/app/provider_catalog.py": "a392e004704541e7fef46ff433378a72bdd74fbc01eb33968efaefb88beb6242",
+    "api/app/provider_signatures.py": "f881a0530a5f46fa794909c52c33c05d9dd32750473b9d425eddd664918e9400",
+    "config/provider_traits.json": "68567a0b79aec92697cafb2fc1db9d8f4b641473cfb3e5f39efe882703190601"
+  },
+  "source_ref": "main",
+  "source_sha": "0935370edf2dbce78e08baf44835293cb26671f8",
+  "source_tree_dirty": false
+}
