@@ -986,9 +986,9 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
             </List>
           )}
           {/* A fax Faxbot could not confirm: its owner, the checks cheapest first, and settling it. */}
-          {detailJob && <FaxCertaintyItem client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
+          {detailJob && <FaxCertaintyItem client={client} jobId={detailJob.id} onOpenFax={openRecord} />}
           {/* A fax whose call broke part way: send only its remaining pages, and the link both ways. */}
-          {detailJob && <SentContinuation client={client} jobId={detailJob.id} onOpenFax={(faxId) => void handleJobClick(faxId)} />}
+          {detailJob && <SentContinuation client={client} jobId={detailJob.id} onOpenFax={openRecord} />}
           {/* The header notice the fax carried, and whether its cover sheet went (header_notice.py). */}
           {detailJob && <SentHeaderNotice client={client} jobId={detailJob.id} />}
           {/* A court fax: what the California court profile did, its timing and its transmission record. */}

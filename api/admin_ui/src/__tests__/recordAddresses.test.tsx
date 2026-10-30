@@ -65,6 +65,21 @@ describe('Sent record addresses', () => {
     expect(onFaxChange).toHaveBeenCalledWith(null);
   });
 
+  it('opens a related fax from the details through the address, so Back returns to the first', async () => {
+    serveSent();
+    const earlier = 'e'.repeat(32);
+    server.use(http.get(`/continuations/faxes/${JOB}`, () => HttpResponse.json({
+      fax_id: JOB, offer: null, continued_by: null,
+      continues: { fax_id: earlier, first_page: 8, last_page: 20, pages_text: 'pages 8–20' },
+    })));
+    const onFaxChange = vi.fn();
+    render(<JobsList client={client()} faxId={JOB} onFaxChange={onFaxChange}
+      recordHref={(id) => `#/faxes/sent?fax=${id}`} />);
+    const dialog = await screen.findByRole('dialog', { name: 'Fax details' });
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Open it' }));
+    expect(onFaxChange).toHaveBeenCalledWith(earlier);
+  });
+
   it('still opens from the link on its own when no address is wired', async () => {
     serveSent();
     render(<JobsList client={client()} />);
