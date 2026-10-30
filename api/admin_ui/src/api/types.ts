@@ -117,6 +117,17 @@ export interface FaxJob extends DeliveryMetadata {
   waiting_reason?: string | null;
   // The time the sender needs it sent by, and one sentence (whether it may miss it); null without one.
   send_by?: { at: string; sentence: string; at_risk: boolean } | null;
+  // The name typed when the fax was sent, else the number's saved Recipients name; null without either.
+  recipient?: string | null;
+  // Refused while the rules held it: what happened, and who decided. decided_by never names a key (lists);
+  // decided_by_detail names it, for the fax's details. error already holds sentence and decided_by.
+  refusal?: FaxRefusal | null;
+}
+
+export interface FaxRefusal {
+  sentence: string;
+  decided_by: string | null;
+  decided_by_detail: string | null;
 }
 
 // The fax engine a sender may choose for one fax over the SIP trunk (POST /fax engine): Faxbot's choice (auto),

@@ -1308,6 +1308,118 @@ def test_savings_predict_says_9_in_10_only_from_the_numbers_own_calls_as_send_do
     assert human.count('9 in 10 calls like this one') == 1
 
 
+def test_savings_predict_with_a_document_says_a_plans_cost_once_as_send_does(monkeypatch, tmp_path):
+    """D23: HumbleFax past its normal-use budget carries the document. The plan's line says the cost and the budget;
+    the measured choice ("Would go through HumbleFax as 1 page: nothing extra.") is left out, as Send leaves it out,
+    and kept when it compares the plan with a priced route."""
+    from app.cli import state as cli_state
+    basis = ("Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; about 23 seconds on the "
+             "line, for typical pages at a typical fax speed. You've used 245 of the 200 pages you set as this plan's "
+             'normal-use budget this month, so Faxbot sends by your other routes first when one of them can take the '
+             'fax.')
+    selected = {'route': 'humblefax', 'label': 'HumbleFax', 'layout': 'normal', 'rendering': 'as_is', 'coding': None,
+                'original_pages': 1, 'sent_pages': 1, 'cost': None, 'in_plan': True, 'measured': True}
+
+    def answer(runner_up, sentence):
+        class Canned:
+            url = 'https://faxbot.example'
+
+            def post(self, path, **_):
+                assert path == '/routing/predict'
+                return {'to': '+19725550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': sentence,
+                        'measured_sentence': None, 'selected': selected, 'runner_up': runner_up, 'held': False,
+                        'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                        'routes': [{'route': 'humblefax', 'label': 'HumbleFax', 'cost': None, 'marginal': True,
+                                    'seconds': 23.0, 'p90_seconds': None, 'basis': basis, 'coding': None,
+                                    'finish_sentence': None, 'time_note': None, 'layout': 'normal', 'sent_pages': 1}]}
+        monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+        letter = tmp_path / 'letter.txt'
+        letter.write_text('Synthetic referral letter\n')
+        result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                              '+19725550123', '--file', str(letter)], env={'COLUMNS': '200'})
+        assert result.exit_code == 0, result.stdout
+        return ' '.join(result.stdout.split())
+    alone = answer(None, 'Would go through HumbleFax as 1 page: nothing extra.')
+    assert f'HumbleFax: {basis}' in alone and 'Would go through' not in alone
+    assert alone.count('adds nothing to the bill') == 1
+    compared = 'Would go through HumbleFax as 1 page: nothing extra instead of $0.005 through Telnyx as 1 page.'
+    assert compared in answer({'route': 'sip', 'label': 'Telnyx', 'cost': {'currency': 'USD', 'amount': '0.005'}},
+                              compared)
+
+    # By page count (no document): the closing sentence names the cheapest route; for a plan carrying the fax at
+    # nothing extra it only repeats the plan's line, so it is left out, and kept when a priced route costs least.
+    def by_count(routes, sentence):
+        class Canned:
+            url = 'https://faxbot.example'
+
+            def get(self, path, **_):
+                assert path == '/routing/predict'
+                return {'to': '+19725550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': sentence,
+                        'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                        'routes': routes}
+        monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+        result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                              '+19725550123'], env={'COLUMNS': '200'})
+        assert result.exit_code == 0, result.stdout
+        return ' '.join(result.stdout.split())
+    plan = {'route': 'humblefax', 'label': 'HumbleFax', 'cost': {'currency': 'USD', 'amount': '0'}, 'marginal': True,
+            'seconds': 23.0, 'p90_seconds': None, 'basis': basis, 'coding': None, 'finish_sentence': None,
+            'time_note': None}
+    only = by_count([plan], 'HumbleFax is your only sending route: nothing extra for this fax.')
+    assert f'HumbleFax: {basis}' in only and 'only sending route' not in only
+    assert only.count('adds nothing to the bill') == 1 and 'nothing extra for this fax' not in only
+    free = {'route': 'sip', 'label': 'Telnyx', 'cost': {'currency': 'USD', 'amount': '0'}, 'marginal': False,
+            'seconds': 20.0, 'p90_seconds': None, 'basis': 'Telnyx charges nothing for calls to toll-free numbers.',
+            'coding': None, 'finish_sentence': None, 'time_note': None}
+    assert 'Telnyx would cost least: nothing for this fax.' in by_count(
+        [plan, free], 'Telnyx would cost least: nothing for this fax.')
+
+
+def test_savings_predict_by_page_count_keeps_the_routes_with_no_known_price_beside_a_free_plan(monkeypatch):
+    """Review of D23: leaving out the closing sentence when a plan carries the fax at nothing extra also dropped
+    "1 other route has no known price.", which the plan's own line never says. Only the repeated cost is left out
+    now; the count of routes with no known price stays, in the server's words, for one route and for several."""
+    from app.cli import state as cli_state
+    basis = ("Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; about 23 seconds on the "
+             "line, for typical pages at a typical fax speed. You've used 5 of the 200 pages you set as this plan's "
+             'normal-use budget this month.')
+    plan = {'route': 'humblefax', 'label': 'HumbleFax', 'cost': {'currency': 'USD', 'amount': '0'}, 'marginal': True,
+            'seconds': 23.0, 'p90_seconds': None, 'basis': basis, 'coding': None, 'finish_sentence': None,
+            'time_note': None}
+
+    def unpriced(route, label):
+        return {'route': route, 'label': label, 'cost': None, 'marginal': False, 'seconds': 20.0, 'p90_seconds': None,
+                'basis': f'{label} publishes no price for calls to local numbers in the United States, so the cost '
+                         'is unknown.', 'coding': None, 'finish_sentence': None, 'time_note': None}
+
+    def by_count(routes, sentence):
+        class Canned:
+            url = 'https://faxbot.example'
+
+            def get(self, path, **_):
+                assert path == '/routing/predict'
+                return {'to': '+19725550123', 'number_class_text': 'a local number', 'pages': 1, 'sentence': sentence,
+                        'note': 'Estimates before sending; the bill comes from your carrier or provider.',
+                        'routes': routes}
+        monkeypatch.setattr(cli_state, 'api', lambda: Canned())
+        result = CliRunner().invoke(cli_app, ['--url', 'https://faxbot.example', 'savings', 'predict', '--to',
+                                              '+19725550123'], env={'COLUMNS': '200'})
+        assert result.exit_code == 0, result.stdout
+        return ' '.join(result.stdout.split())
+    one = by_count([plan, unpriced('sip', 'Telnyx')],
+                   'HumbleFax would cost least: nothing extra for this fax; 1 other route has no known price.')
+    assert f'HumbleFax: {basis}' in one and 'HumbleFax would cost least' not in one
+    assert one.count('adds nothing to the bill') == 1 and 'nothing extra for this fax' not in one
+    assert '1 other route has no known price.' in one
+    assert one.index('1 other route has no known price.') < one.index('Estimates before sending')
+    two = by_count([plan, unpriced('sip', 'Telnyx'), unpriced('sinch', 'Sinch')],
+                   'HumbleFax would cost least: nothing extra for this fax; 2 other routes have no known price.')
+    assert '2 other routes have no known price.' in two and 'nothing extra for this fax' not in two
+    # Every route priced: nothing more to say after the plan's line.
+    alone = by_count([plan], 'HumbleFax is your only sending route: nothing extra for this fax.')
+    assert 'no known price' not in alone and 'only sending route' not in alone
+
+
 @pytest.mark.skipif(not __import__('shutil').which('gs'), reason='Ghostscript draws the fax pages')
 def test_costs_predict_with_a_document_measures_each_coding_on_its_pages(cli, tmp_path):
     letter = pdf(tmp_path / 'letter.pdf', 'Synthetic referral letter for the dry run')
@@ -1854,6 +1966,88 @@ def test_status_names_the_route_faxbot_assigned_and_nothing_before_it():
     assert fax._planned_route(Api(CliError('Not allowed.')), job) is None
     fields = dict(fax._fax_fields(job))
     assert 'Provider' not in fields and 'Planned route' not in fields
+
+
+def test_send_with_an_engine_says_when_the_fax_will_not_go_over_your_phone_line(cli, tmp_path):
+    """D27: --engine matters only for a fax over your phone line (a SIP trunk). This installation sends by Phaxio, so
+    the fax is still accepted with the choice kept, and one plain line says it applies only to the phone line."""
+    note = tmp_path / 'note.txt'
+    note.write_text('Synthetic command line fax\n')
+    said = cli('send', '+15551230002', note, '--queue', '--engine', 'builtin')
+    assert said.exit_code == 0, said.stdout + said.stderr
+    line = ('The fax engine you chose applies only to faxes over your phone line; Faxbot plans to send this one '
+            'through Phaxio.')
+    assert 'Fax accepted.' in said.stdout and line in ' '.join(said.stdout.split())
+    sent = cli.json('send', '+15551230002', note, '--queue', '--engine', 'hylafax')
+    assert sent['engine_note'] == line
+    assert cli.client.get(f"/admin/fax-jobs/{sent['id']}", headers={'X-API-Key': BOOTSTRAP}).json()[
+        'engine_choice']['engine'] == 'hylafax'
+    # Automatic, the default, says nothing.
+    plain = cli('send', '+15551230002', note, '--queue')
+    assert plain.exit_code == 0 and 'fax engine' not in plain.stdout
+
+
+def test_the_engine_note_follows_the_route_faxbot_plans_first():
+    from app.cli.commands import fax
+    from app.cli.errors import CliError
+
+    class Api:
+        def __init__(self, accounts):
+            self.accounts = accounts
+
+        def get(self, path, params=None):
+            if isinstance(self.accounts, Exception):
+                raise self.accounts
+            return {'accounts': self.accounts}
+    trunks = Api([{'key': 'sip', 'provider': 'sip'}, {'key': 'branch', 'provider': 'sip'},
+                  {'key': 'humblefax', 'provider': 'humblefax'}])
+    humblefax, telnyx = {'route': 'humblefax', 'label': 'HumbleFax'}, {'route': 'sip', 'label': 'Telnyx'}
+    line = ('The fax engine you chose applies only to faxes over your phone line; Faxbot plans to send this one '
+            'through HumbleFax.')
+    # A fax service first says so, whether or not a trunk comes later in the order; a trunk first says nothing.
+    assert fax._engine_note(trunks, [humblefax]) == line
+    assert fax._engine_note(trunks, [humblefax, telnyx]) == line
+    assert fax._engine_note(trunks, [telnyx, humblefax]) is None
+    assert fax._engine_note(trunks, [{'route': 'branch', 'label': 'Branch trunk'}, humblefax]) is None
+    # A key that may not read accounts still knows the main trunk.
+    assert fax._engine_note(Api(CliError('Not allowed.')), [telnyx]) is None
+    # One of your own numbers: into Received, unless a real call was asked for.
+    own = [{'route': 'local', 'label': 'This Faxbot'}, telnyx]
+    assert fax._engine_note(trunks, own) == ('The fax engine you chose applies only to faxes over your phone line; '
+                                             'this one goes straight into Received with no phone call.')
+    assert fax._engine_note(trunks, own, by_call=True) is None
+    # A sending rule decided (no order to read), or no routes: Faxbot can't tell and says nothing.
+    assert fax._engine_note(trunks, None) is None and fax._engine_note(trunks, []) is None
+
+
+def test_the_engine_note_follows_the_sending_rule_that_decides_the_route():
+    """D27 with sending rules (review of #120): a rule that changes the fax's accounts decides its route, so `faxbot
+    send --engine` reads that decision first, as `send` composes it (``_route_plan``, then ``_engine_note``). A rule
+    sending this fax over the trunk says nothing, though the number's automatic order puts HumbleFax first; with no
+    rule deciding, the automatic order's first route speaks."""
+    from app.cli.commands import fax
+    humblefax, telnyx = {'route': 'humblefax', 'label': 'HumbleFax'}, {'route': 'sip', 'label': 'Telnyx'}
+
+    class Api:
+        def __init__(self, planned):
+            self.planned = planned
+
+        def get(self, path, params=None):
+            if path == '/routing/faxes/f-1/route':
+                return {'planned': self.planned}
+            if path == '/routing/destinations/%2B19725550123':
+                return {'recommended_routes': [humblefax, telnyx]}
+            if path == '/admin/providers/accounts':
+                return {'accounts': [{'key': 'sip', 'provider': 'sip'}, {'key': 'humblefax', 'provider': 'humblefax'}]}
+            raise AssertionError(path)
+
+    def note(planned):
+        api = Api(planned)
+        plan = fax._route_plan(api, {'id': 'f-1', 'to_number': '+19725550123'})
+        return plan[0], fax._engine_note(api, plan[1] if plan else None)
+    assert note(None) == ('HumbleFax', 'The fax engine you chose applies only to faxes over your phone line; Faxbot '
+                                       'plans to send this one through HumbleFax.')
+    assert note('Telnyx') == ('Telnyx', None)
 
 
 def test_sent_and_received_say_a_fax_image_went_directly_never_faxed():

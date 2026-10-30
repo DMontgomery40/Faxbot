@@ -548,6 +548,78 @@ def test_refusing_fails_the_fax_before_anything_is_sent(ruled):
     assert tuple(row) == ('failed', 'Refused by Ben Example: wrong recipient') and attempts == 0
 
 
+def test_a_refusal_is_shown_as_what_happened_then_who_decided():
+    """D26: the stored sentence stays "Refused by <name>: <reason>"; Sent shows the reason first, a person by name,
+    a key only as "an API key" in lists, and text that is not a refusal as it was stored."""
+    from api.app.main import sanitize_error
+    from api.app.routing.holds import shown_refusal
+    assert shown_refusal('Refused by Ben Example: Wrong number.', name='Ben Example', kind='user') == {
+        'sentence': 'Not sent: Wrong number.', 'decided_by': 'Decided by Ben Example.',
+        'decided_by_detail': 'Decided by Ben Example.'}
+    assert shown_refusal('Refused by Installation bootstrap: duplicate', name='Installation bootstrap',
+                         kind='bootstrap') == {'sentence': 'Not sent: duplicate.',
+                                               'decided_by': 'Decided through an API key.',
+                                               'decided_by_detail': 'Decided through the installation key.'}
+    # An integration's key: only "an API key" in a list; in the details the key by its own name and the integration
+    # it belongs to, or the integration alone when Faxbot can't tell which of its keys it was.
+    assert shown_refusal('Refused by Billing sync: duplicate', name='Billing sync', kind='integration',
+                         key='sync key') == {
+        'sentence': 'Not sent: duplicate.', 'decided_by': 'Decided through an API key.',
+        'decided_by_detail': 'Decided through the API key ‘sync key’, which belongs to ‘Billing sync’.'}
+    assert shown_refusal('Refused by Billing sync: duplicate', name='Billing sync', kind='integration')[
+        'decided_by_detail'] == 'Decided through an API key that belongs to ‘Billing sync’.'
+    assert shown_refusal('Refused by someone with Approve faxes: duplicate', name=None, kind='integration',
+                         key='sync key')['decided_by_detail'] == 'Decided through the API key ‘sync key’.'
+    # The installation key is never named, whatever key name is passed.
+    assert shown_refusal('Refused by Installation bootstrap: duplicate', name='Installation bootstrap',
+                         kind='bootstrap', key='env')['decided_by_detail'] == 'Decided through the installation key.'
+    # No name was recorded: the reason still leads, and no one is named.
+    assert shown_refusal('Refused by someone with Approve faxes: wrong recipient', name=None, kind=None) == {
+        'sentence': 'Not sent: wrong recipient.', 'decided_by': None, 'decided_by_detail': None}
+    assert shown_refusal('Refused by the remote fax machine', name='Ben', kind='user')['sentence'] == (
+        'Refused by the remote fax machine')
+    # Every other problem sentence is shortened between words, never mid-word, with long numbers hidden.
+    assert sanitize_error('Telnyx account disabled for a negative balance on +13035550100 and more words here',
+                          60) == 'Telnyx account disabled for a negative balance on *** and…'
+    assert sanitize_error('Short and whole.') == 'Short and whole.'
+
+
+def test_a_refusal_cut_where_it_was_stored_says_so_and_never_ends_mid_word():
+    """D26 review: the stored refusal is cut at 500 characters. Several words end at the last whole word with "…";
+    one long word (the review's 500-character token showed 465 characters and a full stop) keeps what was stored
+    and ends with "…"; a sentence one character short of the limit is shown whole. At exactly the limit Faxbot
+    can't tell a cut sentence from one that fit, so it marks it, never claiming it is whole."""
+    from api.app.routing.holds import STORED_LIMIT, shown_refusal
+    prefix = 'Refused by Installation bootstrap: '
+
+    def shown(reason):
+        stored = (prefix + reason)[:STORED_LIMIT]
+        return shown_refusal(stored, name='Installation bootstrap', kind='bootstrap')['sentence']
+    # One long word, as the review found it: what was stored, then the marker, no full stop.
+    token = 'x' * 500
+    kept = STORED_LIMIT - len(prefix)
+    assert shown(token) == f"Not sent: {'x' * kept}…"
+    # Many words: whole words only, then the marker.
+    words = ' '.join(f'word{index:03d}' for index in range(80))
+    said = shown(words)
+    assert said.startswith('Not sent: word000 word001 ') and said.endswith('…') and not said.endswith('.…')
+    listed = said[len('Not sent: '):-1].split(' ')
+    assert listed == words.split(' ')[:len(listed)] and len(listed) > 50
+    # A trailing comma is not left before the marker.
+    assert shown(('alpha, ' * 80)[:STORED_LIMIT - len(prefix)]).endswith('alpha…')
+    # One short of the limit: shown whole with its own full stop.
+    whole = ('a' * 9 + ' ') * 50
+    fits = whole[:STORED_LIMIT - len(prefix) - 2] + 'z'
+    assert len(prefix + fits) == STORED_LIMIT - 1
+    assert shown(fits) == f'Not sent: {fits}.'
+    # Exactly at the limit: marked as possibly cut, at a whole word.
+    at_limit = whole[:STORED_LIMIT - len(prefix) - 1] + 'z'
+    assert len(prefix + at_limit) == STORED_LIMIT
+    assert shown(at_limit) == f"Not sent: {at_limit[:at_limit.rfind(' ')]}…"
+    # A single word exactly at the limit: kept, then the marker.
+    assert shown('y' * kept) == f"Not sent: {'y' * kept}…"
+
+
 def test_a_time_window_opens_by_itself(ruled):
     later = (datetime.utcnow() + timedelta(hours=2)).replace(second=0, microsecond=0)
     window = {'from': later.strftime('%H:%M'), 'until': (later + timedelta(hours=1)).strftime('%H:%M')}

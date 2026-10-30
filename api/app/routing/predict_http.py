@@ -267,10 +267,15 @@ def _layout_rule(decision):
     return {'as_receiver_allows': 'allow', 'one_per_sheet': 'never'}.get(layout)
 
 
-def _measured_view(values, key, evaluated, price):
-    """One account's view from its measured best pages, priced as the worker prices it."""
+def _measured_view(values, key, evaluated, price, order=None):
+    """One account's view from its measured best pages, priced as the worker prices it. ``order``: what sets the
+    account's place in this fax's order of routes (``plan_budget.order_of``), so a plan past its normal-use budget
+    says what that order does with it."""
+    from dataclasses import replace
     from .predict import predict_from
     facts = evaluated.account.facts
+    if order is not None and facts is not None:
+        facts = replace(facts, order=order)
     chosen = evaluated.chosen
     prediction = predict_from(facts, evaluated.shape)
     view = _view(facts, prediction, chosen.pages)
@@ -326,7 +331,9 @@ def measured_plan(engine, revision, number, claim, pdf, tiff, pages, actor, *, o
         configuration_for=lambda key: _configuration(revision, key, bound, outbound), rule=_layout_rule(decision))
     if found.measured:
         plan, prices, decision = preview_plan(engine, revision, number, pages, actor, measured=found.measured)
-    views = [_measured_view(values, choice.route.key, found.frontiers[choice.route.key], prices.get(choice.route.key))
+    from .plan_budget import order_of
+    views = [_measured_view(values, choice.route.key, found.frontiers[choice.route.key], prices.get(choice.route.key),
+                            order_of(plan, choice.route.key))
              for choice in plan.choices if choice.route.key in found.frontiers]
     first = next((choice for choice in plan.choices if choice.route.key in found.frontiers), None)
     if first is None:

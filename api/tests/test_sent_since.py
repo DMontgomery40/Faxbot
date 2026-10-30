@@ -1,9 +1,12 @@
 """Sent faxes whose state changed in the last hours: the list Needs attention opens for "failed in the last 24 hours".
 
 GET /admin/fax-jobs?since_hours= and `faxbot faxes sent list --hours` keep only faxes whose delivery changed within that
-many hours, by the same clock and column as the Overview's count, inside the same visibility as the list.
+many hours, by the same clock and column as the Overview's count, inside the same visibility as the list. The command
+`faxbot overview` names for sent faxes with an uncertain result lists the faxes it counts, too.
 """
 from datetime import datetime, timedelta
+import shlex
+from types import SimpleNamespace
 
 import sqlalchemy as sa
 
@@ -56,3 +59,23 @@ def test_the_list_keeps_only_faxes_that_changed_within_the_hours_asked(cli, tmp_
     assert [job['id'] for job in listed['jobs']] == [recent]
     shown = cli('sent', 'list', '--status', 'held', '--hours', '24')
     assert shown.exit_code == 0 and 'Only faxes whose state changed in the last 24 hours.' in shown.stdout
+
+
+def test_the_command_overview_names_for_uncertain_faxes_lists_the_faxes_it_counts(cli, tmp_path):
+    """An open item on a failed fax counts and is listed; a fax settled as can't tell is neither."""
+    from api.tests.test_outbound_now import _certainty
+    jobs = [_send(cli, tmp_path, f'+1555123010{index}') for index in range(4)]
+    engine = main_module.app.state.configuration_runtime.manager.store.engine
+    with engine.begin() as connection:
+        for job, state in zip(jobs, ('reconciliation_required', 'reconciliation_required', 'failed', 'success')):
+            connection.execute(sa.text("UPDATE outbound_deliveries SET state = :state, dispatch_mode = 'normal' "
+                                       'WHERE id = :id'), {'state': state, 'id': job})
+    _certainty(SimpleNamespace(engine=engine), jobs[0], state='settled', outcome='unknown')
+    _certainty(SimpleNamespace(engine=engine), jobs[2])    # a person answered: open, though the delivery failed
+    attention = cli.json('overview')['attention']
+    item = next(item for item in attention['items'] if item['key'] == 'uncertain')
+    words = shlex.split(item['command'])
+    assert words[:4] == ['faxbot', 'faxes', 'sent', 'list'], item['command']
+    listed = cli.json(*words[1:], '--ids', '--limit', '100')
+    assert item['count'] == listed['total'] == 2
+    assert {job['id'] for job in listed['jobs']} == {jobs[1], jobs[2]}
