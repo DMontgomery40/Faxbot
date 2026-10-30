@@ -1897,3 +1897,18 @@ def test_sent_says_a_broken_call_was_completed_directly_by_the_partner():
     assert fax._assigned_route(Api(), {'id': 'f' * 32, 'backend': 'sip'}) == ('Provider', sentence)
     assert fax.EVENT_LABELS['repair_completed'] == 'Completed directly by the partner after the call broke'
 
+
+
+def test_documents_lifetimes_and_masked_export_help(cli):
+    result = cli('admin', 'settings', 'documents')
+    assert result.exit_code == 0, result.stdout + result.stderr
+    for label in ('Received files (days)', 'Sent files (days)', 'Case originals',
+                  'Received download links (minutes)', 'Provider download links (minutes)',
+                  'Installation-wide', 'faxbot admin settings set'):
+        assert label in result.stdout
+    current = cli.json('admin', 'settings', 'documents')
+    assert current['received_days'] == 30
+    assert current['sent_and_case_days'] == 0
+    help_text = _plain(cli('admin', 'settings', 'export', '--help').stdout)
+    assert 'masked' in help_text and 'not a backup' in help_text
+    assert 'faxbot admin backup' in help_text

@@ -981,8 +981,8 @@ describe('System, milestone 5', () => {
     settingsHandlers(settingsFixture());
     render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
     const receiving = await receivingSection();
-    expect(within(receiving).getByText('Keep received faxes for (days)')).toBeTruthy();
-    expect(within(receiving).getByText('Download links work for (minutes)')).toBeTruthy();
+    expect(within(receiving).queryByText('Keep received faxes for (days)')).toBeNull();
+    expect(within(receiving).queryByText('Download links work for (minutes)')).toBeNull();
     expect(screen.queryByText(/Token TTL|Retention Days|Configure inbound/)).toBeNull();
   });
 
@@ -1009,11 +1009,12 @@ describe('Owner-only settings everywhere', () => {
       data.owner_only = ['inbound_token_ttl_minutes', 'enforce_public_https', 'enable_persisted_settings',
         'max_requests_per_minute', 'inbound_list_rpm', 'inbound_get_rpm'];
     }));
-    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} canWrite isOwner={false} />);
+    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'advanced', 'routes']} canWrite isOwner={false} />);
     const receiving = await receivingSection();
-    const minutes = within(receiving).getByText('Download links work for (minutes)').closest('.MuiBox-root')?.parentElement as HTMLElement;
-    expect((within(receiving).getByDisplayValue('60') as HTMLInputElement).disabled).toBe(true);
-    expect(within(receiving).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
+    const lifetimes = await section('Document lifetimes');
+    const minutes = within(lifetimes).getByText('Download links work for (minutes)').closest('.MuiBox-root')?.parentElement as HTMLElement;
+    expect((within(lifetimes).getByLabelText('Download links work for (minutes)') as HTMLInputElement).disabled).toBe(true);
+    expect(within(lifetimes).getByText(/How long a link to download a received fax keeps working\. Only the owner/)).toBeTruthy();
     expect(minutes).toBeTruthy();
     // Receiving itself is not owner-only and stays changeable.
     expect((within(receiving).getByLabelText(/^Receiving is (on|off)$/) as HTMLInputElement).disabled).toBe(false);
@@ -1022,5 +1023,45 @@ describe('Owner-only settings everywhere', () => {
     await screen.findByText('Require HTTPS for document links');
     // HTTPS for document links and the three request limits; the recovery-copy row is read-only for everyone.
     expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('A9 document settings homes', () => {
+  it('collects lifetimes, keeps defaults, and saves only the edited lifetime', async () => {
+    const writes = settingsHandlers(settingsFixture());
+    render(<Settings client={client()} canWrite sections={['storage', 'advanced', 'backup']} />);
+    expect(await screen.findByText('Keep received faxes for (days)')).toBeTruthy();
+    expect((screen.getByLabelText('Keep received faxes for (days)') as HTMLInputElement).value).toBe('30');
+    expect((screen.getByLabelText('Download links work for (minutes)') as HTMLInputElement).value).toBe('60');
+    expect((screen.getByLabelText('Keep sent fax files for (days)') as HTMLInputElement).value).toBe('0');
+    expect((screen.getByLabelText('Document links for fax services work for (minutes)') as HTMLInputElement).value).toBe('60');
+    expect((screen.getByLabelText('Clean up old files every (minutes)') as HTMLInputElement).value).toBe('1440');
+    expect(screen.getByText(/Case originals use the sent-file lifetime/)).toBeTruthy();
+    expect(screen.queryByLabelText('Largest document (MB)')).toBeNull();
+    expect(screen.queryByText('Database (read only)')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Keep sent fax files for (days)'), { target: { value: '14' } });
+    apply();
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toMatchObject({ artifact_ttl_days: 14 });
+    expect(writes[0]).not.toHaveProperty('inbound_retention_days');
+    expect(screen.getByRole('button', { name: 'Export masked settings' })).toBeTruthy();
+  });
+
+  it('keeps connection settings free of lifetime editors', async () => {
+    settingsHandlers(settingsFixture());
+    render(<Settings client={client()} sections={['providers', 'inbound']} />);
+    await receivingSection();
+    expect(screen.queryByText('Keep received faxes for (days)')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Documents & retention' }).getAttribute('href')).toBe('#/admin/retention');
+  });
+
+  it('puts request limits on Security and database facts on System health', async () => {
+    settingsHandlers(settingsFixture());
+    const { unmount } = render(<Settings client={client()} sections={['security']} />);
+    expect(await screen.findByLabelText('Largest document (MB)')).toBeTruthy();
+    expect(screen.queryByLabelText('Keep sent fax files for (days)')).toBeNull();
+    unmount();
+    render(<Settings client={client()} sections={['diagnostics']} />);
+    expect(await screen.findByText('Database (read only)')).toBeTruthy();
   });
 });

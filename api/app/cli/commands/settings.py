@@ -59,6 +59,39 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
     state.out().result(shown if section else current, human)
 
 
+@settings.command('documents')
+def settings_documents():
+    """Show document lifetimes together, as on Administration → Documents & retention.
+
+    Change these installation-wide settings with faxbot admin settings set NAME=VALUE.
+    """
+    current = state.api().get('/admin/settings')
+    inbound, limits = current.get('inbound', {}), current.get('limits', {})
+    result = {
+        'received_days': inbound.get('retention_days', 30),
+        'sent_and_case_days': limits.get('artifact_ttl_days', 0),
+        'received_link_minutes': inbound.get('token_ttl_minutes', 60),
+        'provider_link_minutes': limits.get('pdf_token_ttl_minutes', 60),
+        'cleanup_minutes': limits.get('cleanup_interval_minutes', 1440),
+    }
+
+    def human(out):
+        out.line('Installation-wide document lifetimes (0 days keeps files).')
+        out.fields([('Received files (days)', result['received_days']),
+                    ('Sent files (days)', result['sent_and_case_days']),
+                    ('Case originals', 'Same as sent files, from last added or sent'),
+                    ('Received download links (minutes)', result['received_link_minutes']),
+                    ('Provider download links (minutes)', result['provider_link_minutes']),
+                    ('Cleanup interval (minutes)', result['cleanup_minutes'])])
+        out.line('Change with faxbot admin settings set NAME=VALUE: inbound_retention_days, artifact_ttl_days, '
+                 'inbound_token_ttl_minutes, pdf_token_ttl_minutes, cleanup_interval_minutes.')
+        out.line('Link expiry does not delete documents. These settings do not provide legal holds.')
+        meta = current.get('_meta', {})
+        if meta.get('apply_state') == 'pending_restart':
+            out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
+    state.out().result(result, human)
+
+
 def _value(raw):
     lowered = raw.strip().lower()
     if lowered in {'true', 'yes', 'on'}:
@@ -186,7 +219,9 @@ def settings_persist():
 
 @settings.command('export')
 def settings_export():
-    """Print every setting, one per line, as it would appear in a settings file. Passwords and keys are shown as ***."""
+    """Print a masked settings export, not a backup. Passwords and keys are shown as ***.
+
+    For a full backup on the server, run faxbot admin backup FOLDER."""
     result = state.api().get('/admin/settings/export')
 
     def human(out):

@@ -516,7 +516,7 @@ describe('a page that shows part of the settings', () => {
     expect((await screen.findByTestId('provider-use')).textContent).toBe('Faxbot sends and receives faxes through Phaxio.');
     expect(screen.getByRole('heading', { name: 'Phaxio' })).toBeTruthy();
     expect(screen.queryByText('Security Settings')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Export settings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Export masked settings' })).toBeNull();
     unmount();
     render(<Settings client={keyClient()} sections={['sinch']} title="Sinch" />);
     expect((await screen.findByTestId('provider-use')).textContent)
@@ -527,7 +527,7 @@ describe('a page that shows part of the settings', () => {
   it('offers Export and the recovery file only on Storage & retention', async () => {
     server.use(http.get('/admin/settings', () => HttpResponse.json(settingsFixture())));
     render(<Settings client={keyClient()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
-    expect(await screen.findByRole('button', { name: 'Export settings' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Export masked settings' })).toBeTruthy();
     // One way to read the settings again, called Reload.
     expect(screen.getAllByRole('button', { name: 'Reload' })).toHaveLength(1);
     expect(screen.queryByText(/Load Settings/)).toBeNull();

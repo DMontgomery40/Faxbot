@@ -85,10 +85,10 @@ export function missingSentence(entry: { title: string; removed_at: string | nul
   return `Not included: '${entry.title}' was sent before Faxbot kept original documents. Add it to the case again to include it.`;
 }
 
-// How long documents kept for case packets stay, from Storage & retention.
+// How long documents kept for case packets stay, from Documents & retention.
 export function retentionSentence(days: number | undefined): string {
-  if (!days) return 'Kept documents stay until you set how long sent fax files are kept, in Storage & retention.';
-  return `Faxbot removes a kept document ${days} days after it was last added or sent, like sent fax files (Storage & retention).`;
+  if (!days) return 'Kept documents stay until you set how long sent fax files are kept, in Documents & retention.';
+  return `Faxbot removes a kept document ${days} days after it was last added or sent, like sent fax files (Documents & retention).`;
 }
 
 export function pagesText(count: number): string {

@@ -112,7 +112,7 @@ type SettingsForm = Record<string, FormValue>;
 // The trunk section, opened from the Inbox receiving status.
 const SIP_TRUNK_SECTION = 'sip-trunk';
 
-const ENV_IMPORT_HELP = 'Decided where Faxbot is installed, not here: when it is on, a fresh installation takes its settings from the recovery copy saved under Storage & retention.';
+const ENV_IMPORT_HELP = 'Decided where Faxbot is installed, not here: when it is on, a fresh installation takes its settings from the recovery copy saved under Documents & retention.';
 
 // Limits checked before saving, so a value the server would refuse gets a plain sentence.
 const FIELD_RANGES: Record<string, { min: number; max: number; message: string }> = {
@@ -652,7 +652,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </Button>
           {shows('backup') && (<>
           <Button variant="contained" onClick={exportEnv} disabled={loading} sx={{ mr: 1 }}>
-            Export settings
+            Export masked settings
           </Button>
           <Button
             variant="outlined"
@@ -1157,30 +1157,9 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             {switchField(['Receiving is on', 'Receiving is off'], 'inbound_enabled', receivingSentence,
               { disabled: !form.inbound_enabled && !receiverCanReceive })}
 
-            <ResponsiveSettingItem
-              icon={<SettingsIcon />}
-              label="Keep received faxes for (days)"
-              value={String(settings.inbound?.retention_days ?? 30)}
-              editValue={form.inbound_retention_days ?? settings.inbound?.retention_days ?? 30}
-              helperText="After this many days Faxbot deletes a received fax's file. 0 keeps them."
-              onChange={(value) => handleForm('inbound_retention_days', value === '' ? '' : Number(value))}
-              type="number"
-              placeholder={String(settings.inbound?.retention_days ?? 30)}
-              showCurrentValue={!pendingRestart}
-            />
-            
-            <ResponsiveSettingItem
-              icon={<SettingsIcon />}
-              label="Download links work for (minutes)"
-              value={String(settings.inbound?.token_ttl_minutes ?? 60)}
-              editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
-              helperText={withOwnerNote('inbound_token_ttl_minutes', "How long a link to download a received fax keeps working.")}
-              onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
-              type="number"
-              placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
-              showCurrentValue={!pendingRestart}
-              disabled={locked('inbound_token_ttl_minutes')}
-            />
+            <Typography sx={{ px: 2 }}>
+              Set document lifetimes in <a href="#/admin/retention">Documents &amp; retention</a>.
+            </Typography>
 
             {/* On the console's own pages this secret is in the trunk's fax engine connection box. */}
             {effectiveInbound === 'sip' && !sections && inboundSecret()}
@@ -1449,28 +1428,14 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           </ResponsiveFormSection>
           )}
 
-          {/* Advanced Settings */}
-          {shows('advanced') && (
+          {/* Installation-wide API limits live on Security. */}
+          {shows('security') && (
           <ResponsiveFormSection
-              title="Limits and cleanup"
-              subtitle="The database, how much each key may ask for, and how long files are kept."
+              title="API and request limits"
+              subtitle="Installation-wide limits for documents and API keys."
               icon={<SettingsIcon />}
             >
               <Stack spacing={3}>
-                <Box>
-                  <ResponsiveSettingItem
-                    icon={<StorageIcon />}
-                    label="Database (read only)"
-                    value={settings.database?.url ?? ''}
-                    editValue={settings.database?.url ?? ''}
-                    helperText="Passwords in it are hidden."
-                    showCurrentValue={false}
-                  />
-                  <Alert severity="info" sx={{ mt: 2 }}>
-                    The database can’t be changed here; moving to a new database is a planned maintenance task.
-                  </Alert>
-                </Box>
-
                 {/* Upload Limits */}
                 <ResponsiveTextField
                   label="Largest document (MB)"
@@ -1516,27 +1481,65 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                   disabled={locked('inbound_get_rpm')}
                 />
 
-                {textField('Document links for fax services work for (minutes)', 'pdf_token_ttl_minutes', 'How long a fax service may fetch a document Faxbot sends through it.', 'number')}
-                {textField('Keep sent fax files for (days)', 'artifact_ttl_days', 'Also removes documents kept for case packets once they have not been added or sent for this long. 0 keeps them.', 'number')}
-                {textField('Clean up old files every (minutes)', 'cleanup_interval_minutes', '', 'number')}
-                <Alert 
-                  severity="info" 
-                  sx={{ 
-                    borderRadius: 2,
-                    '& .MuiAlert-icon': { alignItems: 'center' }
-                  }}
-                >
-                  <Typography variant="body2">
-                    For health information, keep these limits and the largest document size within your policy.
-                  </Typography>
-                </Alert>
               </Stack>
+            </ResponsiveFormSection>
+          )}
+
+          {shows('advanced') && (
+            <ResponsiveFormSection title="Document lifetimes" icon={<StorageIcon />}
+              subtitle="Installation-wide defaults. Received files and sent files keep their separate lifetimes; download links expire independently.">
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Keep received faxes for (days)"
+              value={String(settings.inbound?.retention_days ?? 30)}
+              editValue={form.inbound_retention_days ?? settings.inbound?.retention_days ?? 30}
+              helperText="Installation-wide received-file lifetime. After this many days Faxbot deletes a received fax's file. 0 keeps them."
+              onChange={(value) => handleForm('inbound_retention_days', value === '' ? '' : Number(value))}
+              type="number"
+              placeholder={String(settings.inbound?.retention_days ?? 30)}
+              showCurrentValue={!pendingRestart}
+            />
+
+            <ResponsiveSettingItem
+              icon={<SettingsIcon />}
+              label="Download links work for (minutes)"
+              value={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              editValue={form.inbound_token_ttl_minutes ?? settings.inbound?.token_ttl_minutes ?? 60}
+              helperText={withOwnerNote('inbound_token_ttl_minutes', "How long a link to download a received fax keeps working.")}
+              onChange={(value) => handleForm('inbound_token_ttl_minutes', value === '' ? '' : Number(value))}
+              type="number"
+              placeholder={String(settings.inbound?.token_ttl_minutes ?? 60)}
+              showCurrentValue={!pendingRestart}
+              disabled={locked('inbound_token_ttl_minutes')}
+            />
+
+              {textField('Document links for fax services work for (minutes)', 'pdf_token_ttl_minutes', 'How long a fax service may fetch a document Faxbot sends through it.', 'number')}
+              {textField('Keep sent fax files for (days)', 'artifact_ttl_days', 'Also removes documents kept for case packets once they have not been added or sent for this long. 0 keeps them.', 'number')}
+              {textField('Clean up old files every (minutes)', 'cleanup_interval_minutes', '', 'number')}
+              <Typography sx={{ px: 2 }}>
+                Case originals use the sent-file lifetime, counted from when each document was last added or sent.
+                Expiring a download link does not delete its document. These settings do not provide legal holds.
+              </Typography>
             </ResponsiveFormSection>
           )}
 
           {/* Administration > System health */}
           {shows('diagnostics') && (
           <ResponsiveFormSection title="Diagnostics options" icon={<SettingsIcon />}>
+                <Box>
+                  <ResponsiveSettingItem
+                    icon={<StorageIcon />}
+                    label="Database (read only)"
+                    value={settings.database?.url ?? ''}
+                    editValue={settings.database?.url ?? ''}
+                    helperText="Passwords in it are hidden."
+                    showCurrentValue={false}
+                  />
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    The database can’t be changed here; moving to a new database is a planned maintenance task.
+                  </Alert>
+                </Box>
+
             {[
               ['enable_s3_diagnostics', 'Also check the S3 bucket',
                 'When on, Diagnostics also make sure Faxbot can reach the online storage that holds your faxes.'],
@@ -1616,7 +1619,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           <CardContent>
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
               <Typography variant="h6">
-                Redacted .env export
+                Masked settings export
               </Typography>
               <Box>
                 <Button
@@ -1649,7 +1652,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
             </Paper>
             
             <Alert severity="warning" sx={{ mt: 2 }}>
-              Secrets are masked; a full backup also needs the database and installation key.
+              This masked export is not a backup. For a full backup, run faxbot admin backup on the server.
             </Alert>
           </CardContent>
         </Card>

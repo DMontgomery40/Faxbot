@@ -176,7 +176,7 @@ describe('Checklist builder', () => {
     const builder = await screen.findByTestId('case-checklist');
     expect(await within(builder).findByText('Lab results Mesa')).toBeTruthy();
     expect(within(builder).getByTestId('case-retention').textContent).toBe(
-      'Faxbot removes a kept document 30 days after it was last added or sent, like sent fax files (Storage & retention).');
+      'Faxbot removes a kept document 30 days after it was last added or sent, like sent fax files (Documents & retention).');
     fireEvent.click(within(builder).getByRole('button', { name: 'Build the packet' }));
     const preview = await screen.findByTestId('checklist-preview');
     expect(within(preview).getByText(/version 'final', dated 20 September 2026/)).toBeTruthy();

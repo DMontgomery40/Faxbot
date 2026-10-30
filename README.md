@@ -61,6 +61,8 @@ Every address from before the six areas still opens the page that does that job 
 
 Screens follow the signed-in user's permissions, use plain words outside Developer, and show settings only the owner may change disabled to everyone else. See the [console guide](docs/admin-console.md) and [Setup Wizard](docs/admin-console/setup-wizard.md).
 
+Document lifetimes are together on **Administration → Documents & retention** and in `faxbot admin settings documents`: received files, sent files and retained case originals, received download links, provider download links, and cleanup frequency. These are installation-wide settings. Case originals share the sent-file lifetime, measured from when they were last added or sent; expiring a link does not delete its document. API and request limits live on **Security**, and database facts on **System health**. **Export masked settings** omits secrets and is not a backup; use `faxbot admin backup FOLDER` on the stopped server for a full backup.
+
 ## Quick start with Docker Compose
 
 1. Copy the bootstrap configuration:
@@ -141,6 +143,8 @@ Reference pages under `docs/generated/` are generated from code. The README/road
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 
 ### Implemented
+
+- [x] Consolidated document lifetimes in Administration and `faxbot admin settings documents`, with request limits on Security, database facts on System health, and explicit masked-export/full-backup guidance. Contextual NPI discovery and the broader save/read-only model remain unfinished (#61 and #58).
 
 - [x] Destination-aware prices agree across recipient recommendations, plan allowances and attempt estimates. Unknown international prices stay unknown, separate destination tariffs do not consume domestic allowances, and extra provider accounts retain their own applicable rate cards. Verified with synthetic routing, HTTP and accounting checks; this correction does not claim a joint optimizer over every document, account, batch and sending time.
 

@@ -9630,11 +9630,12 @@ $ faxbot admin settings [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `get`: Show the settings, including changes...
+* `documents`: Show document lifetimes together, as on...
 * `set`: Change settings by name, for example...
 * `validate`: Check a provider&#x27;s credentials without...
 * `reload`: Read the saved settings again and show any...
 * `persist`: Save every setting to the server&#x27;s...
-* `export`: Print every setting, one per line, as it...
+* `export`: Print a masked settings export, not a backup.
 
 #### `faxbot admin settings get`
 
@@ -9649,6 +9650,22 @@ $ faxbot admin settings get [OPTIONS] [section]
 **Arguments**:
 
 * `section`: Only this section, for example limits or inbound.
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+#### `faxbot admin settings documents`
+
+Show document lifetimes together, as on Administration → Documents &amp; retention.
+
+Change these installation-wide settings with faxbot admin settings set NAME=VALUE.
+
+**Usage**:
+
+```console
+$ faxbot admin settings documents [OPTIONS]
+```
 
 **Options**:
 
@@ -9729,7 +9746,9 @@ $ faxbot admin settings persist [OPTIONS]
 
 #### `faxbot admin settings export`
 
-Print every setting, one per line, as it would appear in a settings file. Passwords and keys are shown as ***.
+Print a masked settings export, not a backup. Passwords and keys are shown as ***.
+
+For a full backup on the server, run faxbot admin backup FOLDER.
 
 **Usage**:
 
