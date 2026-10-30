@@ -39,7 +39,7 @@ VITEST_ARGS ?=
 .PHONY: venv test-local ui-build ui-check
 
 venv:
-	uv venv --python 3.11 $(VENV) && uv pip install --python $(VENV)/bin/python -r api/requirements.txt -r python_mcp/requirements.txt
+	uv venv --python 3.11 $(VENV) && uv pip install --python $(VENV)/bin/python -r api/requirements.txt -r python_mcp/requirements.txt -e sdks/python
 
 # Same command and env as the test-api CI job. Name the files to run:
 #   make test-local PYTEST_ARGS='tests/test_routing_http.py' PGDB=faxbot_test_x

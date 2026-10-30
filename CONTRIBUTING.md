@@ -63,7 +63,7 @@ These commands run the same checks as CI (`.github/workflows/ci.yml`). You need 
 
 | Command | What it does |
 | --- | --- |
-| `make venv` | Creates `.venv` with Python 3.11 and installs `api/requirements.txt` and `python_mcp/requirements.txt` |
+| `make venv` | Creates `.venv` with Python 3.11, installs `api/requirements.txt` and `python_mcp/requirements.txt`, and installs the Python SDK in editable mode, as CI does |
 | `make test-local PYTEST_ARGS='tests/test_x.py'` | Runs the named backend tests from `api/` with the same command and environment as the `test-api` job |
 | `make test-local FULL_GATE=1` (or `make test FULL_GATE=1`) | Runs the whole backend suite, as CI does (about an hour) |
 | `make ui-build` | Runs `npm ci` and `npm run build` (typecheck and build) in `api/admin_ui` |
