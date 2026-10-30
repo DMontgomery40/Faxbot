@@ -17,5 +17,7 @@ class FaxJobOut(BaseModel):
     reconciliation_reason: Optional[str] = None
     # Failed because a person settled it as can't tell: it may have arrived (Sent shows "Can't tell").
     settled_cant_tell: bool = False
+    # The name shown for the recipient: the one typed when the fax was sent, else the saved Recipients name.
+    recipient: Optional[str] = None
     created_at: datetime
     updated_at: datetime

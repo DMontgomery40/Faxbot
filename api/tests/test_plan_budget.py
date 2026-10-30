@@ -222,7 +222,120 @@ def test_a_synthetic_month_sends_toll_free_by_telnyx_and_the_rest_by_humblefax_u
     assert route_order(routes, settings, TOLL_FREE, datetime(2026, 11, 1, 9)) == ['sip', 'humblefax', 'sinch']
     # The predictor reads the same period and budget.
     facts = facts_for('humblefax', LAB, now=datetime(2026, 10, 31, 12), engine=routes.engine, values=settings)
-    assert (facts.plan.pages, facts.plan.faxes, facts.plan.page_budget) == (30, 10, 30)
+    assert (facts.plan.pages, facts.plan.faxes, facts.plan.page_budget, facts.plan.fax_budget) == (30, 10, 30, None)
+    # D23: its estimate says what the order above (Faxbot's own) does with a plan past its budget, and says the cost
+    # once.
+    from dataclasses import replace
+    basis = predict_from(replace(facts, order='automatic'), Shape(3, None, 'standard', 'normal')).basis
+    assert basis.startswith('Included in your HumbleFax plan ($10 a month): this fax adds nothing to the bill; ')
+    assert basis.endswith("You've used 30 of the 30 pages you set as this plan's normal-use budget this month, so "
+                          'Faxbot sends by your other routes first when one of them can take the fax.')
+    november = facts_for('humblefax', LAB, now=datetime(2026, 11, 1, 9), engine=routes.engine, values=settings)
+    assert predict_from(november, Shape(3, None, 'standard', 'normal')).basis.endswith(
+        "You've used 0 of the 30 pages you set as this plan's normal-use budget this month.")
+
+
+def test_the_estimate_and_the_routes_order_agree_on_when_a_plan_is_past_its_budget():
+    """D23: ``use_sentence`` (the estimate) says Faxbot sends by other routes first exactly when ``marginal`` puts the
+    plan after them (``over_budget``), for pages and for faxes, before this fax, with it, and at the edge."""
+    period = billing_period(OCTOBER, 1)
+    for page_budget, fax_budget in ((200, 50), (200, None), (None, 50)):
+        budget = Budget('humblefax', 'HumbleFax', page_budget, fax_budget, 1, flat=True,
+                        monthly_fee_micros=10_000_000)
+        for used_pages in (0, 150, 198, 199, 200, 245):
+            for used_faxes in (0, 49, 50, 51):
+                left = plan_budget._left(budget, period, Usage(used_faxes, used_pages, 0, 0))
+                for pages in (1, 2, 3):
+                    # Whatever sets the fax's order, the sentence says what happens past the budget exactly then.
+                    for order, ending in plan_budget.PAST_BUDGET.items():
+                        said = plan_budget.use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages, order)
+                        assert said.endswith(ending) == marginal(left, pages).over_budget, (
+                            page_budget, fax_budget, used_pages, used_faxes, pages, order, said)
+                        assert said.endswith(ending) != said.endswith("normal-use budget this month.")
+
+
+def _plan_to(routes, settings, number, pinned=None):
+    """The real planner's order for the next 1-page fax to ``number`` from HumbleFax, as the route preview and the
+    worker rank it; ``pinned``: the fax's own rules decision."""
+    from api.app.routing.plan import RoutePlanner
+    from api.app.routing.pricing import prices_for
+    prices = prices_for(routes, settings, number, 1, bound='humblefax', pinned=pinned, now=OCTOBER)
+    return RoutePlanner(routes, direct_ready=lambda: True, local_ready=lambda: True).plan(
+        to_number=number, bound='humblefax', values=settings, pages=1, alternates=True, prices=prices, pinned=pinned,
+        now=OCTOBER)
+
+
+def _ordered_rule(number, accounts):
+    """A fax's decision by a sending rule that tries ``accounts`` in that order (``try_in_order``)."""
+    from api.app.routing.envelope import Pinned
+    from api.app.rules import model
+    decision = model.Decision('route', model.Envelope('ordered', tuple(accounts)), model.Source('rule', rule_id='r1'),
+                              'f' * 64)
+    return Pinned('preview', 1, decision, model.Facts(number, '2026-10-20T15:00:00', preferred_route='humblefax'))
+
+
+HUMBLEFAX_PAST = "You've used 6 of the 6 pages you set as this plan's normal-use budget this month"
+
+
+def _past_budget(plans):
+    """HumbleFax past a 6-page budget, and a priced trunk that can take the fax."""
+    multi, routes = plans
+    routes.replace_cards([HUMBLEFAX, TELNYX_OUT])
+    settings = values(outbound_route_providers=('sip',), plan_budgets='humblefax:pages=6,faxes=none')
+    for _ in range(2):
+        record(multi, routes, 'humblefax', LAB, datetime(2026, 10, 19, 15), pages=3)
+    return routes, settings
+
+
+def test_the_estimate_of_a_plan_past_its_budget_follows_the_order_the_fax_takes(plans):
+    """Review of D23: the estimate said a plan past its budget "sends by your other routes first" even where the
+    number's preferred route or a sending rule's order keeps the plan first. ``order_of`` reads what set the order
+    from the planner's own order, and the estimate says what that order does."""
+    from dataclasses import replace
+    routes, settings = _past_budget(plans)
+    facts = facts_for('humblefax', LAB, now=OCTOBER, engine=routes.engine, values=settings)
+
+    def estimate(order):
+        return predict_from(replace(facts, order=order), Shape(1, None, 'standard', 'normal')).basis
+
+    # Faxbot's own order: the trunk first, and the estimate says so, as before.
+    automatic = _plan_to(routes, settings, LAB)
+    assert [(choice.route.key, choice.reason) for choice in automatic.choices] == [
+        ('sip', 'plan_over_budget'), ('humblefax', 'alternative')]
+    assert plan_budget.order_of(automatic, 'humblefax') == 'automatic'
+    assert estimate('automatic').endswith(f'{HUMBLEFAX_PAST}, so Faxbot sends by your other routes first when one '
+                                          'of them can take the fax.')
+    # HumbleFax as the number's preferred route stays first past its budget: the estimate says that instead.
+    routes.update_destination(LAB, preferred_route='humblefax')
+    preferred = _plan_to(routes, settings, LAB)
+    assert [(choice.route.key, choice.reason) for choice in preferred.choices] == [
+        ('humblefax', 'preferred'), ('sip', 'alternative')]
+    assert plan_budget.order_of(preferred, 'humblefax') == 'preferred'
+    assert plan_budget.order_of(preferred, 'sip') == 'automatic'
+    assert estimate('preferred').endswith(f'{HUMBLEFAX_PAST}, but this plan is your preferred route for this number, '
+                                          'so Faxbot still sends by it first.')
+    # A sending rule's order stays as set, plan first or not, and the preferred route no longer decides.
+    for accounts in (('humblefax', 'sip'), ('sip', 'humblefax')):
+        ruled = _plan_to(routes, settings, LAB, pinned=_ordered_rule(LAB, accounts))
+        assert [choice.route.key for choice in ruled.choices] == list(accounts)
+        assert ruled.choices[0].reason == 'rule'
+        assert plan_budget.order_of(ruled, 'humblefax') == 'rule'
+    assert estimate('rule').endswith(f'{HUMBLEFAX_PAST}, but your sending rule sets the order of routes for this fax, '
+                                     'so the budget does not change which route goes first.')
+
+
+def test_an_estimate_made_without_the_faxs_order_never_promises_other_routes_first(plans):
+    """The dry run by page count gathers each route's facts alone, with no order. With HumbleFax the number's
+    preferred route, the planner keeps it first past its budget, so its estimate must not promise the trunk first;
+    it says what Faxbot does by itself and what a preferred route or a sending rule changes."""
+    routes, settings = _past_budget(plans)
+    routes.update_destination(LAB, preferred_route='humblefax')
+    assert [choice.route.key for choice in _plan_to(routes, settings, LAB).choices] == ['humblefax', 'sip']
+    facts = facts_for('humblefax', LAB, now=OCTOBER, engine=routes.engine, values=settings)
+    basis = predict_from(facts, Shape(1, None, 'standard', 'normal')).basis
+    assert basis.endswith(f'{HUMBLEFAX_PAST}, so Faxbot sends by your other routes first when one of them can take '
+                          'the fax, unless this plan is your preferred route for this number or a sending rule sets '
+                          'the order.')
 
 
 def test_uncertain_sends_and_received_faxes_count_and_failed_ones_do_not(plans):

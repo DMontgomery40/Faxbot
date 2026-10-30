@@ -61,7 +61,7 @@ $ faxbot send [OPTIONS] {to} {file}
 * `--workflow KEY`: The workflow this fax is part of, such as referrals.
 * `--label <str>`: A label for this fax, such as legal (repeat it).
 * `--by TIME`: The time the fax must be sent by, such as 17:00 or &#x27;2026-10-08 17:00&#x27;, in your installation&#x27;s time zone. Faxbot never holds the fax past it for the recipient&#x27;s hours or a busy hour.
-* `--recipient NAME`: The provider or person the fax is for. Before a first fax to a number, Faxbot warns when the NPI registry lists that number for someone else; it still sends.
+* `--recipient NAME`: The provider or person the fax is for. Faxbot shows it with this fax wherever it lists the fax. Before a first fax to a number, Faxbot warns when the NPI registry lists that number for someone else; it still sends.
 * `--patient-record-number NUMBER`: Only for a recipient that takes documents into its health records (FHIR): the patient&#x27;s medical record number there. Faxbot keeps it with the fax&#x27;s document and never prints it.
 * `--patient-record-system SYSTEM`: The system that medical record number belongs to, such as urn:oid:2.16.840.1.113883.19.5. Leave it out to use the FHIR client&#x27;s own.
 * `--patient-family-name NAME`: The patient&#x27;s family name, for a recipient that confirms the patient.

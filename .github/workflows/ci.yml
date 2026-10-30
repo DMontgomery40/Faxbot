@@ -1,13 +1,21 @@
 name: CI
 
+# The gate for every pull request and every push to main: the console's tests, type check and build,
+# the fast backend set, and the MCP servers and SDKs. It is meant to finish in about ten minutes.
+# The full backend suite, its PostgreSQL variants and the Docker loopback proofs run in
+# full-suite.yml on release tags and by hand. A change to Markdown or docs/ alone skips this gate;
+# the documentation build (mkdocs-deploy.yml) still checks it.
+#
 # Enterprise checks use synthetic data, mocks and local services only.
 # Never require live enterprise E2E, customer credentials or customer access here.
 # Missing external validation is not a merge/release gate; see CONTRIBUTING.md.
 on:
   push:
     branches: [ main, master ]
+    paths-ignore: [ '**.md', 'docs/**' ]
   pull_request:
     branches: [ "**" ]
+    paths-ignore: [ '**.md', 'docs/**' ]
 
 # A newer push to the same branch or pull request replaces the run still in progress.
 concurrency:
@@ -15,32 +23,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-api-shard:
+  # The backend tests not marked heavy (api/tests/conftest.py), on SQLite.
+  test-api:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: faxbot_test
-          POSTGRES_PASSWORD: faxbot_ci_synthetic
-          POSTGRES_DB: faxbot_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U faxbot_test -d faxbot_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            api/requirements.txt
+            python_mcp/requirements.txt
       - name: Set up Node for console/CLI parity checks
         uses: actions/setup-node@v4
         with:
@@ -52,7 +48,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ghostscript
+          sudo apt-get install -y --no-install-recommends ghostscript
       - name: Install Python deps
         working-directory: api
         run: |
@@ -61,36 +57,25 @@ jobs:
           # The API suite drives the Python SDK end to end, so install it with its dependencies.
           pip install -e ../sdks/python
           python -m pip check
-      - name: Run tests
+      - name: Run the fast backend tests
         env:
           FAX_DISABLED: 'true'
           FAX_DATA_DIR: './faxdata'
           DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
-          FAXBOT_SCHEMA_TEST_POSTGRES_URL: 'postgresql+psycopg2://faxbot_test:faxbot_ci_synthetic@127.0.0.1:5432/faxbot_test'
         working-directory: api
         run: |
           mkdir -p faxdata
-          python -m pytest -q -p ci_shard --faxbot-test-shard ${{ matrix.shard }}/8 --maxfail=1 --junitxml=backend-results.xml
+          python -m pytest -q -m 'not heavy' --durations=25 --junitxml=backend-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: backend-results-${{ matrix.shard }}
+          name: backend-results
           path: api/backend-results.xml
           if-no-files-found: ignore
 
-  # Preserve one required check: every isolated group must finish successfully.
-  test-api:
-    needs: test-api-shard
-    if: always()
+  console-tests:
     runs-on: ubuntu-latest
-    steps:
-      - name: Require every backend shard to pass
-        env:
-          SHARD_RESULT: ${{ needs.test-api-shard.result }}
-        run: test "$SHARD_RESULT" = success
-
-  build-admin-ui:
-    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -100,18 +85,38 @@ jobs:
           cache-dependency-path: api/admin_ui/package-lock.json
       - name: Install Admin UI dependencies
         working-directory: api/admin_ui
-        run: npm ci
+        run: npm ci --no-audit --no-fund
+      # The 20-second test timeout in vite.config.ts suits a developer machine. A hosted runner
+      # running every file in parallel takes two to three times as long per test.
       - name: Admin UI tests
         working-directory: api/admin_ui
-        run: npx vitest run
-      - name: Typecheck and build Admin UI
+        run: npx vitest run --testTimeout=60000
+
+  console-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: api/admin_ui/package-lock.json
+      - name: Install Admin UI dependencies
+        working-directory: api/admin_ui
+        run: npm ci --no-audit --no-fund
+      - name: Type check and build Admin UI
         working-directory: api/admin_ui
         run: npm run build
 
-  check-node-mcp:
+  mcp-and-sdks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
           node-version: '24.21.0'
@@ -121,50 +126,17 @@ jobs:
         run: npm ci --prefix node_mcp --no-audit --no-fund
       - name: Check Node MCP sources parse and import
         run: npm --prefix node_mcp run check
-
-  check-python-mcp:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install Python MCP dependencies
+      - name: Test Node MCP servers
+        run: npm --prefix node_mcp test
+      - name: Test Python MCP servers
         run: |
           python -m pip install --upgrade pip
           pip install -r python_mcp/requirements.txt pytest==8.3.2 pytest-asyncio==0.23.8 cryptography==50.0.2
           python -m pip check
-      - name: Test Python MCP servers
-        run: python -m pytest -q python_mcp/tests
-
-  test-node-mcp:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.21.0'
-          cache: npm
-          cache-dependency-path: node_mcp/package-lock.json
-      - name: Install Node MCP dependencies
-        run: npm ci --prefix node_mcp --no-audit --no-fund
-      - name: Test Node MCP servers
-        run: npm --prefix node_mcp test
-
-  check-sdks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.21.0'
+          python -m pytest -q python_mcp/tests
       - name: Test Python SDK
         run: |
-          python -m pip install --upgrade pip
-          pip install ./sdks/python pytest==8.3.2
+          pip install ./sdks/python
           python -m pytest -q sdks/python/tests
       - name: Test Node SDK
         run: |

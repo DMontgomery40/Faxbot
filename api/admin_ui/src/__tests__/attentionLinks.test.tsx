@@ -97,6 +97,31 @@ describe('Sent keeps its filter in the address', () => {
     await signInAt('#/faxes/sent?show=held');
     expect(await screen.findByText('Your rules are not holding any faxes.')).toBeTruthy();
   });
+
+  // The server lists for this status exactly the faxes the count counts (outbound_summary.needs_settling).
+  it('opens Needs review from the count of sent faxes with an uncertain result, asking for that status', async () => {
+    const asked: string[] = [];
+    server.use(
+      http.get('/admin/health-status', () => HttpResponse.json({ timestamp: '2026-10-30T12:00:00Z', backend: 'phaxio',
+        backend_healthy: true, jobs: { queued: 0, in_progress: 0, recent_failures: 0, reconciliation_required: 2 },
+        inbound_enabled: true, api_keys_configured: true, require_auth: true })),
+      http.get('/admin/fax-jobs', ({ request }) => {
+        const status = new URL(request.url).searchParams.get('status') ?? '';
+        asked.push(status);
+        return HttpResponse.json({ total: status === 'reconciliation_required' ? 2 : 0, jobs: [] });
+      }));
+    // The Overview is for people who read Faxbot's status.
+    const admin = backend.state.principals.get('p_admin')!;
+    admin.permissions = [...new Set([...admin.permissions, 'diagnostics:read'])];
+    await signInAt('#/overview');
+    const item = await screen.findByTestId('attention-uncertain', {}, { timeout: 3000 });
+    expect(item.textContent).toContain('Sent faxes with an uncertain result');
+    fireEvent.click(item);
+    await waitFor(() => expect(window.location.hash).toBe('#/faxes/sent?status=reconciliation_required'));
+    await waitFor(() => expect(statusShown()).toBe('Needs review'));
+    expect(asked).toContain('reconciliation_required');
+    expect(await screen.findByText('2 faxes')).toBeTruthy();
+  });
 });
 
 // The views Expected was asked for, and an empty report for its What is missing tab.
