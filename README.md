@@ -85,6 +85,8 @@ Health checks are available at `/health` and `/health/ready`. `/health/ready` an
 
 Credentials in `.env` (provider keys, passwords and secrets) are read at every start and are the values in force; the console shows them as **Set in .env** and they are changed there, followed by `docker compose up -d` (a plain `docker compose restart` keeps the old values). `API_KEY` (the installation key) is read only at the first start, and other settings are managed in the console after that. Follow any requested restart (Settings offers **Restart now**) and confirm the active settings before transmitting. [Held test jobs](docs/setup/test-mode.md) remain held when sending is enabled later.
 
+For a SIP trunk, the registration shown in the console and command line comes from Asterisk. Telnyx's API can report a different state and is not used to decide whether the trunk is registered.
+
 ## AI analysis
 
 Open **Administration → AI analysis** to choose OpenAI, OpenRouter, or another OpenAI-compatible API. Enter the API base address, model identifier and API key, save them, and test the connection. The owner can then enable analysis and choose a refresh interval; zero means manual refresh only. Keys are encrypted with the installation's existing secret storage and are never returned in full to the console or command line.
@@ -141,6 +143,8 @@ Reference pages under `docs/generated/` are generated from code. The README/road
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 
 ### Implemented
+
+- [x] SIP registration status uses Asterisk evidence independently of Telnyx connection metadata. Offline regression tests cover contradictory Telnyx API values (issue #72).
 
 - [x] Destination-aware prices agree across recipient recommendations, plan allowances and attempt estimates. Unknown international prices stay unknown, separate destination tariffs do not consume domestic allowances, and extra provider accounts retain their own applicable rate cards. Verified with synthetic routing, HTTP and accounting checks; this correction does not claim a joint optimizer over every document, account, batch and sending time.
 
