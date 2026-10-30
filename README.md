@@ -87,6 +87,8 @@ Credentials in `.env` (provider keys, passwords and secrets) are read at every s
 
 For a SIP trunk, the registration shown in the console and command line comes from Asterisk. Telnyx's API can report a different state and is not used to decide whether the trunk is registered.
 
+Pending settings that would disconnect the fax engine while faxes remain unresolved wait without taking the installation offline. Faxbot starts with the active settings and names a fax that must be settled. In the settings console, select **Withdraw pending changes** to discard all waiting edits, or run `faxbot admin settings withdraw`. Withdrawal keeps the active settings and revision history and requires the permissions for the pending changes.
+
 ## AI analysis
 
 Open **Administration → AI analysis** to choose OpenAI, OpenRouter, or another OpenAI-compatible API. Enter the API base address, model identifier and API key, save them, and test the connection. The owner can then enable analysis and choose a refresh interval; zero means manual refresh only. Keys are encrypted with the installation's existing secret storage and are never returned in full to the console or command line.
@@ -138,17 +140,15 @@ Contributions should keep the console usable, preserve provider capability check
 
 Reference pages under `docs/generated/` are generated from code. The README/roadmap, agent instructions and [planning sources](planning/README.md) are maintained separately. AI prose proposals are restricted to permitted documentation pages, including when applied locally.
 
-Pending settings that would disconnect the fax engine while faxes remain unresolved wait without taking the installation offline. Faxbot starts with the active settings and names a fax that must be settled. In the settings console, select **Withdraw pending changes** to discard all waiting edits, or run `faxbot admin settings withdraw`. Withdrawal keeps the active settings and revision history and requires the permissions for the pending changes.
-
 ## Roadmap
-
-- [x] Blocked fax-engine settings retain the active configuration at startup, report the unresolved fax, and support audited withdrawal through the console, CLI and API.
 
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 
 ### Implemented
 
 - [x] SIP registration status uses Asterisk evidence independently of Telnyx connection metadata. Offline regression tests cover contradictory Telnyx API values (issue #72).
+
+- [x] Blocked fax-engine settings retain the active configuration at startup, report the unresolved fax, and support audited withdrawal through the console, CLI and API.
 
 - [x] Destination-aware prices agree across recipient recommendations, plan allowances and attempt estimates. Unknown international prices stay unknown, separate destination tariffs do not consume domestic allowances, and extra provider accounts retain their own applicable rate cards. Verified with synthetic routing, HTTP and accounting checks; this correction does not claim a joint optimizer over every document, account, batch and sending time.
 
