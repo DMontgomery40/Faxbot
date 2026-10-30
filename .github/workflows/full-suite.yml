@@ -1,0 +1,137 @@
+name: Full test suite
+
+# Everything the pull-request gate (ci.yml) leaves out: the whole backend collection in eight
+# isolated groups with their PostgreSQL variants, and the Docker loopback proofs. It takes about
+# eight runner-hours, so it runs only on release tags and by hand (Actions → Full test suite →
+# Run workflow), never for a pull request or a push to a branch.
+#
+# Enterprise checks use synthetic data, mocks and local services only.
+# Never require live enterprise E2E, customer credentials or customer access here.
+# Missing external validation is not a merge/release gate; see CONTRIBUTING.md.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: full-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: faxbot_test
+          POSTGRES_PASSWORD: faxbot_ci_synthetic
+          POSTGRES_DB: faxbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faxbot_test -d faxbot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            api/requirements.txt
+            python_mcp/requirements.txt
+      - name: Set up Node for console/CLI parity checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: api/admin_ui/package-lock.json
+      - name: Install console dependencies for route analysis
+        run: npm ci --prefix api/admin_ui --no-audit --no-fund
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript
+      - name: Install Python deps
+        working-directory: api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r ../python_mcp/requirements.txt
+          # The API suite drives the Python SDK end to end, so install it with its dependencies.
+          pip install -e ../sdks/python
+          python -m pip check
+      - name: Run tests
+        env:
+          FAX_DISABLED: 'true'
+          FAX_DATA_DIR: './faxdata'
+          DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
+          FAXBOT_SCHEMA_TEST_POSTGRES_URL: 'postgresql+psycopg2://faxbot_test:faxbot_ci_synthetic@127.0.0.1:5432/faxbot_test'
+        working-directory: api
+        run: |
+          mkdir -p faxdata
+          python -m pytest -q -p ci_shard --faxbot-test-shard ${{ matrix.shard }}/8 --maxfail=1 --durations=50 --junitxml=backend-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-results-${{ matrix.shard }}
+          path: api/backend-results.xml
+          if-no-files-found: ignore
+
+  # One check for the whole collection: every isolated group must finish successfully.
+  backend:
+    needs: backend-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every backend shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.backend-shard.result }}
+        run: test "$SHARD_RESULT" = success
+
+  # The T.38, phone system, fax server, copier, station check and SSL Fax loopback proofs build the
+  # Faxbot Asterisk and engine images and run them on the runner's own Docker.
+  native-proofs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            api/requirements.txt
+            python_mcp/requirements.txt
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript
+      - name: Install Python deps
+        working-directory: api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r ../python_mcp/requirements.txt
+          pip install -e ../sdks/python
+          python -m pip check
+      - name: Run the Docker loopback proofs
+        env:
+          FAXBOT_NATIVE_PROOF: '1'
+          FAXBOT_SSLFAX_PROOF: '1'
+          FAXBOT_DOCKER_CONTEXT: default
+          FAX_DISABLED: 'true'
+          FAX_DATA_DIR: './faxdata'
+          DATABASE_URL: 'sqlite:///./test_faxbot_ci.db'
+        working-directory: api
+        run: |
+          mkdir -p faxdata
+          python -m pytest -q -s -m native --durations=50

@@ -59,20 +59,19 @@ For authorized contributions:
 
 ## Testing
 
-These commands run the same checks as CI (`.github/workflows/ci.yml`). You need [uv](https://docs.astral.sh/uv/), Node 24, and Ghostscript (CI installs `ghostscript` with apt).
+These commands run the same checks as CI (see [What CI runs](#what-ci-runs)). You need [uv](https://docs.astral.sh/uv/), Node 24, and Ghostscript (CI installs `ghostscript` with apt).
 
 | Command | What it does |
 | --- | --- |
 | `make venv` | Creates `.venv` with Python 3.11 and installs `api/requirements.txt` and `python_mcp/requirements.txt` |
 | `make test-local PYTEST_ARGS='tests/test_x.py'` | Runs the named backend tests from `api/` with the same command and environment as the `test-api` job |
-| `make test-local FULL_GATE=1` (or `make test FULL_GATE=1`) | Runs the whole backend suite, as CI does (about an hour) |
+| `make test-local FULL_GATE=1` (or `make test FULL_GATE=1`) | Runs the whole backend suite, as the full suite workflow does (several hours in one process) |
+| `make test-local PYTEST_ARGS="-m 'not heavy'"` | Runs the fast backend set, as the `test-api` job does (about four minutes) |
 | `make ui-build` | Runs `npm ci` and `npm run build` (typecheck and build) in `api/admin_ui` |
-| `make ui-check` | Runs the console tests (`VITEST_ARGS` narrows them to named files), the type check and the build, as the `build-admin-ui` job does |
+| `make ui-check` | Runs the console tests (`VITEST_ARGS` narrows them to named files), the type check and the build, as the `console-tests` and `console-build` jobs do |
 | `npm ci --prefix node_mcp && npm --prefix node_mcp run check` | Checks that every Node MCP module parses and imports |
 
 Before running the full backend suite or `tests/test_console_cli_parity.py`, run `npm ci --prefix api/admin_ui` once. The parity check uses the installed TypeScript compiler to resolve the console's actual request methods and paths. It needs Node 24 and the console dependencies even when you are testing only the backend. The API CI job installs them before its tests.
-
-CI divides the complete backend collection into eight isolated jobs. Each test file stays together, every collected case belongs to exactly one job, and the `test-api` check passes only when all eight pass. Each job has its own PostgreSQL service and installation files. The local full-suite command remains sequential. To reproduce a CI group from `api/`, use the same test environment with `python -m pytest -q -p ci_shard --faxbot-test-shard 1/8` (replace `1` with the group number).
 
 `make test-local` sets the CI environment:
 
@@ -87,6 +86,21 @@ Options:
 - `VENV` uses a virtualenv other than `.venv`, for example `make test-local VENV=/path/to/Faxbot/.venv` from a git worktree.
 
 If your change affects a specific fax backend or MCP transport, also test it against that backend or transport.
+
+### What CI runs
+
+**CI** (`.github/workflows/ci.yml`) is the gate for every pull request and every push to `main`. It is meant to finish in about ten minutes, and its jobs run in parallel:
+
+- `test-api` runs the backend tests that are not marked `heavy`, on SQLite.
+- `console-tests` runs the console tests.
+- `console-build` runs the console type check and build.
+- `mcp-and-sdks` checks and tests the MCP servers and the SDKs.
+
+A change to Markdown files or `docs/` alone skips this workflow; the documentation build still checks it. The repository has no linter or Python type checker, so the gate's static checks are the console's TypeScript check and the Node MCP parse and import check.
+
+**Full test suite** (`.github/workflows/full-suite.yml`) runs everything the gate leaves out. It starts when you push a release tag (`v*`), and you can run it by hand from **Actions → Full test suite → Run workflow**; it never runs for a pull request or a push to a branch. It divides the complete backend collection into eight isolated jobs, each with its own PostgreSQL service and installation files. Each test file stays together, every collected case belongs to exactly one job, and the `backend` check passes only when all eight pass. Its `native-proofs` job runs the Docker loopback proofs. The local full-suite command remains sequential. To reproduce a group from `api/`, use the same test environment with `python -m pytest -q -p ci_shard --faxbot-test-shard 1/8` (replace `1` with the group number).
+
+The `heavy` marker decides what the gate leaves to the full suite. It covers every test in a file listed in `HEAVY_TEST_FILES` in `api/tests/conftest.py`, every PostgreSQL variant and every Docker proof (`native`). A new test file runs in the gate until it is listed. When the gate's slowest-tests report shows that a file's tests take more than about half a second each, add the file to that list in the same change; don't delete or skip the tests.
 
 ### Documentation proposals (optional)
 
