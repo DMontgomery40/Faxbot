@@ -15,6 +15,7 @@ import pytest
 
 from api.app import schema
 from api.tests.test_fax_negotiation import add_call
+from api.tests.test_joint_optimizer import joint  # noqa: F401 - fixture
 from api.tests.test_routing_http import ADMIN, client  # noqa: F401 - fixture
 from api.tests.test_schema import database  # noqa: F401 - fixture
 from app.routing import predict as predictor, predict_facts
@@ -459,6 +460,39 @@ def test_an_estimate_that_cannot_know_the_order_never_promises_other_routes_firs
     assert plain.basis.endswith(PAST[None])
     with pytest.raises(ValueError):
         _humblefax(PlanUse(pages=245, faxes=40, page_budget=200), order='cheapest')
+
+
+def test_the_document_preview_says_a_rules_order_keeps_a_plan_past_its_budget(joint, tmp_path,  # noqa: F811
+                                                                              monkeypatch):
+    """Review of D23, end to end: POST /routing/predict's core (``measured_plan``) gives each account's estimate its
+    place in this fax's order (``plan_budget.order_of``), on the worker's own measuring, rules and planner. The page
+    trunk is a flat plan past its normal-use budget, and a sending rule tries it first: the estimate says the rule's
+    order stands, never that other routes go first. (The preferred route and Faxbot's own order are checked on the
+    planner in test_plan_budget.py.)"""
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from api.app import conversion
+    from api.app.routing.costs import RateCard as Card
+    from api.app.routing import predict_facts
+    from api.app.routing.predict import PlanUse
+    from api.app.routing.predict_http import measured_plan
+    from api.tests.test_joint_optimizer import MINUTE, NOW, NUMBER, counterexample_pages
+    from api.tests.test_rules_delivery import ANNE, publish, rule
+    joint.routes.replace_cards([MINUTE, Card(None, 'sip-pages', 'outbound', 'Synthetic page plan', 'USD', 0, 0, 0, 60,
+                                             60, None, NOW, 10_000_000)])
+    used = PlanUse(pages=245, faxes=40, page_budget=200, fax_budget=50)
+    monkeypatch.setattr(predict_facts, 'plan_use',
+                        lambda engine, key, *, now, values=None: used if key == 'sip-pages' else None)
+    publish(joint, {'format': 1, 'routes': [rule('r-order', {'try_in_order': ['sip-pages', 'sip']})]})
+    claim = SimpleNamespace(job_id=uuid4().hex, attempt_id=uuid4().hex, members=())
+    tiff, pdf = tmp_path / f'{claim.job_id}.tiff', tmp_path / f'{claim.job_id}.pdf'
+    conversion.write_fax_tiff(counterexample_pages(), str(tiff))
+    conversion.tiff_to_pdf(str(tiff), str(pdf))
+    views, plan = measured_plan(joint.engine, joint.configuration.read().active, NUMBER, claim, pdf, tiff, 2, ANNE)
+    assert plan['selected']['route'] == 'sip-pages' and [view['route'] for view in views] == ['sip-pages', 'sip']
+    assert views[0]['basis'].endswith("You've used 245 of the 200 pages and 40 of the 50 faxes you set as this plan's "
+                                      'normal-use budget this month, but your sending rule sets the order of routes '
+                                      'for this fax, so the budget does not change which route goes first.')
 
 
 def test_a_flat_plan_within_its_normal_use_budget_says_only_what_is_used():
