@@ -112,7 +112,7 @@ describe('eFax in Settings', () => {
       data.efax = { app_id: '***', api_key: '***', user_id: '***', caller_id: '', csid: '', poll_seconds: 60,
         delete_after_download: false, configured: true };
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const section = await screen.findByTestId('efax-settings');
     expect(await screen.findByText('Your eFax Enterprise account')).toBeTruthy();
     expect(within(section).getByRole('combobox', { name: 'Check eFax for received faxes' }).textContent).toBe('Every minute');
@@ -125,7 +125,7 @@ describe('eFax in Settings', () => {
 
   it('is not shown when eFax is neither sending nor receiving', async () => {
     backend(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     await screen.findByText('How people sign in and how this server is reached.');
     expect(screen.queryByTestId('efax-settings')).toBeNull();
   });
@@ -138,7 +138,7 @@ describe('eFax in Settings', () => {
     server.use(http.get('/admin/inbound/efax', () => HttpResponse.json({
       receiving: true, checked_at: '2026-10-04T15:30:00', problem: null, pending_deletions: 1, stopped_deletions: 0,
       notes: ['1 received fax is still stored at eFax; Faxbot will try again to delete it.'] })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     expect((await screen.findByTestId('efax-note')).textContent)
       .toBe('1 received fax is still stored at eFax; Faxbot will try again to delete it.');
     expect(screen.getByTestId('efax-checked').textContent).toMatch(/^Faxbot last checked eFax at .+\.$/);

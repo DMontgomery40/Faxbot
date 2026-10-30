@@ -239,12 +239,12 @@ describe('Installation key and older settings file', () => {
       value.legacy_config = { path: '/app/config/faxbot.config.json' };
     });
     server.use(http.get('/admin/settings', () => HttpResponse.json(data)));
-    const { unmount } = render(<Settings client={client()} sections={['installation-key', 'phones']} />);
+    const { unmount } = render(<Settings canWrite client={client()} sections={['installation-key', 'phones']} />);
     expect(await screen.findByText('Installation key', { selector: 'h6, h2, h3, span, p, div' })).toBeTruthy();
     expect(screen.getByDisplayValue('Set in .env')).toBeTruthy();
     expect(document.body.textContent).not.toContain('***');
     unmount();
-    render(<Settings client={client()} sections={['developer']} />);
+    render(<Settings canWrite client={client()} sections={['developer']} />);
     expect(await screen.findByDisplayValue('/app/config/faxbot.config.json')).toBeTruthy();
     expect(screen.getByText('Set when Faxbot started. (FAXBOT_CONFIG_PATH)')).toBeTruthy();
   });

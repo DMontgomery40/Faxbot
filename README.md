@@ -24,6 +24,8 @@ Faxbot is a proprietary, self-hosted fax platform with a web Admin Console, a RE
 
 This README describes the current source checkout. Published packages and deployed installations may have fewer features; the [roadmap](#roadmap) distinguishes implemented capabilities from planned work and experiments.
 
+Generic console settings use the account's settings-write permission for editing and saving, including saving a recovery copy. Accounts without that permission see a read-only explanation. Reload and the redacted export remain available with settings-read permission. Rendered regression tests for this correction still need to run; see the [A6 follow-up](planning/issue-58-follow-up.md).
+
 ## License
 
 New Faxbot-owned work requires prior written permission from David Montgomery for use, modification, distribution, resale, or hosting. Contact [dmontg@gmail.com](mailto:dmontg@gmail.com) for permission. The setup instructions below are for authorized users. See [LICENSE](LICENSE) for the terms.
@@ -323,6 +325,7 @@ Checked items are implemented in the current source checkout. Unchecked items ar
 
 ### Next
 
+- [ ] Complete A6's section save/cancel/apply model: generic settings now check write permission, but rendered verification, navigation protection, saved-section markers, delivery impact reviews and one canonical MCP editor remain. See the [remaining work and validation limits](planning/issue-58-follow-up.md).
 - [ ] Fax servers through Faxbot, live: the SR140 stand-in sending to the partner install as its gateway (an accepted fax delivered over Telnyx, the refusals for a wrong password, an emergency number, a premium number, a country not allowed and a full hourly limit, and a failure notice), then a real RightFax server with an SR140 (FDTool on a Windows VM with its trial licence), checking its T.38 version and whether its Primary Gateway mode answers the digest challenge.
 - [ ] An analog line and keys after answer, live: one gateway on one flat-rate line with a local and a toll call checked against the next carrier bill, and one real phone menu reached with keys after answer. A V.34 (33.6 kbit/s) fax modem is reachable only on such a line: a hardware Class 1.0 modem under HylaFAX+ (`Class1EnableV34Cmd`) in place of the gateway. Faxbot's engines stop at V.17, and that hookup is a note, not something Faxbot sets up.
 - [ ] A live HISP: one Direct message each way with a real HISP account, with its certificate found in DNS or LDAP, the trust bundle checked, and the "processed" and "dispatched" confirmations received; and whether that HISP wants Faxbot or itself to sign and encrypt.

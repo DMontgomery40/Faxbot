@@ -109,7 +109,7 @@ describe('Sender identity', () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toMatchObject({ fax_header: 'Valley Clinic' });
     unmount();
-    render(<Settings client={keyClient()} sections={['trunk']} title="Carrier trunk" />);
+    render(<Settings canWrite client={keyClient()} sections={['trunk']} title="Carrier trunk" />);
     expect(await screen.findByText('Fax engine connection (advanced)')).toBeTruthy();
     expect(screen.queryByText('Station ID')).toBeNull();
   });

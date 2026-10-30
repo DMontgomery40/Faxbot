@@ -120,7 +120,7 @@ describe('The trunk page', () => {
         registration: 'registered', reachability: 'reachable', registration_text: '', reachability_text: '', message: '' })),
     );
     setProviderNames({ sip: 'Telnyx' });
-    render(<Settings client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} sections={['trunk']} title={providerLabel('sip')} />);
+    render(<Settings canWrite client={new AdminAPIClient({ kind: 'key', key: 'synthetic-key' })} sections={['trunk']} title={providerLabel('sip')} />);
     expect(await screen.findByRole('heading', { name: 'Telnyx' })).toBeTruthy();
     expect(await screen.findByTestId('sip-preset-chosen')).toBeTruthy();
     expect(screen.getByText('The caller ID must be a number on your Telnyx account.')).toBeTruthy();
@@ -183,7 +183,7 @@ describe('Provider pages after 4b', () => {
       value.fs.problem = 'Enter the caller ID number your carrier gave you for FreeSWITCH.';
     });
     server.use(http.get('/admin/settings', () => HttpResponse.json(data)));
-    render(<Settings client={keyClient()} />);
+    render(<Settings canWrite client={keyClient()} />);
     expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
     expect(screen.queryByTestId('freeswitch-problem')).toBeNull();
     expect(screen.queryByText(/FreeSWITCH/)).toBeNull();
@@ -197,7 +197,7 @@ describe('Provider pages after 4b', () => {
 
   it('titles each provider page in normal case', async () => {
     server.use(http.get('/admin/settings', () => HttpResponse.json(settingsFixture())));
-    render(<Settings client={keyClient()} />);
+    render(<Settings canWrite client={keyClient()} />);
     expect(await screen.findByRole('heading', { name: 'Phaxio' })).toBeTruthy();
     expect(screen.queryByText(/PHAXIO|Phaxio Configuration/)).toBeNull();
   });

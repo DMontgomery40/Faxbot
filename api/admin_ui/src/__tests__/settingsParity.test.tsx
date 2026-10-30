@@ -79,7 +79,7 @@ const receivingSection = async () => {
 describe('Settings delivery routes', () => {
   it('shows the saved routes in order and does not count loading as a change', async () => {
     settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = within(await section('Delivery routes')).getByRole('list', { name: 'Extra outbound routes' });
     expect(within(routes).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
       expect.stringContaining('1. Carrier trunk'), expect.stringContaining('2. HumbleFax'),
@@ -89,7 +89,7 @@ describe('Settings delivery routes', () => {
 
   it('reorders, adds and removes routes and saves the list with the minimum delivery rate', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     fireEvent.click(within(routes).getByRole('button', { name: 'Move HumbleFax up' }));
     fireEvent.click(within(routes).getByRole('button', { name: 'Remove Carrier trunk' }));
@@ -105,7 +105,7 @@ describe('Settings delivery routes', () => {
 
   it('saves the Telnyx balance warning level in the words the command line uses', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     // `faxbot delivery providers trunk balance --warn-below` (routing/telnyx_balance.py WARNING_LABEL, WARNING_HELP).
     const field = within(routes).getByLabelText('Warn when your Telnyx balance is below');
@@ -119,7 +119,7 @@ describe('Settings delivery routes', () => {
 
   it('delivers faxes to your own numbers inside Faxbot by default and saves turning it off', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     const toggle = within(routes).getByRole('checkbox', { name: 'Deliver faxes to your own numbers inside Faxbot' }) as HTMLInputElement;
     expect(toggle.checked).toBe(true);
@@ -133,7 +133,7 @@ describe('Settings delivery routes', () => {
     const writes = settingsHandlers(settingsFixture((data) => {
       data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     const choice = within(routes).getByLabelText('Fax-friendly shading on documents you send') as HTMLSelectElement;
     expect(choice.value).toBe('where_it_saves');
@@ -152,7 +152,7 @@ describe('Settings delivery routes', () => {
     const writes = settingsHandlers(settingsFixture((data) => {
       data.routing = { ...data.routing, fax_friendly_documents: 'where_it_saves', fax_friendly_whiten: false };
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
     expect(whiten.checked).toBe(false);
@@ -167,7 +167,7 @@ describe('Settings delivery routes', () => {
     settingsHandlers(settingsFixture((data) => {
       data.routing = { ...data.routing, fax_friendly_documents: 'never', fax_friendly_whiten: false };
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const routes = await section('Delivery routes');
     const whiten = within(routes).getByRole('checkbox', { name: 'Also make light areas white' }) as HTMLInputElement;
     expect(whiten.disabled).toBe(true);
@@ -178,7 +178,7 @@ describe('Settings delivery routes', () => {
 describe('Settings direct delivery', () => {
   it('saves the direct delivery identity and shows our card', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const direct = await section('Direct delivery');
     expect(within(direct).getByText(/Kept on this server in a private file in the fax data folder/)).toBeTruthy();
     fireEvent.click(within(direct).getByRole('button', { name: 'Show our card' }));
@@ -200,7 +200,7 @@ describe('Settings direct delivery', () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/direct/card', () => HttpResponse.json(
       { detail: 'Add your organization name for direct delivery to the installation settings first.' }, { status: 409 })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     fireEvent.click(within(await section('Direct delivery')).getByRole('button', { name: 'Show our card' }));
     expect(await screen.findByText('Add your organization name for direct delivery to the installation settings first.')).toBeTruthy();
   });
@@ -214,7 +214,7 @@ describe('A new installation with no fax provider', () => {
 
   it('says so on Settings, with the provider setup link', async () => {
     settingsHandlers(noProvider());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const notice = await screen.findByTestId('no-provider');
     expect(notice.textContent).toBe('No fax provider set up yet. Provider setup');
     expect(within(notice).getByRole('link', { name: 'Provider setup' }).getAttribute('href')).toMatch(/\/setup\/$/);
@@ -257,7 +257,7 @@ describe('Provider names', () => {
       data.inbound.enabled = true;
     }));
     server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const backend = await section('Fax providers');
     expect(within(backend).getByText('In use: Sending: Carrier trunk · Receiving: Phaxio')).toBeTruthy();
     expect(within(backend).getByRole('combobox', { name: 'Sending' }).textContent).toBe('Carrier trunk');
@@ -268,7 +268,7 @@ describe('Provider names', () => {
   it('saves the same two choices as the Setup Wizard', async () => {
     const writes = settingsHandlers(settingsFixture());
     server.use(http.get('/admin/sip/presets', () => HttpResponse.json({ presets: [] })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const backend = await section('Fax providers');
     fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'HumbleFax' }));
@@ -281,7 +281,7 @@ describe('Provider names', () => {
 
   it('refuses receiving without a sending provider in one sentence', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const backend = await section('Fax providers');
     fireEvent.mouseDown(within(backend).getByRole('combobox', { name: 'Sending' }));
     fireEvent.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'No provider' }));
@@ -305,7 +305,7 @@ describe('Plain wording on provider and security settings', () => {
           outbound_override: '', inbound_override: '' };
         data.inbound.enabled = true;
       }));
-      const { container } = render(<Settings client={client()} />);
+      const { container } = render(<Settings canWrite client={client()} />);
       await screen.findByText('How people sign in and how this server is reached.');
       for (const input of Array.from(container.querySelectorAll('input, textarea'))) {
         expect(input.getAttribute('placeholder') ?? '').not.toMatch(ENV_NAME);
@@ -344,7 +344,7 @@ describe('Credentials set in .env', () => {
 
   it('shows them as set in .env on Settings, disabled and without a reveal button', async () => {
     settingsHandlers(fromEnvironment(['humblefax_access_key', 'intake_smtp_password']));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const fields = await screen.findAllByDisplayValue('Set in .env');
     expect(fields.length).toBeGreaterThanOrEqual(2);
     for (const field of fields) expect((field as HTMLInputElement).disabled).toBe(true);
@@ -374,14 +374,14 @@ describe('Settings outbound provider limits', () => {
       data.hybrid.outbound_backend = 'humblefax';
       data.hybrid.outbound_override = 'humblefax';
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     expect((await screen.findByTestId('humblefax-countries')).textContent)
       .toBe('HumbleFax sends only to US and Canadian numbers.');
   });
 
   it('says nothing about countries for other outbound providers', async () => {
     settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     await section('Fax providers');
     expect(screen.queryByTestId('humblefax-countries')).toBeNull();
   });
@@ -390,7 +390,7 @@ describe('Settings outbound provider limits', () => {
 describe('Settings intake defaults', () => {
   it('keeps the saved password unless it is replaced, and saves connector fields', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const intake = await section('Email delivery for the whole installation');
     expect(within(intake).getByRole('button', { name: 'Show Email password' })).toBeTruthy();
     expect(within(intake).getByText('Leave unchanged to keep the saved password.')).toBeTruthy();
@@ -402,7 +402,7 @@ describe('Settings intake defaults', () => {
 
   it('sends a replaced password', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const intake = await section('Email delivery for the whole installation');
     fireEvent.change(within(intake).getByLabelText('Email password'), { target: { value: 'new-mail-secret' } });
     apply();
@@ -414,7 +414,7 @@ describe('Settings intake defaults', () => {
 describe('Settings save status', () => {
   it('keeps edits and says someone else changed the settings on a conflict', async () => {
     settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'Configuration changed.' }, { status: 409 }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '70' } });
     apply();
     expect(await screen.findByText('Someone else changed these settings. Your edits are kept here; reload to see the current values.')).toBeTruthy();
@@ -422,7 +422,7 @@ describe('Settings save status', () => {
 
   it('says one plain sentence when a save fails on the server, never the raw error', async () => {
     settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '70' } });
     apply();
     expect(await screen.findByText('The save could not be confirmed. Reload to check whether your changes were saved.')).toBeTruthy();
@@ -431,7 +431,7 @@ describe('Settings save status', () => {
 
   it('checks the minimum delivery rate and email server port before saving', async () => {
     const writes = settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     fireEvent.change(within(await section('Delivery routes')).getByLabelText('Minimum delivery rate (%)'), { target: { value: '150' } });
     apply();
     expect(await screen.findByText('Enter a minimum delivery rate from 0 to 100.')).toBeTruthy();
@@ -444,7 +444,7 @@ describe('Settings save status', () => {
 
   it('says so in one sentence when the account may not change these settings', async () => {
     settingsHandlers(settingsFixture(), () => HttpResponse.json({ detail: 'This operation is not permitted.' }, { status: 403 }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     fireEvent.change(within(await section('Email delivery for the whole installation')).getByLabelText('Email server'), { target: { value: 'x.example.org' } });
     apply();
     expect(await screen.findByText('You do not have permission to change some of these settings. Your edits are kept here; reload before trying again.')).toBeTruthy();
@@ -454,7 +454,7 @@ describe('Settings save status', () => {
 describe('Settings authentication and receiving', () => {
   it('states that authentication is required and never offers to turn it off', async () => {
     settingsHandlers(settingsFixture());
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     expect(await screen.findByText('Every request needs a signed-in person or an API key; manage them in Keys and Users.')).toBeTruthy();
     expect(screen.queryByText('API Key Required')).toBeNull();
     expect(screen.queryByText(/Yes \(Required\)/)).toBeNull();
@@ -466,7 +466,7 @@ describe('Settings authentication and receiving', () => {
       data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'humblefax', outbound_override: '', inbound_override: '' };
       data.inbound.enabled = true;
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     expect(await screen.findByText('HumbleFax is your receiving provider, so Faxbot collects the faxes it receives.')).toBeTruthy();
     expect(screen.queryByText(/HumbleFax cannot receive faxes/)).toBeNull();
     const inbound = await receivingSection();
@@ -501,7 +501,7 @@ describe('Settings authentication and receiving', () => {
       data.hybrid = { outbound_backend: 'humblefax', inbound_backend: 'sip', outbound_override: '', inbound_override: 'sip' };
       data.inbound.enabled = true;
     }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     await section('Delivery routes');
     expect(screen.queryByText(/HumbleFax cannot receive faxes/)).toBeNull();
   });
@@ -556,7 +556,7 @@ describe('Installation country', () => {
 
   it('lists countries by name and saves the United Kingdom from Settings', async () => {
     const writes = settingsHandlers(settingsFixture((data) => { data.numbers = US_NUMBERS; }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const field = await countryField();
     await waitFor(() => expect((field as HTMLInputElement).value).toBe('United States'));
     expect(screen.getByText('Current: United States')).toBeTruthy();
@@ -574,7 +574,7 @@ describe('Installation country', () => {
 
   it('shows UK examples for a UK installation', async () => {
     settingsHandlers(settingsFixture((data) => { data.numbers = GB_NUMBERS; }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const field = await countryField();
     await waitFor(() => expect((field as HTMLInputElement).value).toBe('United Kingdom'));
     expect(screen.getByText('The number partners fax you at, for example 0121 234 5678 or +44 121 234 5678.')).toBeTruthy();
@@ -585,7 +585,7 @@ describe('Installation country', () => {
     const detail = 'Enter the full fax number with its area code, or with its country code starting with +.';
     settingsHandlers(settingsFixture((data) => { data.numbers = GB_NUMBERS; }),
       () => HttpResponse.json({ detail }, { status: 400 }));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     const direct = await section('Direct delivery');
     fireEvent.change(within(direct).getByLabelText('Our fax number'), { target: { value: '684953' } });
     apply();
@@ -691,7 +691,7 @@ describe('Settings email delivery', () => {
     Element.prototype.scrollIntoView = function (this: Element) { scrolled(this.id); } as typeof original;
     const focused = vi.fn();
     try {
-      render(<Settings client={client()} focus="email" onFocused={focused} />);
+      render(<Settings canWrite client={client()} focus="email" onFocused={focused} />);
       await waitFor(() => expect(focused).toHaveBeenCalled());
       expect(scrolled).toHaveBeenCalledWith('email-delivery');
     } finally {
@@ -713,7 +713,7 @@ describe('Settings email delivery', () => {
     Element.prototype.scrollIntoView = function (this: Element) { scrolled(this.id); } as typeof original;
     const focused = vi.fn();
     try {
-      render(<Settings client={client()} focus="trunk" onFocused={focused} />);
+      render(<Settings canWrite client={client()} focus="trunk" onFocused={focused} />);
       await waitFor(() => expect(focused).toHaveBeenCalled());
       expect(scrolled).toHaveBeenCalledWith('sip-trunk');
     } finally {
@@ -738,7 +738,7 @@ describe('Settings pending restart', () => {
       http.post('/admin/restart', () => { restarts += 1; return HttpResponse.json({ ok: true }); }),
       http.get('/health', () => (health.shift() ?? true) ? HttpResponse.json({ status: 'ok' }) : HttpResponse.error()),
     );
-    render(<Settings client={client()} canRestart />);
+    render(<Settings canWrite client={client()} canRestart />);
     const notice = await screen.findByTestId('restart-notice');
     expect(notice.textContent).toContain('Restart Faxbot to apply 2 pending changes.');
     fireEvent.click(within(notice).getByRole('button', { name: 'Restart now' }));
@@ -754,7 +754,7 @@ describe('Settings pending restart', () => {
   ])('says how to restart by hand when %s', async (_case, canRestart, allowRestart) => {
     settingsHandlers(pending());
     server.use(http.get('/admin/config', () => HttpResponse.json({ allow_restart: allowRestart, branding: {} })));
-    render(<Settings client={client()} canRestart={canRestart} />);
+    render(<Settings canWrite client={client()} canRestart={canRestart} />);
     const notice = await screen.findByTestId('restart-notice');
     await waitFor(() => expect(notice.textContent).toBe(
       'Restart Faxbot to apply 2 pending changes. Run docker compose restart api on the server.'));
@@ -768,14 +768,14 @@ describe('Settings when Faxbot cannot reach its fax engine', () => {
   it('says so in one sentence at the top', async () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: sentence }, { status: 503 })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     expect((await screen.findByTestId('engine-message')).textContent).toBe(sentence);
   });
 
   it('shows nothing for other readiness reasons', async () => {
     settingsHandlers(settingsFixture());
     server.use(http.get('/health/ready', () => HttpResponse.json({ status: 'not_ready', message: 'Something unexpected.' }, { status: 503 })));
-    render(<Settings client={client()} />);
+    render(<Settings canWrite client={client()} />);
     await screen.findByText('How people sign in and how this server is reached.');
     expect(screen.queryByTestId('engine-message')).toBeNull();
   });
@@ -872,7 +872,7 @@ describe('Settings placed on their own pages', () => {
       data.persisted = { enabled: false, path: '/faxdata/operator.env' };
       data.plugin_files = { providers_dir: '/app/config/providers' };
     }));
-    render(<Settings client={client()} sections={['developer']} />);
+    render(<Settings canWrite client={client()} sections={['developer']} />);
     expect(await screen.findByText('Documentation address')).toBeTruthy();
     expect(screen.getByDisplayValue('https://docs.faxbot.net/latest/')).toBeTruthy();
     for (const path of ['/faxdata/operator.env', '/app/config/providers']) {
@@ -883,7 +883,7 @@ describe('Settings placed on their own pages', () => {
 
   it('keeps the plugin switches on Provider plugins, not on In use', async () => {
     const writes = settingsHandlers(settingsFixture());
-    const { unmount } = render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
+    const { unmount } = render(<Settings canWrite client={client()} sections={['providers', 'inbound', 'routes']} />);
     await receivingSection();
     expect(screen.queryByText('Use provider plugins')).toBeNull();
     expect(screen.getByLabelText(/^Sending is (on|off)$/)).toBeTruthy();
@@ -911,7 +911,7 @@ describe('System, milestone 5', () => {
     settingsHandlers(settingsFixture((data) => {
       data.deployment = deployment({ FAXBOT_CONSOLE_ORIGINS: 'https://fax.clinic.example', ENABLE_LOCAL_ADMIN: 'true' });
     }));
-    render(<Settings client={client()} sections={['security']} title="Security" />);
+    render(<Settings canWrite client={client()} sections={['security']} title="Security" />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByDisplayValue('https://fax.clinic.example')).toBeTruthy();
     expect(within(rows).getByText('Console addresses allowed to sign in')).toBeTruthy();
@@ -930,7 +930,7 @@ describe('System, milestone 5', () => {
       data.deployment = deployment({ MCP_HTTP_PORT: '3001', MCP_OAUTH_SUBJECT_KEYS_FILE: 'hidden' },
         ['MCP_OAUTH_SUBJECT_KEYS_FILE']);
     }));
-    render(<Settings client={client()} sections={['mcp']} />);
+    render(<Settings canWrite client={client()} sections={['mcp']} />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByDisplayValue('3001')).toBeTruthy();
     expect(within(rows).getByText('Set when Faxbot started. (MCP_OAUTH_SUBJECT_KEYS_FILE)')).toBeTruthy();
@@ -944,10 +944,10 @@ describe('System, milestone 5', () => {
     settingsHandlers(settingsFixture((data) => {
       data.deployment = deployment({ TZ: 'America/Denver' });
     }));
-    const { unmount } = render(<Settings client={client()} sections={['diagnostics']} />);
+    const { unmount } = render(<Settings canWrite client={client()} sections={['diagnostics']} />);
     expect(within(await screen.findByTestId('deployment-rows')).getByDisplayValue('America/Denver')).toBeTruthy();
     unmount();
-    render(<Settings client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
+    render(<Settings canWrite client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
     const rows = await screen.findByTestId('deployment-rows');
     expect(within(rows).getByText('Where the installation key is kept')).toBeTruthy();
     // The recovery copy is kept one release; its button says what replaces it.
@@ -966,7 +966,7 @@ describe('System, milestone 5', () => {
     let reply = report('ok', 'Faxbot can reach the online storage that keeps received faxes.');
     let runs = 0;
     server.use(http.post('/admin/diagnostics/report', () => { runs += 1; return HttpResponse.json(reply); }));
-    render(<Settings client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
+    render(<Settings canWrite client={client()} sections={['storage', 'advanced', 'backup']} title="Storage & retention" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Check the bucket' }));
     expect(await screen.findByText('Faxbot can reach the online storage that keeps received faxes.')).toBeTruthy();
     // The report's own wording points at Diagnostics' switch "below"; this page says where it is.
@@ -979,7 +979,7 @@ describe('System, milestone 5', () => {
 
   it('words the receiving settings plainly', async () => {
     settingsHandlers(settingsFixture());
-    render(<Settings client={client()} sections={['providers', 'inbound', 'routes']} />);
+    render(<Settings canWrite client={client()} sections={['providers', 'inbound', 'routes']} />);
     const receiving = await receivingSection();
     expect(within(receiving).getByText('Keep received faxes for (days)')).toBeTruthy();
     expect(within(receiving).getByText('Download links work for (minutes)')).toBeTruthy();

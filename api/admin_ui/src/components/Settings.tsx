@@ -55,7 +55,7 @@ import ProviderDirectionFields, { directionFields, directionProblem, loadedDirec
 
 interface SettingsProps {
   client: AdminAPIClient;
-  // May this account change settings (email delivery actions are shown only then).
+  // May this account change settings, including generic fields and recovery copies.
   canWrite?: boolean;
   // May this account restart Faxbot (host:restart); the restart message then offers Restart now.
   canRestart?: boolean;
@@ -245,7 +245,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   const actionFence = useRef(false);
   const requestEpoch = useRef(0);
   const desiredRevision = needsReload ? undefined : settings?._meta?.desired_revision_id;
-  const canEdit = !!desiredRevision && !loading && !needsReload;
+  const canEdit = canWrite && !!desiredRevision && !loading && !needsReload;
   const handleForm = (field: string, value: FormValue) => {
     if (!canEdit || actionFence.current) return;
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -298,7 +298,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
   };
 
   const applySettings = async (only?: string[]) => {
-    if (actionFence.current || loading) return;
+    if (!canWrite || actionFence.current || loading) return;
     if (!desiredRevision) {
       setError('Select Reload before applying changes.');
       return;
@@ -657,6 +657,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
           <Button
             variant="outlined"
             onClick={async () => {
+              if (!canWrite || loading) return;
               try {
                 setLoading(true); setError(null);
                 const res = await client.persistSettings();
@@ -665,7 +666,7 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
                 setError(e?.message || 'The recovery copy could not be saved.');
               } finally { setLoading(false); }
             }}
-            disabled={loading}
+            disabled={!canWrite || loading}
           >
             Save a recovery copy
           </Button>
@@ -676,6 +677,12 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
 
         </Box>
       </Box>
+
+      {!canWrite && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Read only: you do not have permission to change settings.
+        </Alert>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
