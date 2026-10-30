@@ -282,6 +282,7 @@ export interface Settings {
     generation: number;
     apply_state: 'applied' | 'pending_restart';
     pending_fields: string[];
+    pending_block_reason?: string | null;
     [hint: string]: unknown;
   };
   backend: {

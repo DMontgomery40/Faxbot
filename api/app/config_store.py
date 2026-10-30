@@ -29,7 +29,7 @@ from .access.configuration import configuration_candidate_requirements
 
 _LOCK_ID = 0x464158434F4E46
 _STATE_ID = 'installation'
-_AUTHORIZED_OPERATIONS = {'settings.update': 'settings:write', 'providers.configure': 'providers:write'}
+_AUTHORIZED_OPERATIONS = {'settings.withdraw': 'settings:write', 'settings.update': 'settings:write', 'providers.configure': 'providers:write'}
 _CONFIGURATION_MARKERS = object()
 _LISTENER_LOCK = Lock()
 
@@ -635,9 +635,17 @@ class ConfigurationStore:
         # Routine denials above are candidate-before-write. A later business
         # failure must escape and roll back, even if it uses a denial class.
         if error is None:
-            result = self._write_candidate_on(connection, current, cipher, values,
-                restart_required=restart_required, actor='principal:' + principal.principal_id,
-                candidates=providers, plugin_document=plugins, now=now, accounts=accounts)
+            if operation == 'settings.withdraw':
+                if current.pending is not None:
+                    connection.execute(self.state.update().where(self.state.c.id == _STATE_ID).values(
+                        pending_revision_id=None, generation=current.generation + 1, updated_at=now))
+                    result = self._snapshot(connection, cipher, self._head(connection))
+                else:
+                    result = current
+            else:
+                result = self._write_candidate_on(connection, current, cipher, values,
+                    restart_required=restart_required, actor='principal:' + principal.principal_id,
+                    candidates=providers, plugin_document=plugins, now=now, accounts=accounts)
         after = self.access_store.require_lock_on(connection)
         details = {'reason': reason.value if isinstance(reason, MutationReason) else reason} if error else {
             'changed': result.generation != current.generation,

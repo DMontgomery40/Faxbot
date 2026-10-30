@@ -1,12 +1,10 @@
 """Internal profile/trait drain test; no listener or provider requests."""
 from datetime import datetime
 import json
-import pytest
 
 
 def test_captured_manifest_ami_requirement_protects_unresolved_work(tmp_path):
     from app.config_runtime import ConfigurationRuntime
-    from app.config_activation import ConfigurationActivationError
     providers = tmp_path / 'providers'
     manifest = providers / 'ami-http-bridge' / 'manifest.json'
     manifest.parent.mkdir(parents=True)
@@ -31,7 +29,8 @@ def test_captured_manifest_ami_requirement_protects_unresolved_work(tmp_path):
         first.close()
     second = ConfigurationRuntime(environment)
     try:
-        with pytest.raises(ConfigurationActivationError):
-            second.prepare()
+        second.prepare()
+        assert second.candidate == staged.active
+        assert 'synthetic-unresolved-manifest' in second.pending_block_reason(second.snapshot)
     finally:
         second.close()

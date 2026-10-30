@@ -138,7 +138,11 @@ Contributions should keep the console usable, preserve provider capability check
 
 Reference pages under `docs/generated/` are generated from code. The README/roadmap, agent instructions and [planning sources](planning/README.md) are maintained separately. AI prose proposals are restricted to permitted documentation pages, including when applied locally.
 
+Pending settings that would disconnect the fax engine while faxes remain unresolved wait without taking the installation offline. Faxbot starts with the active settings and names a fax that must be settled. In the settings console, select **Withdraw pending changes** to discard all waiting edits, or run `faxbot admin settings withdraw`. Withdrawal keeps the active settings and revision history and requires the permissions for the pending changes.
+
 ## Roadmap
+
+- [x] Blocked fax-engine settings retain the active configuration at startup, report the unresolved fax, and support audited withdrawal through the console, CLI and API.
 
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
 

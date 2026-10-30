@@ -60,7 +60,7 @@ class ConfigurationWorld(World):
         with self.engine.connect() as connection:
             table = self.tables['access_audit']
             return [dict(row) for row in connection.execute(sa.select(table).where(
-                table.c.operation.in_(['settings.update', 'providers.configure']))).mappings()]
+                table.c.operation.in_(['settings.update', 'settings.withdraw', 'providers.configure']))).mappings()]
 
     def key(self, *, session=False, ceiling=('settings:write',)):
         self.insert('api_keys', id='editor-key', key_id='synthetic-public-id', name='synthetic',

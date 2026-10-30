@@ -104,7 +104,6 @@ def test_first_import_cannot_silently_redirect_bootstrap_locations(environment, 
 @pytest.mark.parametrize('patch', [{'ami_password': 'new-synthetic-secret'}, {'fax_disabled': True}])
 def test_restart_cannot_abandon_unresolved_sip_work(environment, patch):
     from datetime import datetime
-    from app.config_activation import ConfigurationActivationError
     environment = {**environment, 'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false'}
     first = ConfigurationRuntime(environment).prepare()
     store = first.manager.store
@@ -116,14 +115,32 @@ def test_restart_cannot_abandon_unresolved_sip_work(environment, patch):
         assert staged.pending is not None
     finally:
         first.close()
-    with pytest.raises(ConfigurationActivationError, match='drained or reconciled'):
-        ConfigurationRuntime(environment).prepare()
-    assert store.read().pending == staged.pending
+    retry = ConfigurationRuntime(environment).prepare()
+    try:
+        assert retry.candidate.id == staged.active.id
+        assert 'unresolved-sip' in retry.pending_block_reason(retry.snapshot)
+        retry.publish_ready()
+        assert retry.serving
+        assert store.read().active == staged.active
+        assert store.read().pending == staged.pending
+    finally:
+        retry.close()
+    # Settling the fax removes the block; the next coordinated start can promote.
+    with store._locked() as connection:
+        connection.execute(store.delivery_tables['outbound_deliveries'].update().values(state='failed'))
+    settled = ConfigurationRuntime(environment).prepare()
+    try:
+        assert settled.pending_block_reason(settled.snapshot) is None
+        assert settled.candidate == staged.pending
+        settled.publish_ready()
+        assert store.read().active == staged.pending
+        assert store.read().pending is None
+    finally:
+        settled.close()
 
 
 def test_legacy_failed_status_does_not_release_unresolved_ami_delivery(environment):
     from datetime import datetime
-    from app.config_activation import ConfigurationActivationError
     environment = {**environment, 'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false'}
     first = ConfigurationRuntime(environment).prepare()
     store = first.manager.store
@@ -138,8 +155,12 @@ def test_legacy_failed_status_does_not_release_unresolved_ami_delivery(environme
         first.manager.patch(first.snapshot, {'ami_password': 'replacement'}, actor='test')
     finally:
         first.close()
-    with pytest.raises(ConfigurationActivationError, match='drained or reconciled'):
-        ConfigurationRuntime(environment).prepare()
+    retry = ConfigurationRuntime(environment).prepare()
+    try:
+        assert retry.candidate == retry.snapshot.active
+        assert 'legacy-ambiguous' in retry.pending_block_reason(retry.snapshot)
+    finally:
+        retry.close()
 
 
 def test_permanently_held_acceptance_does_not_pin_an_unused_ami_connection(environment):
@@ -262,3 +283,59 @@ def test_shared_serving_lease_refuses_database_upgrade_before_any_ddl(environmen
         candidate.close()
         serving.close()
         engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_app_lifespan_serves_active_settings_with_blocked_pending(environment, monkeypatch):
+    from datetime import datetime
+    import os
+    from app import main
+    import httpx
+
+    environment = {**environment, 'FAX_BACKEND': 'sip', 'FAX_DISABLED': 'false',
+                   'REQUIRE_API_KEY': 'false', 'ENABLE_MCP_HTTP': 'false', 'ENABLE_MCP_SSE': 'false'}
+    first = ConfigurationRuntime(environment).prepare()
+    try:
+        first.manager.store.accept_outbound(first.snapshot.active, {
+            'id': 'synthetic-blocked', 'to_number': '+15555550123', 'file_name': 'synthetic.pdf',
+            'tiff_path': '', 'status': 'queued', 'created_at': datetime.utcnow(), 'updated_at': datetime.utcnow()})
+        staged = first.manager.patch(first.snapshot, {'fax_disabled': True}, actor='test')
+    finally:
+        first.close()
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    for key in list(os.environ):
+        if key in main.ConfigurationValues.environment_keys() and key not in environment:
+            monkeypatch.delenv(key)
+
+    async def no_resources(tasks):
+        return False
+
+    async def idle(*args, **kwargs):
+        import asyncio
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, '_initialize_runtime', no_resources)
+    for worker in (main.OutboundWorker, main.OutboundPoller, main.AnalysisWorker):
+        monkeypatch.setattr(worker, 'run', idle)
+    monkeypatch.setattr(main, 'watch_public_address', idle)
+    monkeypatch.setattr(main.sip_network, 'check_at_start', idle)
+    async with main.lifespan(main.app):
+        runtime = main.app.state.configuration_runtime
+        assert runtime.serving
+        assert runtime.manager.store.read().active == staged.active
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url='https://testserver') as client:
+            response = await client.get('/health')
+            assert response.status_code == 200
+            response = await client.get('/admin/settings', headers={'X-API-Key': 'synthetic-original'})
+            assert response.status_code == 200
+            meta = response.json()['_meta']
+            assert meta['active_revision_id'] == staged.active.id
+            assert meta['desired_revision_id'] == staged.pending.id
+            assert 'synthetic-blocked' in meta['pending_block_reason']
+            response = await client.post('/admin/settings/withdraw',
+                headers={'X-API-Key': 'synthetic-original'},
+                json={'expected_revision_id': staged.pending.id})
+            assert response.status_code == 200
+            assert response.json()['_meta']['active_revision_id'] == staged.active.id
+            assert runtime.manager.store.read().pending is None
