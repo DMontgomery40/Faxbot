@@ -1,10 +1,19 @@
 """Bounded upload hashing and stable intent identity, no application routes."""
 import hashlib
 import io
+from datetime import datetime
 import pytest
+import sqlalchemy as sa
 from fastapi import UploadFile
 
-from api.app.request_identity import RequestIdentity, fingerprint_upload
+from api.app.request_identity import (
+    IdempotencyConflict,
+    RequestIdentity,
+    digest_upload,
+    find_replay,
+    fingerprint_upload,
+    request_fingerprints,
+)
 from api.app.documents import UploadPreparationError
 
 
@@ -129,3 +138,93 @@ async def test_interrupted_hashing_rewinds_original_upload_and_preserves_error(c
     assert spool.tell() == 0
     assert not spool.closed
     assert spool.getvalue() == data
+
+
+@pytest.fixture
+def accepted_request():
+    """A stored identity without app startup, providers, or installation files."""
+    engine = sa.create_engine('sqlite://')
+    metadata = sa.MetaData()
+    deliveries = sa.Table('deliveries', metadata,
+        sa.Column('id', sa.String, primary_key=True),
+        sa.Column('principal_scope', sa.String),
+        sa.Column('idempotency_digest', sa.String),
+        sa.Column('request_fingerprint', sa.String))
+    metadata.create_all(engine)
+    try:
+        with engine.begin() as connection:
+            yield connection, deliveries
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('legacy', [False, True], ids=['canonical', 'legacy'])
+@pytest.mark.parametrize('change', [
+    {'by_call': True},
+    {'urgent': True},
+    {'send_by': datetime(2026, 10, 29, 12, 30)},
+    {'routing': {'mailbox': 'synthetic-mailbox'}},
+    {'routing': {'workflow': 'synthetic-workflow'}},
+    {'routing': {'labels': ['synthetic-label']}},
+    {'routing': {'engine': 'hylafax'}},
+    {'routing': {'cover_in_header': True}},
+    {'routing': {'court': 'b' * 64}},
+    {'routing': {'patient': '{"record_number":"synthetic-record"}'}},
+], ids=['real-call', 'urgent', 'deadline', 'mailbox', 'workflow', 'labels',
+        'engine', 'cover-header', 'court', 'patient'])
+def test_changed_send_options_conflict_with_an_accepted_request(accepted_request, legacy, change):
+    # Dropping any option from either fingerprint version would incorrectly replay
+    # the old fax instead of refusing a different sending instruction. The legacy
+    # case is a record stored under version 1, which only the earlier-version
+    # fingerprint can match.
+    connection, deliveries = accepted_request
+    request = dict(entered='3035550123', destination='+13035550123',
+                   queue_only=False, document_sha256='a' * 64)
+    fingerprint, earlier = request_fingerprints(**request)
+    original = RequestIdentity.from_key('synthetic-key', principal_scope='key:synthetic',
+                                        fingerprint=fingerprint, legacy_fingerprints=earlier)
+    connection.execute(deliveries.insert().values(id='accepted-fax',
+        principal_scope=original.principal_scope, idempotency_digest=original.idempotency_digest,
+        request_fingerprint=earlier[0] if legacy else fingerprint))
+    assert find_replay(connection, deliveries, original) == 'accepted-fax'
+
+    changed, changed_earlier = request_fingerprints(**(request | change))
+    other = RequestIdentity.from_key('synthetic-key', principal_scope=original.principal_scope,
+                                     fingerprint=changed, legacy_fingerprints=changed_earlier)
+    with pytest.raises(IdempotencyConflict):
+        find_replay(connection, deliveries, other)
+    assert connection.scalar(sa.select(sa.func.count()).select_from(deliveries)) == 1
+
+
+def test_routing_order_does_not_change_replay_identity():
+    request = dict(entered='3035550123', destination='+13035550123',
+                   queue_only=False, document_sha256='a' * 64)
+    first = request_fingerprints(**request, routing={
+        'mailbox': 'synthetic', 'labels': ['beta', 'alpha'], 'workflow': 'review'})
+    reordered = request_fingerprints(**request, routing={
+        'workflow': 'review', 'labels': ('alpha', 'beta'), 'mailbox': 'synthetic'})
+    assert first == reordered
+
+
+def test_deadline_changes_conflict_even_when_both_requests_have_a_deadline():
+    # The send-by time itself is bound, not only whether one was given.
+    request = dict(entered='3035550123', destination='+13035550123',
+                   queue_only=False, document_sha256='a' * 64)
+    first, first_legacy = request_fingerprints(**request, send_by=datetime(2026, 10, 29, 12))
+    later, later_legacy = request_fingerprints(**request, send_by=datetime(2026, 10, 29, 13))
+    assert first != later
+    assert first_legacy != later_legacy
+
+
+@pytest.mark.asyncio
+async def test_digest_reads_from_the_start_in_bounded_chunks():
+    class BoundedFile(io.BytesIO):
+        def read(self, size=-1):
+            assert 0 < size <= 64 * 1024, 'hashing must not read the whole upload at once'
+            return super().read(size)
+
+    data = b'synthetic-original\n' * 10000
+    upload = UploadFile(BoundedFile(data))
+    await upload.seek(123)
+    assert await digest_upload(upload, max_bytes=len(data)) == hashlib.sha256(data).hexdigest()
+    assert upload.file.tell() == 0
