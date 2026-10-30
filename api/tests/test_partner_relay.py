@@ -503,6 +503,79 @@ async def test_delivered_failed_before_data_and_uncertain_receipts_and_no_resend
     assert told['state'] == 'uncertain'
 
 
+def _held_after_its_call_then_refused(trio, job_id, reason):
+    """B's call for the relayed fax ends before any page; B's rules hold it (as ``_hold_after_predata`` does: ready,
+    the attempt detached and a no-route hold, in one transaction, so B's worker never claims it again); B's
+    installation key then refuses it."""
+    from app.routing import envelope as envelopes, holds
+    b_result(trio, job_id, 'failed')
+    store = trio.b_delivery
+    with store.configuration.engine.begin() as connection:
+        connection.execute(store.deliveries.update().where(store.deliveries.c.id == job_id).values(
+            state='ready', attempt_id=None, claim_owner=None, claim_token=None, claim_expires_at=None,
+            next_poll_at=None, version=store.deliveries.c.version + 1))
+        hold = holds.create_on(connection, envelopes.tables(connection), job_id=job_id, kind='no_route',
+                               decision_id=None, now=datetime.utcnow(),
+                               reason='Faxbot tried Phaxio, and the call ended before any page was sent.')
+    holds.HoldStore(store).refuse(hold, version=1, actor=SimpleNamespace(principal_id='bootstrap'),
+                                  actor_name='Installation bootstrap', reason=reason)
+
+
+@pytest.mark.asyncio
+async def test_a_fax_refused_after_a_call_that_failed_before_any_page_says_both_plainly(relay_trio):
+    """D26 review: a relayed fax whose call ended before any page, then was held and refused on the relay, told
+    its sender "...call failed before any page was sent: Refused by Installation bootstrap: <reason>". The sender
+    now reads what happened to the call, then "Not sent: <reason>." and who decided, never the key's name; a long
+    reason is shortened between words to the sentence's 300 characters, never mid-word."""
+    trio, a = relay_trio, relay_trio.a
+    await asyncio.to_thread(agree, trio, a)
+    short, long = queue(a), queue(a, number=OTHERS[0])
+    for _ in range(2):
+        assert (await send(a)).submissions == 0
+    jobs = {row['job_id']: row for row in rows(a.engine, "SELECT * FROM relay_faxes WHERE role = 'sender'")}
+    on_b = {row['message_id']: row for row in rows(trio.b_engine, "SELECT * FROM relay_faxes WHERE role = 'relay'")}
+    b_job = {job: on_b[jobs[job]['message_id']]['job_id'] for job in (short, long)}
+    balance = 'Telnyx account disabled for a negative balance; add funds in the Telnyx portal under Billing'
+    words = ' '.join(f'word{index:03d}' for index in range(60))
+    await asyncio.to_thread(_held_after_its_call_then_refused, trio, b_job[short], balance)
+    await asyncio.to_thread(_held_after_its_call_then_refused, trio, b_job[long], words)
+    (stored,) = rows(trio.b_engine, 'SELECT error FROM fax_jobs WHERE id = :id', id=b_job[short])
+    assert stored['error'] == f'Refused by Installation bootstrap: {balance}'
+    assert await asyncio.to_thread(b_report) == 2
+
+    said = f"Sydney office's call failed before any page was sent. Not sent: {balance}. Decided through an API key."
+    (job,) = rows(a.engine, 'SELECT error FROM fax_jobs WHERE id = :id', id=short)
+    assert job['error'] == said
+    assert a.delivery.get(short)['state'] == 'failed'
+    details = {row['job_id']: row['detail'] for row in rows(trio.b_engine,
+                                                            "SELECT * FROM relay_faxes WHERE role = 'relay'")}
+    assert details[b_job[short]] == said
+    (long_error,) = rows(a.engine, 'SELECT error FROM fax_jobs WHERE id = :id', id=long)
+    long_error = long_error['error']
+    lead = "Sydney office's call failed before any page was sent. Not sent: "
+    assert long_error.startswith(lead + 'word000 ') and long_error.endswith('…') and len(long_error) <= 300
+    kept = long_error[len(lead):-1].split(' ')
+    assert kept == words.split(' ')[:len(kept)] and len(kept) > 20   # whole words only
+    assert details[b_job[long]] == long_error
+    for text in [job['error'], long_error, *details.values()]:
+        assert 'Installation bootstrap' not in text and 'Refused by' not in text
+
+
+def test_an_outcome_sentence_is_shortened_between_words():
+    from api.app.direct.relay import DETAIL_LIMIT, outcome_detail
+    assert outcome_detail('The fax machine was busy.') == 'The fax machine was busy.'
+    assert outcome_detail('a' * DETAIL_LIMIT) == 'a' * DETAIL_LIMIT
+    # One long word keeps what fits, then the ellipsis.
+    assert outcome_detail('b' * (DETAIL_LIMIT + 50)) == 'b' * (DETAIL_LIMIT - 1) + '…'
+    words = ' '.join(['word'] * 100)
+    shown = outcome_detail(words)
+    assert len(shown) <= DETAIL_LIMIT and shown.endswith('word…') and set(shown[:-1].split(' ')) == {'word'}
+    # A cut that falls just before a space keeps the whole last word.
+    exact = 'y ' + 'x' * (DETAIL_LIMIT - 3) + ' more'
+    assert outcome_detail(exact) == 'y ' + 'x' * (DETAIL_LIMIT - 3) + '…'
+    assert outcome_detail('alpha, ' * 60).endswith('alpha…')
+
+
 @pytest.mark.asyncio
 async def test_a_fax_that_failed_before_any_page_takes_the_senders_next_route_and_says_so(relay_trio, monkeypatch):
     """With the installation's fallback rule (as the running app installs it), a definite failure before any page

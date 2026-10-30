@@ -126,6 +126,22 @@ def refusal_sentence(relay, why):
         f'{lead}. Nothing was sent; Faxbot sends it by your next route.'
 
 
+# An outcome's sentence is kept to this many characters, on the relay and with the sender's fax.
+DETAIL_LIMIT = 300
+
+
+def outcome_detail(text, limit=DETAIL_LIMIT):
+    """An outcome's sentence within ``limit`` characters: shortened at its last whole word with an ellipsis, never
+    mid-word (one long word keeps what fits, then the ellipsis)."""
+    text = ' '.join((text or '').split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    if ' ' in cut and text[limit - 1] != ' ':
+        cut = cut[:cut.rfind(' ')]
+    return cut.rstrip(' ,;:') + '…'
+
+
 # Terms ---------------------------------------------------------------------------------------------------------
 
 def money_for(micros, currency, home=None):
@@ -1199,7 +1215,7 @@ class RelayService:
                 fax['id'], found['status'], expected=('accepted', UNCERTAIN), statement=statement, direction='sent',
                 now=now, delivered_pages=found['pages'], seconds=found['seconds'], shared=int(found['shared']),
                 charge_micros=charge.get('amount_micros'), charge_currency=charge.get('currency'),
-                charge_basis=charge.get('basis'), told_at=None, detail=found['detail'][:300])
+                charge_basis=charge.get('basis'), told_at=None, detail=outcome_detail(found['detail']))
             if changed is not None:
                 moved.append(changed)
         return moved
@@ -1253,15 +1269,17 @@ class RelayService:
                         'shared': shared, 'detail': f"{relay}'s call ended partway, and part of the fax may have "
                                                     'arrived. Check with the recipient before sending it again.'}
             reason = (job.error if job is not None and isinstance(job.error, str) and job.error else None)
+            # A fax refused while held, before or after a call: "Not sent: <reason>." and who decided, after what
+            # happened to the call. Any other error is the reason the call (or its absence) gives.
+            tail = f'. {refused}' if refused else f': {reason}' if reason else '.'
             called = any(attempt['submitted_at'] for attempt in tried)
             if state == 'cancelled' and not called:
                 sentence = f'{relay} cancelled it before dialing.'
             elif not called:
                 # Nothing was submitted, so no call was made: never "call failed".
-                sentence = f'{relay} did not place a call for it' + (
-                    f'. {refused}' if refused else f': {reason}' if reason else '.')
+                sentence = f'{relay} did not place a call for it' + tail
             else:
-                sentence = f"{relay}'s call failed before any page was sent" + (f': {reason}' if reason else '.')
+                sentence = f"{relay}'s call failed before any page was sent" + tail
             return {'status': FAILED_BEFORE_DATA, 'pages': 0, 'seconds': None, 'charge': self._charge(fax['job_id']),
                     'shared': shared, 'detail': sentence}
         if state == 'reconciliation_required':
@@ -1388,7 +1406,8 @@ class RelayService:
             elif outcome['status'] == FAILED_BEFORE_DATA:
                 delivery.observe(fax['job_id'], attempt_id=fax['attempt_id'], profile_id=profile.id,
                                  provider_sid=None, status='failed', event_key=key,
-                                 error=(outcome['detail'] or f'{name} could not send it; nothing was sent.')[:300])
+                                 error=outcome_detail(outcome['detail']
+                                                      or f'{name} could not send it; nothing was sent.'))
             else:
                 delivery.record_unconfirmed(fax['job_id'], attempt_id=fax['attempt_id'], profile_id=profile.id,
                                             event_key=key)
@@ -1404,7 +1423,7 @@ class RelayService:
             fax['id'], outcome['status'], expected=expected, statement=envelope, direction='received',
             delivered_pages=outcome['pages'], seconds=outcome['seconds'], shared=int(outcome['shared']),
             charge_micros=charge.get('amount_micros'), charge_currency=charge.get('currency'),
-            charge_basis=charge.get('basis'), detail=outcome['detail'][:300],
+            charge_basis=charge.get('basis'), detail=outcome_detail(outcome['detail']),
             **({'cost_micros': cost[0], 'cost_currency': cost[1]} if cost else {}))
 
     def _sender_cost(self, fax, pages):
