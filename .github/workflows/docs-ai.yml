@@ -33,6 +33,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - name: Generate instructional update plan from actual previous source SHA
         env:
           DOCS_BASE_SHA: ${{ github.event.before }}
@@ -58,6 +61,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - run: |
           python -m pip install -r api/requirements.txt
           python scripts/docs_ai/generate_reference.py
@@ -99,6 +105,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - uses: actions/download-artifact@v4
         with:
           name: docs-autopilot-proposal-${{ github.run_id }}

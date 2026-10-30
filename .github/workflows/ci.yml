@@ -17,6 +17,8 @@ concurrency:
 jobs:
   test-api-shard:
     runs-on: [self-hosted, faxbot-ci]
+    # A shard takes about an hour; a runner that stops responding fails the job instead of holding it for hours.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +44,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # Each self-hosted runner keeps its own Python cache. The six runners share one host, and the
+          # Python installer deletes and rewrites a version's folder, so a shared cache let one job remove
+          # Python from under another (check-sdks failed with libpython3.11.so.1.0 missing).
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - name: Set up Node for console/CLI parity checks
         uses: actions/setup-node@v4
         with:
@@ -104,7 +111,9 @@ jobs:
         run: npm ci
       - name: Admin UI tests
         working-directory: api/admin_ui
-        run: npx vitest run
+        # Two workers: several jobs share one self-hosted host, and under that load the default (one
+        # worker per core) timed out four tests at 20 seconds.
+        run: npx vitest run --maxWorkers=2 --minWorkers=1
       - name: Typecheck and build Admin UI
         working-directory: api/admin_ui
         run: npm run build
@@ -130,6 +139,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - name: Install Python MCP dependencies
         run: |
           python -m pip install --upgrade pip
@@ -159,6 +171,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - uses: actions/setup-node@v4
         with:
           node-version: '24.21.0'

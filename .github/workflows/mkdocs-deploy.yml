@@ -40,6 +40,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+        env:
+          # This runner's own Python cache: see the note in ci.yml's test-api-shard job.
+          AGENT_TOOLSDIRECTORY: ${{ runner.temp }}/../_tool
       - name: Install pinned publication toolchain
         run: python -m pip install -r docs/requirements.txt
       - uses: actions/download-artifact@v4
