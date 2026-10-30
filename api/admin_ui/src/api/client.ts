@@ -712,6 +712,14 @@ class AdminAPIClient {
     return result;
   }
 
+  async withdrawSettings(expectedRevision: string): Promise<ConfigurationWriteResult> {
+    const res = await this.fetch('/admin/settings/withdraw', { method: 'POST',
+      body: JSON.stringify({ expected_revision_id: expectedRevision }) });
+    const result = configurationResult(await res.json());
+    this.announceSettingsChanged();
+    return result;
+  }
+
   // Listen for saved settings changes; returns the function that stops listening.
   onSettingsChanged(listener: (changed: string[]) => void): () => void {
     this.settingsListeners.add(listener);

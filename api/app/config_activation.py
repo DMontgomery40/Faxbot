@@ -280,6 +280,30 @@ class ConfigurationManager:
         return self._apply_authorized(expected, values, state, principal=principal, control=control,
             operation='settings.update', catalog=self._catalog_for(expected, values))
 
+    def withdraw_pending_authorized(self, expected, *, principal, control):
+        """Discard the desired revision without rebuilding or changing active profiles."""
+        profiles = {role: self.store.read_profile(identity).configuration
+                    for role, identity in expected.active.profiles}
+        desired = {role: self.store.read_profile(identity).configuration
+                   for role, identity in expected.desired.profiles}
+        baseline = dict(profiles)
+        # Compare the captured definitions, not today's installed manifests. Ordinary
+        # header/token edits also change profiles, but need no provider permission.
+        for role, profile in profiles.items():
+            target = desired.get(role)
+            if target is None or target.provider_id != profile.provider_id:
+                continue
+            payload = profile.as_dict()
+            for name in ('fax_header', 'fax_station_id', 'pdf_token_ttl_minutes'):
+                if (payload['settings'].get(name) == getattr(expected.active.values, name)
+                        and target.settings.get(name) == getattr(expected.desired.values, name)):
+                    payload['settings'][name] = target.settings[name]
+            baseline[role] = ProviderConfiguration.from_payload(payload)
+        return self.store.apply_authorized(expected, expected.active.values,
+            principal=principal, control=control, operation='settings.withdraw',
+            restart_required=False, providers=profiles, plugins=expected.active.plugins,
+            baseline_providers=baseline, accounts=expected.active.accounts)
+
     def _patch_plugin_values(self, expected, provider_id, *, settings, enabled, role, catalog):
         values = expected.desired.values
         state = expected.desired.plugins.as_dict()

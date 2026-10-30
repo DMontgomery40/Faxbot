@@ -9632,6 +9632,7 @@ $ faxbot admin settings [OPTIONS] COMMAND [ARGS]...
 * `get`: Show the settings, including changes...
 * `set`: Change settings by name, for example...
 * `validate`: Check a provider&#x27;s credentials without...
+* `withdraw`: Withdraw all pending changes and keep the...
 * `reload`: Read the saved settings again and show any...
 * `persist`: Save every setting to the server&#x27;s...
 * `export`: Print every setting, one per line, as it...
@@ -9697,6 +9698,20 @@ $ faxbot admin settings validate [OPTIONS] {backend}
 **Options**:
 
 * `--ami-port <int>`: SIP only: the Asterisk manager interface port, if not 5038.
+* `--help`: Show this message and exit.
+
+#### `faxbot admin settings withdraw`
+
+Withdraw all pending changes and keep the active settings.
+
+**Usage**:
+
+```console
+$ faxbot admin settings withdraw [OPTIONS]
+```
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot admin settings reload`

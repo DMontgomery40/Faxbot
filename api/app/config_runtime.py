@@ -136,7 +136,10 @@ class ConfigurationRuntime:
                 snapshot = self._create_engine_password(snapshot, new_installation=initialized)
             self.snapshot = snapshot
             self.candidate = snapshot.desired if self.lifecycle.can_promote else snapshot.active
-            self._check_telephony_drain()
+            reason = self.pending_block_reason(snapshot)
+            if reason and self.candidate is snapshot.pending:
+                self.candidate = snapshot.active
+                logging.getLogger(__name__).warning('%s Running with the active settings.', reason)
             self._share_engine_credentials()
             return self
         except BaseException:
@@ -260,22 +263,23 @@ class ConfigurationRuntime:
         finally:
             engine.dispose()
 
-    def _check_telephony_drain(self):
-        if self.candidate is not self.snapshot.pending:
-            return
+    def pending_block_reason(self, snapshot):
+        """Explain the drain guard without preventing access to the active installation."""
+        if snapshot.pending is None:
+            return None
         store = self.manager.store
         from .config_activation import _routes_need_ami
-        active, candidate = self.snapshot.active.values, self.candidate.values
+        active, candidate = snapshot.active.values, snapshot.pending.values
         # A SIP extra route uses the same Asterisk connection as a SIP provider.
         old_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                       for _, identity in self.snapshot.active.profiles)
+                       for _, identity in snapshot.active.profiles)
                    or _routes_need_ami(active, self.manager.catalog_loader(active)))
         new_ami = (any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                       for _, identity in self.candidate.profiles)
+                       for _, identity in snapshot.pending.profiles)
                    or _routes_need_ami(candidate, self.manager.catalog_loader(candidate)))
         fields = ('ami_host', 'ami_port', 'ami_username', 'ami_password')
-        replaces_ami = old_ami and (not new_ami or self.candidate.values.fax_disabled or any(
-            getattr(self.snapshot.active.values, field) != getattr(self.candidate.values, field) for field in fields))
+        replaces_ami = old_ami and (not new_ami or snapshot.pending.values.fax_disabled or any(
+            getattr(snapshot.active.values, field) != getattr(snapshot.pending.values, field) for field in fields))
         if not replaces_ami:
             return
         from .outbound_store import TERMINAL
@@ -287,15 +291,16 @@ class ConfigurationRuntime:
             unresolved = connection.execute(sa.select(store.jobs.c.id).join(
                 deliveries, deliveries.c.id == store.jobs.c.id).where(
                 store.jobs.c.backend == 'sip', deliveries.c.state.not_in(resolved)).limit(1)).first()
-            identities = connection.execute(sa.select(store.job_bindings.c.profile_id).join(
+            identities = connection.execute(sa.select(store.job_bindings.c.id, store.job_bindings.c.profile_id).join(
                 store.jobs, store.jobs.c.id == store.job_bindings.c.id).where(
                 store.jobs.c.id.in_(sa.select(deliveries.c.id).where(
-                    deliveries.c.state.not_in(resolved)))).distinct()).scalars().all()
-        captured_ami = any(store.read_profile(identity).configuration.traits.get('requires_ami') is True
-                           for identity in identities)
-        if unresolved is not None or captured_ami:
-            raise ConfigurationActivationError(
-                'Unresolved AMI faxes must be drained or reconciled before replacing the AMI connection; pending settings were retained.')
+                    deliveries.c.state.not_in(resolved)))).distinct()).all()
+        captured_ami = next((job_id for job_id, identity in identities
+                             if store.read_profile(identity).configuration.traits.get('requires_ami') is True), None)
+        blocked_id = unresolved[0] if unresolved is not None else captured_ami
+        if blocked_id is not None:
+            return f'Pending settings wait until fax {blocked_id} is settled. Drain or reconcile unresolved faxes before replacing the fax engine connection.'
+        return None
 
     @contextmanager
     def frame(self, revision=None):

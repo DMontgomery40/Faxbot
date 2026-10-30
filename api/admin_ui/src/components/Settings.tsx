@@ -297,6 +297,34 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
     setNeedsReload(false);
   };
 
+  const withdrawSettings = async () => {
+    if (!canWrite || !canEdit || actionFence.current || !desiredRevision) return;
+    const epoch = requestEpoch.current;
+    actionFence.current = true;
+    setLoading(true);
+    setError(null);
+    setSnack(null);
+    try {
+      const result = await client.withdrawSettings(desiredRevision);
+      if (epoch !== requestEpoch.current) return;
+      setNeedsReload(true);
+      setSnack(result.changed ? 'Pending changes withdrawn. Faxbot is using the active settings.' : 'There are no pending changes.');
+      const data = await client.getSettings();
+      if (epoch !== requestEpoch.current) return;
+      if (!data._meta?.desired_revision_id) throw new Error('Settings could not be loaded.');
+      hydrate(data);
+    } catch (err) {
+      if (epoch !== requestEpoch.current) return;
+      setNeedsReload(true);
+      setError(`${plainRefusal(err) ?? accessErrorMessage(err)} Select Reload before making more changes.`);
+    } finally {
+      if (epoch === requestEpoch.current) {
+        actionFence.current = false;
+        setLoading(false);
+      }
+    }
+  };
+
   const applySettings = async (only?: string[]) => {
     if (actionFence.current || loading) return;
     if (!desiredRevision) {
@@ -693,8 +721,15 @@ function Settings({ client, canWrite = false, canRestart = false, focus, onFocus
         </Alert>
       ) : settings && pendingRestart && !needsReload ? (
         <Box sx={{ mb: 3 }}>
-          <RestartNotice client={client} text={restartMessage} canRestart={canRestart && allowRestart}
-            onBack={async () => { await fetchSettings(); setRestarted(true); }} />
+          {settings._meta?.pending_block_reason ? (
+            <Alert severity="warning">{settings._meta.pending_block_reason} Faxbot is using the active settings.</Alert>
+          ) : (
+            <RestartNotice client={client} text={restartMessage} canRestart={canRestart && allowRestart}
+              onBack={async () => { await fetchSettings(); setRestarted(true); }} />
+          )}
+          {canWrite ? (
+            <Button disabled={!canEdit} onClick={withdrawSettings}>Withdraw pending changes</Button>
+          ) : <Typography variant="body2">You need permission to change settings to withdraw pending changes.</Typography>}
         </Box>
       ) : settings && restarted && !needsReload ? (
         <Alert severity="success" sx={{ mb: 3 }} onClose={() => setRestarted(false)}>

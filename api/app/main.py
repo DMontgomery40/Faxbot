@@ -1049,8 +1049,10 @@ def _refuse_environment_managed(expected, changes):
 
 
 def _settings_view(snapshot):
-    return project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot),
+    view = project_admin_settings(snapshot, _configuration_manager().pending_fields(snapshot),
                                   env_managed=_environment_managed(), environment=os.environ)
+    view['_meta']['pending_block_reason'] = app.state.configuration_runtime.pending_block_reason(snapshot)
+    return view
 
 
 @app.get("/admin/settings", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})
@@ -1219,6 +1221,23 @@ def update_admin_settings(payload: UpdateSettingsRequest, request: Request, iden
     _refuse_environment_managed(expected, changes)
     snapshot = manager.patch_authorized(expected, changes, principal=identity.actor, control=access.control)
     return configuration_write_receipt(expected, snapshot)
+
+
+class WithdrawSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_revision_id: str = Field(min_length=1, max_length=40)
+
+
+@app.post("/admin/settings/withdraw", response_model=ConfigurationWriteResponse,
+          responses=_CONFIGURATION_WRITE_RESPONSES)
+def withdraw_admin_settings(payload: WithdrawSettingsRequest, request: Request, identity=Depends(require_identity)):
+    """Withdraw all pending edits, preserving the active settings and revision history."""
+    expected = request.scope['faxbot.configuration']
+    access = access_runtime(request)
+    access.configuration_access.prepare_settings_write(identity.actor, expected, payload.expected_revision_id)
+    result = _configuration_manager().withdraw_pending_authorized(
+        expected, principal=identity.actor, control=access.control)
+    return configuration_write_receipt(expected, result)
 
 
 @app.post("/admin/settings/reload", responses={**_CONFIGURATION_READ_RESPONSES, **_CONFIGURATION_VALIDATION_RESPONSES})

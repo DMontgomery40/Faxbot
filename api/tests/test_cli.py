@@ -2091,3 +2091,22 @@ def test_sent_says_a_broken_call_was_completed_directly_by_the_partner():
     assert fax._assigned_route(Api(), {'id': 'f' * 32, 'backend': 'sip'}) == ('Provider', sentence)
     assert fax.EVENT_LABELS['repair_completed'] == 'Completed directly by the partner after the call broke'
 
+
+
+def test_withdraw_pending_settings_from_api_and_cli(cli):
+    headers = {'X-API-Key': BOOTSTRAP}
+    current = cli.json('system', 'settings', 'get')
+    active = current['_meta']['active_revision_id']
+    cli.json('system', 'settings', 'set', 'artifact_ttl_days=3')
+    stale = cli.client.post('/admin/settings/withdraw', headers=headers,
+                           json={'expected_revision_id': active})
+    assert stale.status_code == 409
+    result = cli.json('system', 'settings', 'withdraw')
+    assert result['_meta']['active_revision_id'] == active
+    assert result['_meta']['desired_revision_id'] == active
+    assert result['changed'] is True
+    assert cli.json('system', 'settings', 'withdraw')['changed'] is False
+    cli.json('system', 'settings', 'set', 'artifact_ttl_days=4')
+    _, key = restricted_key(cli, role='Administrator', permissions=('settings:read',))
+    assert cli('system', 'settings', 'withdraw', key=key).exit_code != 0
+    assert cli.json('system', 'settings', 'get')['_meta']['desired_revision_id'] != active

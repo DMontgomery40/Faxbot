@@ -1024,3 +1024,81 @@ describe('Owner-only settings everywhere', () => {
     expect(screen.getAllByText(/Only the owner of this installation can change this\.$/).length).toBeGreaterThanOrEqual(4);
   });
 });
+
+it('reports a blocked change and withdraws the loaded pending revision', async () => {
+  const data = settingsFixture((value) => {
+    value._meta = { ...value._meta, desired_revision_id: 'rev-pending', apply_state: 'pending_restart',
+      pending_fields: ['fax_disabled'], pending_block_reason: 'Pending settings wait until fax synthetic-fax is settled.' };
+  });
+  settingsHandlers(data);
+  let body: unknown;
+  server.use(http.post('/admin/settings/withdraw', async ({ request }) => {
+    body = await request.json();
+    data._meta = { ...data._meta, desired_revision_id: 'rev-a', apply_state: 'applied', pending_fields: [], pending_block_reason: null };
+    return HttpResponse.json(receipt);
+  }));
+  render(<Settings client={client()} canWrite />);
+  expect(await screen.findByText(/Pending settings wait until fax synthetic-fax/)).toBeTruthy();
+  const button = screen.getByRole('button', { name: 'Withdraw pending changes' });
+  await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(body).toEqual({ expected_revision_id: 'rev-pending' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Withdraw pending changes' })).toBeNull());
+  expect(await screen.findByText('Pending changes withdrawn. Faxbot is using the active settings.')).toBeTruthy();
+});
+
+it('offers no withdrawal when there are no pending changes', async () => {
+  settingsHandlers(settingsFixture());
+  render(<Settings client={client()} canWrite sections={['storage']} />);
+  await screen.findByRole('button', { name: 'Reload' });
+  await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Withdraw pending changes' })).toBeNull();
+});
+
+it('explains withdrawal permissions to a reader', async () => {
+  settingsHandlers(settingsFixture((data) => {
+    data._meta.apply_state = 'pending_restart';
+    data._meta.desired_revision_id = 'rev-pending';
+  }));
+  render(<Settings client={client()} sections={['storage']} />);
+  expect(await screen.findByText(/You need permission to change settings to withdraw/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Withdraw pending changes' })).toBeNull();
+});
+
+it.each([403, 409, 500])('keeps withdrawal failures visible and requires reload (%s)', async (status) => {
+  settingsHandlers(settingsFixture((data) => {
+    data._meta.apply_state = 'pending_restart';
+    data._meta.desired_revision_id = 'rev-pending';
+  }));
+  server.use(http.post('/admin/settings/withdraw', () => HttpResponse.json({ detail: 'Withdrawal refused.' }, { status })));
+  render(<Settings client={client()} canWrite sections={['storage']} />);
+  const button = await screen.findByRole('button', { name: 'Withdraw pending changes' });
+  await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(button);
+  expect(await screen.findByText(/Select Reload before making more changes/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Withdraw pending changes' })).toBeNull();
+});
+
+it('disables withdrawal while its request is in progress', async () => {
+  settingsHandlers(settingsFixture((data) => {
+    data._meta.apply_state = 'pending_restart';
+    data._meta.desired_revision_id = 'rev-pending';
+  }));
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  let calls = 0;
+  server.use(http.post('/admin/settings/withdraw', async () => {
+    calls += 1;
+    await gate;
+    return HttpResponse.json(receipt);
+  }));
+  render(<Settings client={client()} canWrite sections={['storage']} />);
+  const button = await screen.findByRole('button', { name: 'Withdraw pending changes' });
+  await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(button);
+  await waitFor(() => expect(button.hasAttribute('disabled')).toBe(true));
+  fireEvent.click(button);
+  finish();
+  await screen.findByText('Pending changes withdrawn. Faxbot is using the active settings.');
+  expect(calls).toBe(1);
+});

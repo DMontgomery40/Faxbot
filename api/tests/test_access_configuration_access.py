@@ -401,3 +401,71 @@ def test_receipt_rejects_unvalidated_snapshot_shape(world, malformed):
         after = replace(after, active=object())
     with pytest.raises(ValueError):
         boundary_module().configuration_write_receipt(before, after)
+
+
+def test_withdraw_pending_preserves_active_and_history_and_audits(world):
+    staged = world.manager.patch(world.initial, {'artifact_ttl_days': 3}, actor='test')
+    world.grant(['settings:write'])
+    result = world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert result.active == staged.active
+    assert result.pending is None
+    assert result.generation == staged.generation + 1
+    assert world.configuration.read() == result
+    assert len(world.business()['configuration_revisions']) == 2
+    audit = world.audits()[-1]
+    assert audit['operation'] == 'settings.withdraw'
+    assert world.manager.withdraw_pending_authorized(result, principal=world.actor, control=world.control) == result
+    with pytest.raises(ConfigurationConflict):
+        world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+
+
+def test_withdraw_requires_current_write_authority(world):
+    staged = world.manager.patch(world.initial, {'artifact_ttl_days': 3}, actor='test')
+    world.grant(['settings:read'])
+    with pytest.raises(MutationDeniedError):
+        world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert world.configuration.read() == staged
+
+
+@pytest.mark.parametrize('changes,permissions', [
+    ({'ami_password': 'synthetic-new', 'artifact_ttl_days': 3}, ['settings:write']),
+    ({'api_key': 'synthetic-new', 'artifact_ttl_days': 3}, ['settings:write', 'providers:write']),
+])
+def test_withdraw_rechecks_sensitive_pending_change_permissions(world, changes, permissions):
+    staged = world.manager.patch(world.initial, changes, actor='test')
+    world.grant(permissions)
+    with pytest.raises(MutationDeniedError):
+        world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert world.configuration.read() == staged
+
+
+def test_withdraw_rolls_back_if_audit_cannot_be_saved(world, monkeypatch):
+    staged = world.manager.patch(world.initial, {'artifact_ttl_days': 3}, actor='test')
+    world.grant(['settings:write'])
+    def fail(*args, **kwargs):
+        raise RuntimeError('synthetic audit failure')
+    monkeypatch.setattr(world.configuration, '_audit_configuration_on', fail)
+    with pytest.raises(RuntimeError, match='synthetic audit failure'):
+        world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert world.configuration.read() == staged
+
+
+def test_withdraw_captured_provider_drift_needs_provider_permission(world):
+    from api.tests.test_access_configuration_writes import catalog
+    world.catalog = catalog(drift=True)
+    staged = world.manager.patch(world.initial, {'artifact_ttl_days': 3}, actor='test')
+    world.grant(['settings:write'])
+    with pytest.raises(MutationDeniedError):
+        world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert world.configuration.read() == staged
+    world.role('provider-editor', ['providers:write'])
+    world.assignment('editor', 'provider-editor')
+    result = world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert result.active == staged.active and result.pending is None
+
+
+def test_withdraw_ordinary_derived_profile_settings_needs_only_settings_permission(world):
+    staged = world.manager.patch(world.initial, {'artifact_ttl_days': 3, 'fax_header': 'new header'}, actor='test')
+    world.grant(['settings:write'])
+    result = world.manager.withdraw_pending_authorized(staged, principal=world.actor, control=world.control)
+    assert result.active == staged.active and result.pending is None

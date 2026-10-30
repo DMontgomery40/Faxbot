@@ -55,7 +55,11 @@ def settings_get(section: str = typer.Argument(None, help='Only this section, fo
         if not (current.get('backend') or {}).get('type') and (not section or section in {'backend', 'hybrid'}):
             out.line('No fax provider set up yet.')
         if meta.get('apply_state') == 'pending_restart':
-            out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
+            if meta.get('pending_block_reason'):
+                out.line(meta['pending_block_reason'])
+                out.line('Faxbot is using the active settings. Settle the fax or run faxbot admin settings withdraw.')
+            else:
+                out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
     state.out().result(shown if section else current, human)
 
 
@@ -160,6 +164,18 @@ def settings_validate(backend: str = typer.Argument(..., help='Provider whose cr
     state.out().result(result, human)
 
 
+@settings.command('withdraw')
+def settings_withdraw():
+    """Withdraw all pending changes and keep the active settings."""
+    api = state.api()
+    current = api.get('/admin/settings')
+    result = api.post('/admin/settings/withdraw', json={
+        'expected_revision_id': current['_meta']['desired_revision_id']})
+    state.out().result(result, lambda out: out.line(
+        'Pending changes withdrawn. Faxbot is using the active settings.' if result['changed']
+        else 'There are no pending changes.'))
+
+
 @settings.command('reload')
 def settings_reload():
     """Read the saved settings again and show any changes still waiting for a restart."""
@@ -169,7 +185,11 @@ def settings_reload():
     def human(out):
         out.line('Faxbot read its saved settings again.')
         if meta.get('apply_state') == 'pending_restart':
-            out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
+            if meta.get('pending_block_reason'):
+                out.line(meta['pending_block_reason'])
+                out.line('Faxbot is using the active settings. Settle the fax or run faxbot admin settings withdraw.')
+            else:
+                out.line('Some saved changes take effect after a restart: ' + ', '.join(meta.get('pending_fields') or []))
     state.out().result(result, human)
 
 
