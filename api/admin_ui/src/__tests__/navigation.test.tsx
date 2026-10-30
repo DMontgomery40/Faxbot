@@ -396,12 +396,25 @@ describe('the console shell', () => {
     await signIn();
     const areas = visibleNavigation(everything, { send: true, jobs: true, inbox: true }, { pluginsEnabled: true });
     const opened: string[] = [];
+    const unfocused: string[] = [];
+    let shownAddress = window.location.hash;
     for (const area of areas) {
       for (const page of area.pages) {
         if (page.link) continue;  // Add or change a provider opens the Setup wizard
         const address = pageAddress(area.id, page.id);
         act(() => { window.location.hash = address; });
         await waitFor(() => expect(window.location.hash).toBe(address));
+        // Moving to another page puts the keyboard focus on that page's own heading,
+        // also on a page that shows its heading only once its data has loaded (#54).
+        // The Terminal then hands it to its shell once that opens, so typing goes there.
+        if (address !== shownAddress) {
+          await waitFor(() => {
+            const focused = document.activeElement as HTMLElement | null;
+            if (page.id !== 'terminal') expect(focused?.tagName).toBe('H1');
+            expect(screen.getByRole('main').contains(focused)).toBe(true);
+          }).catch(() => unfocused.push(address));
+        }
+        shownAddress = address;
         if (area.pages.length > 1) {
           await waitFor(() => expect(crumbs().getByText(page.label).getAttribute('aria-current')).toBe('page'));
           if (page.label !== area.label) expect(crumbs().getByRole('link', { name: area.label })).toBeTruthy();
@@ -413,10 +426,11 @@ describe('the console shell', () => {
       }
     }
     expect(opened).toEqual(expect.arrayContaining(['delivery/moves', 'admin/analysis', 'savings/opportunities', 'savings/capabilities']));
+    expect(unfocused).toEqual([]);
     expect(new Set(opened).size).toBe(opened.length);
     expect(opened).not.toContain('admin/remote');
     expect(opened).not.toContain('delivery/freeswitch');
-  }, 60000);
+  }, 120000);
 
   it('keeps the old destination names working', async () => {
     grant('settings:read', 'diagnostics:read');

@@ -20,7 +20,7 @@ import OwnerEnrollment from './components/OwnerEnrollment';
 import NavPanel, { SendFaxButton, type SendAction } from './components/shell/NavPanel';
 import PageBreadcrumbs from './components/shell/PageBreadcrumbs';
 import { AddressProblem, MovedNotice } from './components/shell/AddressState';
-import { focusPageHeading } from './components/shell/focusHeading';
+import { focusPageHeadingWhenShown } from './components/shell/focusHeading';
 import UserMenu from './components/shell/UserMenu';
 import { ThemeProvider } from './theme/ThemeContext';
 import { setProviderNames } from './providerLabels';
@@ -350,15 +350,16 @@ function ConsoleShell({ client, me, initialContext, onSignOut, onIdentityChanged
   const contextLoading = refreshes && (refresh.key !== pageKey || refresh.state === 'loading');
   const contextError = refreshes && refresh.key === pageKey && refresh.state === 'error' ? CONTEXT_FAILED : null;
 
-  // A page that reads its settings again shows its heading only once they land;
-  // focus then, once per page, never on the first page of the session.
+  // A page that reads its settings again, or loads its own data first, shows its
+  // heading only once they land; focus then, once per page, never on the first page
+  // of the session. Leaving the page stops the wait.
   useEffect(() => {
     if (!pageKey) return;
     const firstPage = shownPage.current === null;
     shownPage.current = pageKey;
     if (firstPage) { focusedPage.current = pageKey; return; }
     if (contextLoading || focusedPage.current === pageKey) return;
-    if (focusPageHeading(mainRef.current)) focusedPage.current = pageKey;
+    return focusPageHeadingWhenShown(mainRef.current, () => { focusedPage.current = pageKey; });
   }, [pageKey, contextLoading]);
 
   const docsBase = context.branding?.docs_base;

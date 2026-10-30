@@ -2,7 +2,7 @@
 // recipient opens from its own address, list filters stay in that address, and rows open
 // from a real link so the keyboard reaches them. Clicking a row itself does nothing.
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import AdminAPIClient from '../api/client';
 import type { WorkItem } from '../api/types';
@@ -10,7 +10,7 @@ import JobsList from '../components/JobsList';
 import Received from '../components/Received';
 import ExpectedFaxes from '../components/expected/ExpectedFaxes';
 import Destinations from '../components/delivery/Destinations';
-import { focusPageHeading } from '../components/shell/focusHeading';
+import { focusPageHeading, focusPageHeadingWhenShown } from '../components/shell/focusHeading';
 import { NAVIGATION, resolveHash } from '../navigation';
 import { server } from '../test/server';
 
@@ -217,6 +217,45 @@ describe('focusPageHeading', () => {
     expect(document.activeElement).toBe(heading);
     expect(heading.tabIndex).toBe(-1);
     main.remove();
+  });
+
+  it('waits for a heading that appears once the page has loaded', async () => {
+    const main = document.createElement('main');
+    main.innerHTML = '<div role="progressbar"></div>';
+    document.body.appendChild(main);
+    const focused = vi.fn();
+    focusPageHeadingWhenShown(main, focused);
+    expect(focused).not.toHaveBeenCalled();
+    main.innerHTML = '<h1>Overview</h1>';
+    await waitFor(() => expect(document.activeElement).toBe(main.querySelector('h1')));
+    expect(focused).toHaveBeenCalledTimes(1);
+    main.remove();
+  });
+
+  it('leaves focus where the person put it in the page meanwhile, and stops when the page changes', async () => {
+    const main = document.createElement('main');
+    main.innerHTML = '<input aria-label="Search" />';
+    document.body.appendChild(main);
+    const focused = vi.fn();
+    focusPageHeadingWhenShown(main, focused);
+    const search = main.querySelector('input') as HTMLInputElement;
+    search.focus();
+    main.insertAdjacentHTML('afterbegin', '<h1>Received</h1>');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(search);
+    expect(focused).not.toHaveBeenCalled();
+    search.blur();
+    // Leaving the page stops the wait: a heading shown later takes no focus.
+    const other = document.createElement('main');
+    document.body.appendChild(other);
+    const stop = focusPageHeadingWhenShown(other, focused);
+    stop();
+    other.innerHTML = '<h1>Sent</h1>';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    expect(focused).not.toHaveBeenCalled();
+    main.remove();
+    other.remove();
   });
 
   it('does nothing when there is no heading or no container', () => {
