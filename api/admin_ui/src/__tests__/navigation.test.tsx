@@ -432,6 +432,17 @@ describe('the console shell', () => {
     expect(opened).not.toContain('delivery/freeswitch');
   }, 120000);
 
+  it('puts the focus on the heading of a page that shows it only once its data has loaded', async () => {
+    grant('settings:read', 'diagnostics:read');
+    window.history.replaceState(null, '', '/#/admin/roles');
+    await signIn();
+    await screen.findByRole('heading', { name: 'Roles' });
+    // Overview shows a spinner first; its heading takes the focus once it appears.
+    act(() => { window.location.hash = '#/overview'; });
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Overview' });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+  });
+
   it('keeps the old destination names working', async () => {
     grant('settings:read', 'diagnostics:read');
     await signIn();
