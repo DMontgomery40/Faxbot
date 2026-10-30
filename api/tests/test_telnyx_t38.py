@@ -128,6 +128,41 @@ def test_the_check_reads_each_number_and_its_connection_with_gets_only(client, t
     assert '1293384261075731499' not in json.dumps(report)
 
 
+@pytest.mark.parametrize('api_status, engine_status, expected', [
+    ('Not Registered', 'Registered', 'registered'),
+    ('Registered', 'Rejected', 'rejected'),
+    ('Registered', 'Unregistered', 'not_registered'),
+    ('Registered', '', 'unknown'),
+])
+def test_registration_comes_from_asterisk_despite_telnyx_api_status(
+        client, telnyx, monkeypatch, api_status, engine_status, expected):
+    """Issue #72: Telnyx's connection field can contradict the actual SIP registration."""
+    from app.ami import ami_client
+
+    telnyx.connections['1494404757140276705']['registration_status'] = api_status
+    telnyx.numbers[FIRST]['media_features']['t38_fax_gateway_enabled'] = True
+    _check(client)
+    # Prove the contradictory field was returned by the mocked connection read.
+    assert any(request.url.path.startswith('/v2/credential_connections/') for request in telnyx.requests)
+    report = client.get('/admin/sip/telnyx', headers=ADMIN).json()
+    assert report['ready'] is True  # T.38 configuration is independent of registration.
+    assert 'registration_status' not in json.dumps(telnyx_t38.read(_values(client)))
+
+    async def status_query(fields, *, collect=False):
+        if fields['Action'] == 'PJSIPShowRegistrationsOutbound':
+            return ({'response': 'Success'}, [
+                {'ObjectName': 'trunk-registration', 'Status': engine_status, 'Transport': 'transport-tls'}])
+        return {'response': 'Success', 'value': 'NOT_INUSE'}, []
+
+    monkeypatch.setattr(ami_client, 'status_query', status_query)
+    monkeypatch.setattr(ami_client._connected, 'is_set', lambda: True)
+    status = client.get('/admin/sip/status', headers=ADMIN).json()
+    assert status['registration'] == expected
+    if expected == 'registered':
+        assert status['registration_transport'] == 'tls'
+        assert status['registration_text'] == "The carrier accepted Faxbot's registration over TLS."
+
+
 def test_all_numbers_on_and_the_connection_ready(client, telnyx):
     telnyx.numbers[FIRST]['media_features']['t38_fax_gateway_enabled'] = True
     _check(client)

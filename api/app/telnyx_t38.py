@@ -138,7 +138,11 @@ class Telnyx:
         return data
 
     def connection(self, connection_id):
-        """(user name or None, T.38 re-invite source or None) of the number's connection."""
+        """(user name or None, T.38 re-invite source or None) of the number's connection.
+
+        Ignore Telnyx's registration_status: it can say "Not Registered" while
+        Asterisk is registered (issue #72). sip_http reads registration from AMI.
+        """
         for kind in ('credential_connections', 'ip_connections', 'fqdn_connections'):
             try:
                 data = self._call('GET', f'/{kind}/{connection_id}')
