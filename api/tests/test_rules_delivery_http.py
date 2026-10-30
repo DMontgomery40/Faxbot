@@ -257,8 +257,8 @@ def _signed_in(client, login):
     return {**cookie, 'Origin': ORIGIN, 'X-CSRF-Token': client.get('/auth/me', headers=cookie).json()['csrf_token']}
 
 
-def _integration_key(client, admin, name):
-    """An integration (an API key's owner) whose key may approve faxes."""
+def _integration_keys(client, admin, name, *key_names):
+    """An integration (an API key's owner) and its keys by name, each of which may approve faxes."""
     def policy():
         return client.get('/auth/me', headers=admin).json()['policy_version']
     integration = client.post('/access/integrations', headers=admin, json={
@@ -272,20 +272,24 @@ def _integration_key(client, admin, name):
         'role': {'id': 'role_administrator', 'version': roles['role_administrator']['version']},
         'resource_id': 'installation', 'expected_policy_version': policy()})
     assert granted.status_code == 200, granted.text
-    issued = client.post('/access/keys', headers=admin, json={
-        'principal': {'id': integration['id'], 'version': version()}, 'name': 'sync key', 'note': None,
-        'expires_at': None, 'ceiling': [{'permission': permission, 'resource_id': 'installation'}
-                                        for permission in ('fax:approve', 'fax:read')],
-        'expected_policy_version': policy()})
-    assert issued.status_code == 200, issued.text
-    return {'X-API-Key': issued.json()['token']}
+    keys = {}
+    for key_name in key_names:
+        issued = client.post('/access/keys', headers=admin, json={
+            'principal': {'id': integration['id'], 'version': version()}, 'name': key_name, 'note': None,
+            'expires_at': None, 'ceiling': [{'permission': permission, 'resource_id': 'installation'}
+                                            for permission in ('fax:approve', 'fax:read')],
+            'expected_policy_version': policy()})
+        assert issued.status_code == 200, issued.text
+        keys[key_name] = {'X-API-Key': issued.json()['token']}
+    return keys
 
 
 def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
     """D26: on acceptance Sent showed "Refused by Installation bootstrap: Telnyx account disabled for a negative
     balanc". Sent's list and details, GET /fax/{id} and faxbot faxes sent list and show now lead with "Not sent:" and
-    the reason, whole; a person who decided is named, an API key only in the fax's details, and the installation
-    key never by its internal name. The stored sentence is unchanged."""
+    the reason, whole; a person who decided is named; an API key is named only in the fax's details, by the key's
+    own name and the integration it belongs to, so two keys of one integration are told apart; and the
+    installation key is never named by its internal name. The stored sentence is unchanged."""
     from api.tests.test_cli import BOOTSTRAP
     from api.tests.test_cli_work import ready_user
     cli, tmp_path = ruled_cli
@@ -305,7 +309,10 @@ def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
     balance = 'Telnyx account disabled for a negative balance; add funds in the Telnyx portal under Billing'
     installation, said = refuse(admin, balance)
     assert said == f'Not sent: {balance}. Decided through an API key.'
-    integration, _ = refuse(_integration_key(client, admin, 'Billing sync'), 'duplicate of an earlier fax')
+    keys = _integration_keys(client, admin, 'Billing sync', 'sync key', 'backup key')
+    integration, _ = refuse(keys['sync key'], 'duplicate of an earlier fax')
+    backup, said = refuse(keys['backup key'], 'sent by mistake')
+    assert said == 'Not sent: sent by mistake. Decided through an API key.'
     ready_user(client, 'dana', 'Dana Ruiz', role='role_administrator')
     person, said = refuse(_signed_in(client, 'dana'), 'wrong recipient')
     assert said == 'Not sent: wrong recipient. Decided by Dana Ruiz.'
@@ -318,22 +325,27 @@ def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
 
     listed = {job['id']: job for job in client.get('/admin/fax-jobs', headers=admin).json()['jobs']}
     shown = {job: (listed[job]['error'], client.get(f'/admin/fax-jobs/{job}', headers=admin).json()['refusal'])
-             for job in (installation, integration, person)}
+             for job in (installation, integration, backup, person)}
     assert shown == {
         installation: (f'Not sent: {balance}. Decided through an API key.',
                        {'sentence': f'Not sent: {balance}.', 'decided_by': 'Decided through an API key.',
                         'decided_by_detail': 'Decided through the installation key.'}),
         integration: ('Not sent: duplicate of an earlier fax. Decided through an API key.',
                       {'sentence': 'Not sent: duplicate of an earlier fax.', 'decided_by': 'Decided through an API key.',
-                       'decided_by_detail': 'Decided through the API key ‘Billing sync’.'}),
+                       'decided_by_detail': 'Decided through the API key ‘sync key’, which belongs to '
+                                            '‘Billing sync’.'}),
+        backup: ('Not sent: sent by mistake. Decided through an API key.',
+                 {'sentence': 'Not sent: sent by mistake.', 'decided_by': 'Decided through an API key.',
+                  'decided_by_detail': 'Decided through the API key ‘backup key’, which belongs to ‘Billing sync’.'}),
         person: ('Not sent: wrong recipient. Decided by Dana Ruiz.',
                  {'sentence': 'Not sent: wrong recipient.', 'decided_by': 'Decided by Dana Ruiz.',
                   'decided_by_detail': 'Decided by Dana Ruiz.'})}
-    for job in (installation, integration, person):
+    for job in (installation, integration, backup, person):
         assert client.get(f'/fax/{job}', headers=admin).json()['error'] == listed[job]['error']
     for job in listed.values():
         assert 'Installation bootstrap' not in str(job), job
-    assert all('Billing sync' not in str(job['error']) for job in listed.values())
+    assert all(name not in str(job['error']) for job in listed.values()
+               for name in ('Billing sync', 'sync key', 'backup key'))
     long_error = listed[long_job]['error']
     assert long_error.endswith('… Decided through an API key.') and long_error.startswith('Not sent: word000 ')
     kept = long_error[len('Not sent: '):-len('… Decided through an API key.')].split(' ')
@@ -353,9 +365,13 @@ def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
     listed_text = _cli_ok(cli('sent', 'list'))
     assert 'Failed. Not sent: duplicate of an earlier fax. Decided through an API key.' in listed_text
     assert 'Failed. Not sent: wrong recipient. Decided by Dana Ruiz.' in listed_text
-    assert 'Installation bootstrap' not in listed_text and 'Billing sync' not in listed_text
+    assert 'Failed. Not sent: sent by mistake. Decided through an API key.' in listed_text
+    for name in ('Installation bootstrap', 'Billing sync', 'sync key', 'backup key'):
+        assert name not in listed_text
     assert f'Problem Not sent: {balance}. Decided through the installation key.' in _cli_ok(
         cli('sent', 'show', installation))
-    assert 'Problem Not sent: duplicate of an earlier fax. Decided through the API key ‘Billing sync’.' in _cli_ok(
-        cli('sent', 'show', integration))
+    assert ('Problem Not sent: duplicate of an earlier fax. Decided through the API key ‘sync key’, which belongs to '
+            '‘Billing sync’.') in _cli_ok(cli('sent', 'show', integration))
+    assert ('Problem Not sent: sent by mistake. Decided through the API key ‘backup key’, which belongs to '
+            '‘Billing sync’.') in _cli_ok(cli('sent', 'show', backup))
     assert 'Problem Not sent: wrong recipient. Decided by Dana Ruiz.' in _cli_ok(cli('status', person))

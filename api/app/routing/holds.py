@@ -167,8 +167,8 @@ def tried_sentence(labels):
 
 # A refused fax, as Sent and the command line show it. The stored sentence stays as ``refuse`` wrote it
 # ("Refused by <name>: <reason>", in the hold and as the fax's error); only its showing changes. It leads with what
-# happened, names the person who decided, and says only "an API key" for a key: the key's own name is shown in the
-# fax's details, where someone may need to tell keys apart.
+# happened, names the person who decided, and says only "an API key" for a key: the key's own name, and the
+# integration it belongs to, are shown in the fax's details, where someone may need to tell keys apart.
 REFUSED_BY = 'Refused by {name}: '
 NO_NAME = 'someone with Approve faxes'
 STORED_LIMIT = 500
@@ -184,21 +184,27 @@ def not_sent_sentence(reason):
     return f'Not sent: {reason}' + ('' if reason[-1] in '.!?…' else '.')
 
 
-def decided_by(kind, name):
-    """(for a list, for the fax's details): who refused it. A person by name; the installation key and other API keys
-    never by name in a list. (None, None) when Faxbot can't tell."""
+def decided_by(kind, name, key=None):
+    """(for a list, for the fax's details): who refused it. A person by name. An API key never by name in a list; in
+    the details, an integration's key by its own name (``key``, when Faxbot knows which key it was) and the
+    integration it belongs to (``name``), and the installation key only as that. (None, None) when Faxbot can't
+    tell."""
     if kind == 'user':
         return (f'Decided by {name}.',) * 2 if name else (None, None)
     if kind == 'bootstrap':
         return THROUGH_A_KEY, THROUGH_THE_INSTALLATION_KEY
     if kind == 'integration':
-        return THROUGH_A_KEY, f'Decided through the API key ‘{name}’.' if name else THROUGH_A_KEY
+        if key and name:
+            return THROUGH_A_KEY, f'Decided through the API key ‘{key}’, which belongs to ‘{name}’.'
+        if key:
+            return THROUGH_A_KEY, f'Decided through the API key ‘{key}’.'
+        return THROUGH_A_KEY, f'Decided through an API key that belongs to ‘{name}’.' if name else THROUGH_A_KEY
     return None, None
 
 
-def shown_refusal(stored, *, name, kind):
+def shown_refusal(stored, *, name, kind, key=None):
     """``{'sentence', 'decided_by', 'decided_by_detail'}`` for the stored refusal sentence, decided by ``name`` (as
-    the hold kept it) whose principal is ``kind``.
+    the hold kept it) whose principal is ``kind``, through the API key named ``key`` when Faxbot knows it.
 
     The reason is what follows the stored "Refused by <name>: ". A sentence that reaches the stored limit may have
     been cut there, so it ends with an ellipsis: at its last whole word, never mid-word, or after the one long word
@@ -214,7 +220,7 @@ def shown_refusal(stored, *, name, kind):
         if ' ' in reason:
             reason = reason[:reason.rfind(' ')].rstrip(' ,;:')
         reason += '…'
-    short, detail = decided_by(kind, name)
+    short, detail = decided_by(kind, name, key)
     return {'sentence': not_sent_sentence(reason), 'decided_by': short, 'decided_by_detail': detail}
 
 
@@ -245,8 +251,32 @@ def refusals_on(connection, errors):
         if row['reason'] == wanted[row['job_id']]:
             decided.setdefault(row['job_id'], row)
     kinds = _principal_kinds_on(connection, [row['decided_by_principal_id'] for row in decided.values()])
-    return {job: shown_refusal(wanted[job], name=row['decided_by_name'],
-                               kind=kinds.get(row['decided_by_principal_id'])) for job, row in decided.items()}
+    keys = _refusing_keys_on(connection, {job: row['decided_by_principal_id'] for job, row in decided.items()
+                                          if kinds.get(row['decided_by_principal_id']) == 'integration'})
+    return {job: shown_refusal(wanted[job], name=row['decided_by_name'], kind=kinds.get(row['decided_by_principal_id']),
+                               key=keys.get(job)) for job, row in decided.items()}
+
+
+def _refusing_keys_on(connection, deciders):
+    """``{job_id: key name}``: the API key each fax in ``deciders`` (``{job_id: the principal who refused it}``) was
+    refused through, from the refusal's audit row; the hold keeps only who the key belongs to. A fax whose key
+    Faxbot can't tell, or whose key has no name, is left out."""
+    if not deciders:
+        return {}
+    audit = sa.table('access_audit', sa.column('actor_principal_id'), sa.column('actor_key_binding_id'),
+                     sa.column('operation'), sa.column('target_kind'), sa.column('target_id'), sa.column('created_at'))
+    keys = sa.table('api_keys', sa.column('id'), sa.column('name'))
+    targets = {f'fax:{job}'[:100]: job for job in deciders}
+    found = {}
+    for target, principal, name in connection.execute(
+            sa.select(audit.c.target_id, audit.c.actor_principal_id, keys.c.name)
+            .select_from(audit.join(keys, keys.c.id == audit.c.actor_key_binding_id))
+            .where(audit.c.operation == OPERATIONS['refuse'], audit.c.target_kind == 'installation',
+                   audit.c.target_id.in_(list(targets)))
+            .order_by(audit.c.created_at)):
+        if principal == deciders[targets[target]]:
+            found[targets[target]] = name   # the latest refusal's key
+    return {job: name for job, name in found.items() if name}
 
 
 def refusal_text_on(connection, job_id, error):

@@ -560,6 +560,19 @@ def test_a_refusal_is_shown_as_what_happened_then_who_decided():
                          kind='bootstrap') == {'sentence': 'Not sent: duplicate.',
                                                'decided_by': 'Decided through an API key.',
                                                'decided_by_detail': 'Decided through the installation key.'}
+    # An integration's key: only "an API key" in a list; in the details the key by its own name and the integration
+    # it belongs to, or the integration alone when Faxbot can't tell which of its keys it was.
+    assert shown_refusal('Refused by Billing sync: duplicate', name='Billing sync', kind='integration',
+                         key='sync key') == {
+        'sentence': 'Not sent: duplicate.', 'decided_by': 'Decided through an API key.',
+        'decided_by_detail': 'Decided through the API key ‘sync key’, which belongs to ‘Billing sync’.'}
+    assert shown_refusal('Refused by Billing sync: duplicate', name='Billing sync', kind='integration')[
+        'decided_by_detail'] == 'Decided through an API key that belongs to ‘Billing sync’.'
+    assert shown_refusal('Refused by someone with Approve faxes: duplicate', name=None, kind='integration',
+                         key='sync key')['decided_by_detail'] == 'Decided through the API key ‘sync key’.'
+    # The installation key is never named, whatever key name is passed.
+    assert shown_refusal('Refused by Installation bootstrap: duplicate', name='Installation bootstrap',
+                         kind='bootstrap', key='env')['decided_by_detail'] == 'Decided through the installation key.'
     # No name was recorded: the reason still leads, and no one is named.
     assert shown_refusal('Refused by someone with Approve faxes: wrong recipient', name=None, kind=None) == {
         'sentence': 'Not sent: wrong recipient.', 'decided_by': None, 'decided_by_detail': None}
