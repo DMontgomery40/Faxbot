@@ -23,13 +23,14 @@ import NumberPlacement from './NumberPlacement';
 import SiteAdvice from './SiteAdvice';
 import FaxServerRenewal from './FaxServerRenewal';
 import PotsCounterQuote from './PotsCounterQuote';
+import FactAdvice from './FactAdvice';
 
 export const NO_RECOMMENDATIONS = 'Nothing to suggest yet. Cheaper routes for the numbers you fax will appear here.';
 
 type Section = 'sending' | 'receiving' | 'plans' | 'carriers' | 'marker' | 'steps' | 'partners' | 'discovery'
-  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal' | 'pots';
+  | 'tollFree' | 'pages' | 'relays' | 'trunks' | 'numbers' | 'sites' | 'renewal' | 'pots' | 'facts';
 const SECTIONS: Section[] = ['sending', 'receiving', 'plans', 'carriers', 'marker', 'steps', 'partners', 'discovery',
-  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal', 'pots'];
+  'tollFree', 'pages', 'relays', 'trunks', 'numbers', 'sites', 'renewal', 'pots', 'facts'];
 
 // Each section's name, for the line that stands in for a section the address names that has nothing yet; the
 // same names as the savings map's advice cards.
@@ -39,7 +40,7 @@ const SECTION_TITLES: Record<Section, string> = {
   partners: 'Partner candidates', discovery: 'Recipients that run Faxbot', tollFree: 'Toll-free numbers on file',
   pages: 'Time lighter shading would save', relays: 'Partners that could relay', trunks: 'Your trunks compared',
   numbers: 'Where each number should live', sites: 'Calls by state', renewal: 'Fax server renewal',
-  pots: 'Fax lines in a POTS-replacement order',
+  pots: 'Fax lines in a POTS-replacement order', facts: 'Facts to establish',
 };
 
 // The element id of one section's anchor.
@@ -100,6 +101,9 @@ export default function Recommendations({ client, canWrite = false, onNavigate, 
             <Typography variant="body1" color="text.secondary" data-testid="recommendations-empty">{NO_RECOMMENDATIONS}</Typography>
           </Paper>
         )}
+        <Anchor section="facts" focus={focus} count={counts.facts}>
+          <FactAdvice client={client} embedded onCount={callbacks.facts} />
+        </Anchor>
         <Anchor section="sending" focus={focus} count={counts.sending}>
           <SendingRecommendations client={client} canWrite={canWrite} onCount={callbacks.sending} onNavigate={onNavigate} />
         </Anchor>

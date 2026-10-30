@@ -15,6 +15,7 @@ from ..output import money
 # -- what a missing fact costs you ----------------------------------------------------------------------------------
 
 def show_facts(out, result):
+    out.line(f"Evidence period: last {result['days']} days.")
     out.line(result.get('sentence') or '')
     for item in result.get('recipients') or []:
         out.line('')
@@ -24,6 +25,10 @@ def show_facts(out, result):
             out.line(item['sentence'])
         for row in item.get('facts') or []:
             out.line(f"  {row['title']}: {row['sentence']}")
+            out.line(f"    Effort: {row['establish']}.")
+            if row['unknown'] or not row['net']:
+                out.line('    Expected benefit: unknown.')
+            out.line('    Cautious benefit: unknown.')
             out.line(f"    {row['confirm']}")
             out.line(f"    {row['step']}")
     out.line('')

@@ -392,6 +392,7 @@ $ faxbot savings opportunities [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `facts`: Show missing facts, recipient agreements...
 * `sending`: Show numbers where another route cost less...
 * `receiving`: Show which numbers could share incoming...
 * `plans`: Show whether each monthly plan is worth...
@@ -410,6 +411,20 @@ $ faxbot savings opportunities [OPTIONS] COMMAND [ARGS]...
 * `renewal`: One page for a fax server&#x27;s renewal; record it with --system.
 * `import-routing`: Import a fax server&#x27;s number-to-user routing (number, user, email, cover sheet).
 * `pots`: Take the fax lines out of a POTS-replacement order: the counter-quote.
+
+#### `faxbot savings opportunities facts`
+
+Show missing facts, recipient agreements and prices that could open a cheaper route. Advice only.
+
+**Usage**:
+
+```console
+$ faxbot savings opportunities facts [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
 
 #### `faxbot savings opportunities sending`
 

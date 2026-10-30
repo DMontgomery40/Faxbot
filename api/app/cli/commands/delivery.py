@@ -881,6 +881,8 @@ def _show_relay_advice(out, result):
 
 # Each section of `faxbot savings opportunities`: (key in --json output, heading, read(api), show(out, data)).
 RECOMMENDATION_SECTIONS = [
+    ('facts', 'Facts to establish', lambda api: api.get('/routing/recommendations/facts'),
+     lambda out, result: _fact_advice().show_facts(out, result)),
     ('sending', 'Sending', _read_sending, _show_sending),
     ('receiving', 'Receiving', _read_receiving, print_receiving),
     ('plans', 'Plans', _read_plans, show_plans),
@@ -898,6 +900,11 @@ RECOMMENDATION_SECTIONS = [
     ('sites', 'Which site calls cost less from', lambda api: _number_advice().read_sites(api),
      lambda out, result: _number_advice().show_sites(out, result)),
 ]
+
+
+def _fact_advice():
+    from . import fact_advice
+    return fact_advice
 
 
 def _number_advice():
@@ -954,6 +961,9 @@ def _section(read, show):
 
 
 for _name, _read, _show, _help in (
+        ('facts', lambda api: api.get('/routing/recommendations/facts'),
+         lambda out, result: _fact_advice().show_facts(out, result),
+         'Show missing facts, recipient agreements and prices that could open a cheaper route. Advice only.'),
         ('sending', _read_sending, _show_sending,
          'Show numbers where another route cost less per delivered fax in the last 30 days.'),
         ('receiving', _read_receiving, print_receiving,

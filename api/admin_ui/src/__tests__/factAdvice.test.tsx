@@ -7,7 +7,7 @@ import type { FactAdvice as Advice } from '../api/factAdviceTypes';
 import FactAdvice from '../components/delivery/FactAdvice';
 
 type Request = { method: string; path: string; body?: unknown };
-const usd = (amount: string) => [{ currency: 'USD', amount }];
+import fixture from './opportunitiesFacts.json';
 
 function fakeClient(answers: Record<string, unknown>, requests: Request[] = []) {
   const client = new AdminAPIClient({ kind: 'key', key: 'synthetic-key' });
@@ -22,26 +22,7 @@ function fakeClient(answers: Record<string, unknown>, requests: Request[] = []) 
   return client;
 }
 
-const advice: Advice = {
-  days: 90, state: 'advice', estimate: true,
-  sentence: 'Establishing one fact would have made faxes to 1 recipient cheaper or priced over the last 90 days.',
-  recipients: [{
-    number: '+13035550124', display: '+1 303-555-0124', name: 'Synthetic Lab', kind: 'recipient', faxes: 2,
-    baseline: usd('0.02'), unpriced: 0, largest: usd('0.02'),
-    sentence: '2 faxes to Synthetic Lab cost $0.02 by the best route you may use (estimate).',
-    facts: [{
-      fact: 'toll_free', kind: 'authorization', title: 'No recorded approval for their toll-free number', boundary: true,
-      saving: usd('0.02'), net: usd('0.02'), faxes: 2, establish_cost: [], establish: 'about 10 minutes of your time',
-      confirm: 'Someone at Synthetic Lab must agree that you fax +1 800-555-0199; they pay for those calls.',
-      step: 'Record who agreed and when under Recipients → Details.', chance: null, break_even: null, unknown: false,
-      realized: false,
-      sentence: 'Would have cost $0.02 less over 2 faxes (estimate). Establishing it takes about 10 minutes of your time. Faxbot will not use it until then.',
-    }],
-  }],
-  realized: 'These figures are what your faxes would have cost, not savings. Once a fact is established and used, Costs → Savings counts what it really saved.',
-  note: 'Faxbot only advises: it never enrolls a partner, records an approval, enters a price or changes a route for you.',
-  catalogue: [], assumptions: ["Each fax of the last 90 days is priced again at today's prices and plan use, by its page count."],
-};
+const advice: Advice = fixture.advice as Advice;
 
 describe('Costs → Advice', () => {
   it('shows each recipient with its facts, who must confirm, and that these are not savings', async () => {
