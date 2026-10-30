@@ -5,6 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(process.argv[2]);
 const ts = require(path.join(__dirname, '..', 'admin_ui', 'node_modules', 'typescript'));
+const {reachableFiles} = require('./console_reachable.cjs');
+const reached = new Set(reachableFiles(root));
 const HOLE = '\x00';
 function files(dir) {
   return fs.readdirSync(dir, {withFileTypes: true}).flatMap(entry => {
@@ -14,6 +16,8 @@ function files(dir) {
   });
 }
 const sourceFiles = files(root);
+const screens = sourceFiles.filter(file => reached.has(file) && !file.startsWith(path.join(root, 'api') + path.sep));
+
 const program = ts.createProgram(sourceFiles, {target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
   jsx: ts.JsxEmit.ReactJSX, skipLibCheck: true, noEmit: true});
@@ -157,7 +161,7 @@ function invoke(node, env, stack, found) {
   }
   visit(decl.body);
 }
-for (const fileName of sourceFiles) {
+for (const fileName of screens) {
   const file = program.getSourceFile(fileName);
   if (fileName.startsWith(path.join(root, 'api') + path.sep)) continue;
   // Plain .ts helper factories are reached by signature resolution from their
@@ -183,4 +187,4 @@ function members(node) {
   ts.forEachChild(node, members);
 }
 members(client);
-process.stdout.write(JSON.stringify({calls: [...requests.values()], methods: methodRequests}));
+process.stdout.write(JSON.stringify({calls: [...requests.values()], methods: methodRequests, screens}));

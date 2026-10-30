@@ -1,7 +1,8 @@
 """Every configuration value can be set from the command line and has a place in the console.
 
 Each field of ConfigurationValues is accepted by `faxbot admin settings set` and its
-name appears in a console screen (api/admin_ui/src outside api/, tests and
+name appears in a reachable console screen (used value imports from main.tsx,
+api/admin_ui/src outside api/, tests and
 mocks excluded: the API client and the type files are not a place), unless
 READ_ONLY_OR_ENV says why not. AWAITING_CONSOLE holds the
 fields the console has not placed yet: whoever places one removes its entry in

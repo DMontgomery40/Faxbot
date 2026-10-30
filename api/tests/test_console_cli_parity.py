@@ -3,7 +3,7 @@
 Routes come from the application table, as in test_route_policy_coverage.py. A
 route counts as called when a command line HTTP request (api/app/cli) matches
 it, or when a console screen invokes that request directly or through an API
-client or helper method (api/admin_ui/src outside
+client or helper method reachable through used value imports from main.tsx (api/admin_ui/src outside
 api/, tests and mocks excluded). The API client and the type files alone never
 count, so a client method no screen uses leaves its route without a console
 caller. Paths match segment by segment; a value filled in at run time matches
@@ -167,17 +167,9 @@ def _routes():
 
 # -- callers -------------------------------------------------------------------------
 
-def _console_files():
-    for path in sorted(CONSOLE_SOURCE.rglob('*')):
-        relative = path.relative_to(CONSOLE_SOURCE)
-        if (path.suffix in {'.ts', '.tsx'} and not {'__tests__', 'test', 'mocks'} & set(relative.parts)
-                and not re.search(r'\.(test|spec)\.tsx?$', path.name)):
-            yield path
-
-
 def screen_files():
-    """Components, hooks and shell files; API declarations alone never count."""
-    return [path for path in _console_files() if path.relative_to(CONSOLE_SOURCE).parts[0] != 'api']
+    """Used application value imports only; orphan screens and API declarations do not count."""
+    return [Path(name) for name in _console_inventory()['screens']]
 
 
 @lru_cache(maxsize=1)
@@ -486,6 +478,8 @@ export function Screen(client: AdminAPIClient) {
   helper(client).confirm('synthetic');
 }
 """)
+    (source / 'main.tsx').write_text("import {Screen} from './Screen'; Screen(new (class {})() as never);")
+    (source / 'Orphan.tsx').write_text("import AdminAPIClient from './api/client'; export const orphan = (client: AdminAPIClient) => client.unusedCreate();")
     result = subprocess.run(['node', str(Path(__file__).with_name('console_route_calls.cjs')), str(source)],
                             check=True, capture_output=True, text=True, timeout=90)
     calls = _callers((entry['method'], entry['path']) for entry in json.loads(result.stdout)['calls'])
@@ -496,3 +490,16 @@ export function Screen(client: AdminAPIClient) {
     assert not _called(('PUT', '/items'), calls)
     assert not _called(('POST', '/unused-helper'), calls)
     assert not _called(('GET', '/not-requested'), calls)
+
+
+def test_console_reachability_rejects_orphans_and_unused_or_type_only_imports():
+    subprocess.run(['node', '--test', str(Path(__file__).with_name('console_reachable.test.cjs'))],
+                   check=True, capture_output=True, text=True, timeout=90)
+
+
+def test_control_family_sources_remain_reachable_from_the_application():
+    ledger = json.loads((CONSOLE_SOURCE / '__tests__' / 'controlLedger.json').read_text())
+    reached = {str(path.relative_to(CONSOLE_SOURCE)) for path in screen_files()}
+    missing = [f"{row['id']}: {source}" for row in ledger['controls']
+               for source in row['sources'] if source not in reached]
+    assert not missing, 'Control-family sources disconnected from the application:\n' + '\n'.join(missing)

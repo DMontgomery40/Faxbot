@@ -1,0 +1,987 @@
+{
+  "source": "GitHub #46 appendices A and B; #48 preservation rule; #64",
+  "boundary": "Source reachability and page gates only; not rendered controls, mutation permissions, validation or activation proof.",
+  "controls": [
+    {
+      "id": "O01",
+      "family": "Send a fax",
+      "home": "faxes/send",
+      "gate": {
+        "navigation": "send"
+      },
+      "sources": [
+        "components/SendFax.tsx",
+        "components/ProviderRulesSendFields.tsx"
+      ]
+    },
+    {
+      "id": "O02",
+      "family": "Sent records",
+      "home": "faxes/sent",
+      "gate": {
+        "navigation": "jobs"
+      },
+      "sources": [
+        "components/JobsList.tsx"
+      ]
+    },
+    {
+      "id": "O03",
+      "family": "Held faxes",
+      "home": "faxes/sent",
+      "gate": {
+        "navigation": "jobs"
+      },
+      "sources": [
+        "components/ProviderRulesHeld.tsx"
+      ]
+    },
+    {
+      "id": "O04",
+      "family": "Uncertain outcomes",
+      "home": "faxes/sent",
+      "gate": {
+        "navigation": "jobs"
+      },
+      "sources": [
+        "components/work/SentCertainty.tsx",
+        "components/work/SentContinuation.tsx"
+      ]
+    },
+    {
+      "id": "O05",
+      "family": "Received/work",
+      "home": "faxes/received",
+      "gate": {
+        "navigation": [
+          "inbox",
+          "work"
+        ]
+      },
+      "sources": [
+        "components/Received.tsx",
+        "components/work/WorkDetail.tsx",
+        "components/ImportDocument.tsx"
+      ]
+    },
+    {
+      "id": "O06",
+      "family": "Expected faxes",
+      "home": "faxes/expected",
+      "gate": {
+        "anyOf": [
+          "work:read",
+          "work:import"
+        ]
+      },
+      "sources": [
+        "components/expected/ExpectedFaxes.tsx"
+      ]
+    },
+    {
+      "id": "O07",
+      "family": "Expected-work import and outage recovery",
+      "home": "faxes/expected",
+      "gate": {
+        "anyOf": [
+          "work:read",
+          "work:import"
+        ]
+      },
+      "sources": [
+        "components/expected/ExpectedImport.tsx",
+        "components/expected/ExpectedOutages.tsx"
+      ]
+    },
+    {
+      "id": "O08",
+      "family": "Registered forms",
+      "home": "faxes/forms",
+      "gate": {
+        "anyOf": [
+          "settings:read",
+          "fax:send"
+        ]
+      },
+      "sources": [
+        "components/forms/Forms.tsx"
+      ]
+    },
+    {
+      "id": "O09",
+      "family": "Recipient identity/routing",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/Destinations.tsx"
+      ]
+    },
+    {
+      "id": "O10",
+      "family": "Batch short faxes",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/SendingTogether.tsx"
+      ]
+    },
+    {
+      "id": "O11",
+      "family": "Encoded pages",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/EncodedPages.tsx"
+      ]
+    },
+    {
+      "id": "O12",
+      "family": "Page/coding efficiency",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/PagesSettings.tsx",
+        "components/delivery/RecipientCodingTuning.tsx",
+        "components/delivery/DeliverySettings.tsx"
+      ]
+    },
+    {
+      "id": "O13",
+      "family": "Recipient line compatibility",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/RecipientFaxLimits.tsx",
+        "components/delivery/FaxMachinePanel.tsx"
+      ]
+    },
+    {
+      "id": "O14",
+      "family": "Recipient availability",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/RecipientSchedule.tsx"
+      ]
+    },
+    {
+      "id": "O15",
+      "family": "Poll/hold",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/RecipientPolling.tsx"
+      ]
+    },
+    {
+      "id": "O16",
+      "family": "Toll-free alternate",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/TollFreeApproval.tsx"
+      ]
+    },
+    {
+      "id": "O17",
+      "family": "Digital alternative",
+      "home": "recipients/list",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/RecipientDigital.tsx"
+      ]
+    },
+    {
+      "id": "O18",
+      "family": "Verified partners",
+      "home": "recipients/partners",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/DirectPartners.tsx"
+      ]
+    },
+    {
+      "id": "O19",
+      "family": "Partner discovery",
+      "home": "recipients/partners",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/FindPartners.tsx"
+      ]
+    },
+    {
+      "id": "O20",
+      "family": "Partner relay",
+      "home": "recipients/partners",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/PartnerRelay.tsx"
+      ]
+    },
+    {
+      "id": "O21",
+      "family": "Send-once intake agreements and partner activity",
+      "home": "recipients/partners",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/PartnerSendOnce.tsx",
+        "components/delivery/PartnerActivity.tsx"
+      ]
+    },
+    {
+      "id": "O22",
+      "family": "Case packets and reuse",
+      "home": "faxes/cases",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/CasePackets.tsx",
+        "components/delivery/CaseLedgerTable.tsx"
+      ]
+    },
+    {
+      "id": "O23",
+      "family": "Checklist packet building",
+      "home": "faxes/cases",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/CaseChecklistBuilder.tsx"
+      ]
+    },
+    {
+      "id": "O24",
+      "family": "Delivery rules",
+      "home": "delivery/rules",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/ProviderRules.tsx",
+        "components/ProviderRulesEditor.tsx",
+        "components/ProviderRulesDefinitions.tsx"
+      ]
+    },
+    {
+      "id": "O25",
+      "family": "Receiving-rule forwarding trust",
+      "home": "delivery/rules",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/ProviderRulesReceiving.tsx"
+      ]
+    },
+    {
+      "id": "O26",
+      "family": "Numbers/mailboxes/identity",
+      "home": "delivery/mailboxes",
+      "gate": {
+        "anyOf": [
+          "mailboxes:read",
+          "mailboxes:manage",
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/ResourceAccess.tsx",
+        "components/work/WorkSettingsPanel.tsx"
+      ]
+    },
+    {
+      "id": "O27",
+      "family": "Number economics/moves",
+      "home": "delivery/moves",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/NumberMoves.tsx",
+        "components/NpiRecord.tsx",
+        "components/BlockedSenders.tsx"
+      ]
+    },
+    {
+      "id": "O28",
+      "family": "Intake connectors",
+      "home": "delivery/connectors",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/Connectors.tsx"
+      ]
+    },
+    {
+      "id": "O29",
+      "family": "Email delivery",
+      "home": "delivery/email",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/EmailDelivery.tsx",
+        "components/delivery/DeliverySettings.tsx"
+      ]
+    },
+    {
+      "id": "O30",
+      "family": "Prices/plans",
+      "home": "savings/prices",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/RateCards.tsx",
+        "components/delivery/OriginRateRows.tsx",
+        "components/delivery/PlanBudgets.tsx"
+      ]
+    },
+    {
+      "id": "O31",
+      "family": "Cost evidence",
+      "home": "savings/charges",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/Spending.tsx",
+        "components/delivery/Charges.tsx",
+        "components/delivery/Invoices.tsx"
+      ]
+    },
+    {
+      "id": "O32",
+      "family": "Opportunity advice",
+      "home": "savings/opportunities",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/Recommendations.tsx",
+        "components/delivery/SiteAdvice.tsx",
+        "components/ProviderRulesSuggest.tsx"
+      ]
+    },
+    {
+      "id": "O33",
+      "family": "Setup packs",
+      "home": "admin/setup",
+      "gate": {
+        "anyOf": [
+          "settings:write"
+        ]
+      },
+      "sources": [
+        "components/SetupPacks.tsx"
+      ]
+    },
+    {
+      "id": "O34",
+      "family": "Account/provider/direct configuration",
+      "home": "delivery/connections",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/DeliverySettings.tsx",
+        "components/delivery/ReceivingAddresses.tsx"
+      ]
+    },
+    {
+      "id": "O35",
+      "family": "Capability/result exploration",
+      "home": "savings/capabilities",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/SavingsMap.tsx",
+        "components/delivery/Savings.tsx",
+        "components/Dashboard.tsx"
+      ]
+    },
+    {
+      "id": "O36",
+      "family": "Shell/access/system/developer controls",
+      "home": "admin/security",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/shell/UserMenu.tsx",
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S01",
+      "family": "Sending/receiving provider independently, enable sending/receiving, country",
+      "home": "delivery/connections",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx",
+        "components/common/ProviderDirections.tsx",
+        "components/SetupWizard.tsx"
+      ]
+    },
+    {
+      "id": "S02",
+      "family": "Phaxio API key/secret, callback token/address, status and inbound signature checks",
+      "home": "delivery/phaxio",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S03",
+      "family": "Sinch project/key/secret/base/webhook URLs",
+      "home": "delivery/sinch",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S04",
+      "family": "Documo key/base URL/sandbox",
+      "home": "delivery/documo",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S05",
+      "family": "HumbleFax access/secret/from number",
+      "home": "delivery/humblefax",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx",
+        "components/HumbleFaxReceiving.tsx"
+      ]
+    },
+    {
+      "id": "S06",
+      "family": "eFax app/key/user IDs, caller ID/station, polling/delete after stored/notification secret/status",
+      "home": "delivery/efax",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/EfaxSettings.tsx"
+      ]
+    },
+    {
+      "id": "S07",
+      "family": "SignalWire space/project/token/from fax/SMS, callback/signing key/poll",
+      "home": "delivery/signalwire",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S08",
+      "family": "Trunk carrier/phone-system preset, auth, server/port/transport, credentials, proxy, external address/check interval, codec/number format/prefix/caller ID/DIDs/T.38/header",
+      "home": "delivery/trunk",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/SipTrunkSettings.tsx"
+      ]
+    },
+    {
+      "id": "S09",
+      "family": "Trunk compression/speed/ECM/fine/tuning/SSLFax/line count/listener port/concurrency/CPS/datagram/loss correction",
+      "home": "delivery/trunk",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/FaxSettings.tsx",
+        "components/SipTrunkSettings.tsx"
+      ]
+    },
+    {
+      "id": "S10",
+      "family": "AMI engine host/port/user/password, incoming secret generate/copy, Telnyx and Flowroute billing credentials",
+      "home": "delivery/trunk",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S11",
+      "family": "Extra routes reorder/add/remove, minimum reliability, own-number local delivery, shading/whitening, long pages and trim",
+      "home": "delivery/connections",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/DeliverySettings.tsx",
+        "components/delivery/PagesSettings.tsx"
+      ]
+    },
+    {
+      "id": "S12",
+      "family": "Direct enable/org/fax/private-peer policy/private-key location/show-copy card",
+      "home": "recipients/partners",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/DeliverySettings.tsx"
+      ]
+    },
+    {
+      "id": "S13",
+      "family": "Received retention/link TTL and receive-auth conditional fields",
+      "home": "admin/retention",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S14",
+      "family": "Global receive-to-email SMTP/security/user/password/from/recipients/subject/enable",
+      "home": "delivery/email",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/DeliverySettings.tsx"
+      ]
+    },
+    {
+      "id": "S15",
+      "family": "Per-number email destinations add/edit/remove/enable, SMTP/from/subject/recipients, test",
+      "home": "delivery/email",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/EmailDelivery.tsx"
+      ]
+    },
+    {
+      "id": "S16",
+      "family": "Email/folder sources",
+      "home": "delivery/connectors",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/delivery/Connectors.tsx"
+      ]
+    },
+    {
+      "id": "S17",
+      "family": "Mailboxes create/rename/enable-disable",
+      "home": "delivery/mailboxes",
+      "gate": {
+        "anyOf": [
+          "mailboxes:read",
+          "mailboxes:manage",
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/ResourceAccess.tsx"
+      ]
+    },
+    {
+      "id": "S18",
+      "family": "Number-to-mailbox assignment/edit and advanced receiving options",
+      "home": "delivery/numbers",
+      "gate": {
+        "anyOf": [
+          "mailboxes:read",
+          "mailboxes:manage"
+        ]
+      },
+      "sources": [
+        "components/ResourceAccess.tsx"
+      ]
+    },
+    {
+      "id": "S19",
+      "family": "Mailbox sending rules",
+      "home": "delivery/mailboxes",
+      "gate": {
+        "anyOf": [
+          "mailboxes:read",
+          "mailboxes:manage",
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/work/WorkSettingsPanel.tsx",
+        "components/MailboxSendingRules.tsx"
+      ]
+    },
+    {
+      "id": "S20",
+      "family": "Uncertain-send fallback person and settling hours",
+      "home": "delivery/mailboxes",
+      "gate": {
+        "anyOf": [
+          "mailboxes:read",
+          "mailboxes:manage",
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/work/UncertainSettingsPanel.tsx"
+      ]
+    },
+    {
+      "id": "S21",
+      "family": "Header/station ID + reply number",
+      "home": "delivery/identity",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx",
+        "components/ReplyNumber.tsx"
+      ]
+    },
+    {
+      "id": "S22",
+      "family": "Multiple provider accounts add/edit, health, default sending/receiving",
+      "home": "delivery/connections",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/ProviderAccounts.tsx",
+        "components/ProviderAccountsDialog.tsx"
+      ]
+    },
+    {
+      "id": "S23",
+      "family": "HTTPS/public address/auth explanation/recovery-import read-only/deployment session-origin-local settings",
+      "home": "admin/security",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S24",
+      "family": "Local/S3 bucket/region/prefix/endpoint/KMS, bucket check, key-path deployment metadata",
+      "home": "admin/retention",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S25",
+      "family": "Largest document/rate limits/list-download quotas/provider link TTL/sent and case retention/cleanup interval/database read-only",
+      "home": "admin/retention",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S26",
+      "family": "Settings export/copy/download, recovery-copy save/deprecation, reload/discard",
+      "home": "admin/retention",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S27",
+      "family": "Event recording enable/format/file/syslog/address + audit activity",
+      "home": "admin/audit",
+      "gate": {
+        "anyOf": [
+          "audit:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx",
+        "components/AuditLog.tsx"
+      ]
+    },
+    {
+      "id": "S28",
+      "family": "Diagnostics saved report/check now/reload/restart, S3 checks, allow-console-restart, TZ metadata",
+      "home": "admin/health",
+      "gate": {
+        "anyOf": [
+          "diagnostics:read"
+        ]
+      },
+      "sources": [
+        "components/Diagnostics.tsx",
+        "components/Settings.tsx"
+      ]
+    },
+    {
+      "id": "S29",
+      "family": "Logs search/event/time/custom/limit/file-vs-ring/line count/wrap/follow/raw detail and enable logging",
+      "home": "admin/logs",
+      "gate": {
+        "anyOf": [
+          "logs:read"
+        ]
+      },
+      "sources": [
+        "components/Logs.tsx"
+      ]
+    },
+    {
+      "id": "S30",
+      "family": "Runtime AI provider/base URL/model/API key/remove-key/interval/enable, save/test/run/refresh/evidence",
+      "home": "admin/analysis",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/AIAnalysis.tsx"
+      ]
+    },
+    {
+      "id": "S31",
+      "family": "People/integration identities create/detail/search/filter/enable-disable/reset password",
+      "home": "admin/users",
+      "gate": {
+        "anyOf": [
+          "users:read",
+          "users:manage"
+        ]
+      },
+      "sources": [
+        "components/Users.tsx",
+        "components/Groups.tsx",
+        "components/Roles.tsx"
+      ]
+    },
+    {
+      "id": "S32",
+      "family": "Give/remove scoped access",
+      "home": "admin/keys",
+      "gate": {
+        "anyOf": [
+          "keys:manage"
+        ]
+      },
+      "sources": [
+        "components/ResourceAccess.tsx",
+        "components/ApiKeys.tsx",
+        "components/access/PairPhoneDialog.tsx"
+      ]
+    },
+    {
+      "id": "S33",
+      "family": "Own/others sessions/end session",
+      "home": "admin/sessions",
+      "gate": {},
+      "sources": [
+        "components/Sessions.tsx",
+        "components/LoginScreen.tsx",
+        "components/OwnerEnrollment.tsx",
+        "components/PasswordChange.tsx"
+      ]
+    },
+    {
+      "id": "S34",
+      "family": "Account name/role/password/my sessions/my keys/light-dark-system/signout",
+      "home": "admin/sessions",
+      "gate": {},
+      "sources": [
+        "components/shell/UserMenu.tsx"
+      ]
+    },
+    {
+      "id": "S35",
+      "family": "Six-step setup, credential checks, callback copy/test receipt/watch, delivery options/suggested packs/export",
+      "home": "admin/setup",
+      "gate": {
+        "anyOf": [
+          "settings:write"
+        ]
+      },
+      "sources": [
+        "components/SetupWizard.tsx"
+      ]
+    },
+    {
+      "id": "S36",
+      "family": "API/SDK/help URL/read-only file paths",
+      "home": "admin/assistants",
+      "gate": {
+        "anyOf": [
+          "settings:read"
+        ]
+      },
+      "sources": [
+        "components/Settings.tsx",
+        "components/MCP.tsx",
+        "components/Terminal.tsx",
+        "components/ScriptsTests.tsx",
+        "components/Plugins.tsx"
+      ]
+    }
+  ]
+}
