@@ -817,13 +817,13 @@ def budget_left(plan, now=None, *, engine=None, values=None, path=None):
 
 
 def plan_use(engine, route_key, *, now, values=None):
-    """The predictor's ``PlanUse`` for a route: what it carried this billing period, and its page budget."""
+    """The predictor's ``PlanUse`` for a route: what it carried this billing period, and its page and fax budget."""
     from .predict import PlanUse
     left = budget_left(route_key, now, engine=engine, values=values)
     if left is None:
         return None
     return PlanUse(pages=left.used.pages, faxes=left.used.faxes, page_budget=left.budget.pages,
-                   minutes=left.used.minutes if left.budget.included_minutes else None)
+                   minutes=left.used.minutes if left.budget.included_minutes else None, fax_budget=left.budget.faxes)
 
 
 # One more fax ---------------------------------------------------------------------------------------
@@ -911,6 +911,66 @@ def marginal(left, pages, prediction=None):
     return Marginal(Money(0, currency), False, True,
                     f"Included in your {name} plan; {' and '.join(parts)} of your normal-use budget will be left "
                     f'until {again}.')
+
+
+# What a plan past its normal-use budget leads to, by what sets the fax's order of routes (``order_of``). None: the
+# order is not known, as for an estimate made for each route from the page count alone.
+PAST_BUDGET = {
+    'automatic': ', so Faxbot sends by your other routes first when one of them can take the fax.',
+    'preferred': ', but this plan is your preferred route for this number, so Faxbot still sends by it first.',
+    'rule': (', but your sending rule sets the order of routes for this fax, so the budget does not change which '
+             'route goes first.'),
+    None: (', so Faxbot sends by your other routes first when one of them can take the fax, unless this plan is your '
+           'preferred route for this number or a sending rule sets the order.'),
+}
+
+
+def order_of(route_plan, key):
+    """What sets the place of the route ``key`` in a fax's order of routes (``routing.plan.RoutePlan``), for
+    ``use_sentence``: 'rule' when a sending rule's own order decides (``use`` or ``try_in_order``; the planner keeps
+    it whatever any budget), 'preferred' when ``key`` is first as the number's preferred route (an override ahead of
+    every budget), else 'automatic' (``order_key``: a plan past its budget goes after every route within it)."""
+    pinned = getattr(route_plan, 'pinned', None)
+    if pinned is not None and pinned.envelope.mode in ('one', 'ordered'):
+        return 'rule'
+    choice = next((item for item in route_plan.choices if item.route.key == key), None)
+    if choice is not None and choice.reason == 'preferred':
+        return 'preferred'
+    return 'automatic'
+
+
+def use_sentence(used_pages, used_faxes, page_budget, fax_budget, pages, order=None):
+    """The estimate's sentence for a flat plan's normal-use budget (``predict``): how much of it is used this month
+    and, once this fax of ``pages`` pages is past it, what Faxbot does about it. Past it is ``marginal``'s test (the
+    pages used and this fax's more than the page budget, or the fax budget already used); going past costs nothing,
+    which the estimate says before this. What Faxbot does then follows ``order`` (``order_of``, from the fax's own
+    order of routes): by itself Faxbot sends by every other reliable route first (``order_key``), but your preferred
+    route for the number stays first and a sending rule's order stays as you set it; with the order unknown (None)
+    the sentence says all three. None without a count of the pages."""
+    if order not in PAST_BUDGET:
+        raise ValueError(f'Unknown order of routes: {order!r}.')
+    if used_pages is None:
+        return None
+    pages = pages if isinstance(pages, int) and pages > 0 else 1
+    if page_budget is None and fax_budget is None:
+        return (f"You've used {_plural(used_pages, 'page')} on this plan this month, and you set no normal-use budget "
+                'for it.')
+    parts = []
+    if page_budget is not None:
+        parts.append(f'{_number(used_pages)} of the {_plural(page_budget, "page")}')
+    if fax_budget is not None and used_faxes is not None:
+        parts.append(f'{_number(used_faxes)} of the {_plural(fax_budget, "fax", "faxes")}')
+    if not parts:
+        return None
+    sentence = f"You've used {' and '.join(parts)} you set as this plan's normal-use budget this month"
+    past = (page_budget is not None and used_pages >= page_budget) or (
+        fax_budget is not None and used_faxes is not None and used_faxes >= fax_budget)
+    if not past and page_budget is not None and used_pages + pages > page_budget:
+        sentence += ', and this fax would go past it'
+        past = True
+    if not past:
+        return sentence + '.'
+    return sentence + PAST_BUDGET[order]
 
 
 # The burn-down -------------------------------------------------------------------------------------------

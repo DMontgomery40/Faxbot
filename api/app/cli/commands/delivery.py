@@ -1151,9 +1151,43 @@ def routing_predict(to: str = typer.Option(..., '--to', help='Fax number to pric
                                  route.get('time_note')):
                     if sentence:
                         out.line(f"{route['label']}: {sentence}")
-        out.line(result['sentence'])
+        closing = _closing_sentence(result)
+        if closing:
+            out.line(closing)
         out.line(result['note'])
     state.out().result(result, human)
+
+
+def _closing_sentence(result):
+    """The estimate's closing sentence, unless it only repeats a plan's own line (``_plan_line_says_it``). By page
+    count, how many other routes have no known price is still said then, in the server's words
+    (``predict_http.cheapest_sentence``): the plan's line does not say it."""
+    if not _plan_line_says_it(result):
+        return result['sentence']
+    if 'selected' in result:
+        return None
+    rest = sum(1 for route in result.get('routes') or [] if route.get('cost') is None)
+    if not rest:
+        return None
+    return f"{rest} other route{'' if rest == 1 else 's'} {'has' if rest == 1 else 'have'} no known price."
+
+
+def _plan_line_says_it(result):
+    """Whether the closing sentence only repeats a plan's own line ("Included in your HumbleFax plan ..."), so it is
+    left out as Send a fax leaves it out (D23): with a document, the measured choice of a plan's fax on its pages as
+    given, with no priced runner-up and no hold; by page count, a cheapest route that is a plan carrying the fax at
+    nothing extra ("HumbleFax is your only sending route: nothing extra for this fax."), whose other routes with no
+    known price ``_closing_sentence`` still counts."""
+    if 'selected' in result:
+        selected = result.get('selected') or {}
+        return bool(selected.get('in_plan') and selected.get('layout') == 'normal'
+                    and not (result.get('runner_up') or {}).get('cost') and not result.get('held'))
+    known = [route for route in result.get('routes') or [] if route.get('cost')]
+    if not known or len({route['cost']['currency'] for route in known}) > 1:
+        return False
+    best = min(known, key=lambda route: (float(route['cost']['amount']),
+                                         route['seconds'] if route.get('seconds') is not None else 1e9))
+    return bool(best.get('marginal')) and float(best['cost']['amount']) == 0
 
 
 @routing.command('rate-cards')

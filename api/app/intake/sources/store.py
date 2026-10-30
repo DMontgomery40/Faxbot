@@ -419,9 +419,12 @@ class SourceStore:
                 sa.select(self.deliveries.c.state, self.jobs.c.pages, self.jobs.c.error, self.jobs.c.status)
                 .select_from(self.jobs.outerjoin(self.deliveries, self.deliveries.c.id == self.jobs.c.id))
                 .where(self.jobs.c.id == job_id)).first()
+            # Refused while held: what happened and who decided, never the key's name (routing/holds.py).
+            from ...routing.holds import refusal_text_on
+            error = None if row is None else refusal_text_on(connection, job_id, row.error) or row.error
         if row is None:
             return None
-        return {'state': row.state, 'pages': row.pages, 'error': row.error, 'status': row.status}
+        return {'state': row.state, 'pages': row.pages, 'error': error, 'status': row.status}
 
     def reply_wait(self, item, minutes=1):
         with write_transaction(self.engine) as connection:

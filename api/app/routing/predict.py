@@ -254,6 +254,7 @@ class PlanUse:
     faxes: int | None = None
     page_budget: int | None = None       # a fair-use budget the administrator set, if any
     minutes: int | None = None           # minutes on the line this month, for a minute allowance
+    fax_budget: int | None = None        # the faxes of that fair-use budget, if any
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,10 @@ class RouteFacts:
     # A route with no card saved in Faxbot, priced by its shipped published card: the clause naming whose published
     # price it is and when it was read ("Telnyx's published price, read 13 October 2026").
     published: str | None = None
+    # What sets this route's place in the fax's order of routes, where the caller has the fax's own order
+    # (``plan_budget.order_of``): 'automatic', 'preferred' or 'rule'. None when it is not known (an estimate for each
+    # route from the page count alone); a flat plan past its normal-use budget then says what each would do.
+    order: str | None = None
 
 
 # Sentences --------------------------------------------------------------------------
@@ -529,7 +534,7 @@ def _plan(facts, shape, seconds, how, spread=None):
         room = f'{plan.pages} of its {terms.included_pages} included pages used this month'
         if not over:
             return Prediction(0, seconds, Money(0, card.currency),
-                              _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
+                              _sentence(f'Included in {named}: this fax adds nothing to the bill', room, how), True)
         if terms.overage_page_micros is None:
             return Prediction(over, seconds, None, _sentence(
                 f'{_count(over, "page")} of this fax would go past what {named} includes, and the price of extra '
@@ -537,15 +542,12 @@ def _plan(facts, shape, seconds, how, spread=None):
         return Prediction(over, seconds, Money(over * terms.overage_page_micros, card.currency), _sentence(
             f'{_count(over, "page")} past what {named} includes, at '
             f'{money_text(terms.overage_page_micros, card.currency)} a page', room, how), True)
-    room = None
-    if plan.pages is not None:
-        room = f'{_count(plan.pages, "page")} sent on it this month'
-        if plan.page_budget:
-            room = f'{plan.pages} of the {plan.page_budget} pages you allow on it a month used so far'
-            if plan.pages + shape.pages > plan.page_budget:
-                room += ', and this fax would go past that'
-    return Prediction(0, seconds, Money(0, card.currency),
-                      _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
+    # The cost, then the plan's normal-use budget in a sentence of its own: the budget is your own measure of normal
+    # use, never a price; past it, what Faxbot does follows what sets the fax's order (plan_budget.use_sentence).
+    from .plan_budget import use_sentence
+    budget = use_sentence(plan.pages, plan.faxes, plan.page_budget, plan.fax_budget, shape.pages, facts.order)
+    basis = _sentence(f'Included in {named}: this fax adds nothing to the bill', how)
+    return Prediction(0, seconds, Money(0, card.currency), basis + (f' {budget}' if budget else ''), True)
 
 
 def _minutes(terms, plan, named, seconds, how, spread=None):
@@ -570,7 +572,7 @@ def _minutes(terms, plan, named, seconds, how, spread=None):
     room = f'{plan.minutes} of its {terms.included_minutes} included minutes used this month'
     if not micros:
         return Prediction(0, seconds, Money(0, card.currency),
-                          _sentence(f'Included in {named}, so this fax adds nothing to the bill', room, how), True)
+                          _sentence(f'Included in {named}: this fax adds nothing to the bill', room, how), True)
     if not over:
         return Prediction(0, seconds, Money(micros, card.currency), _sentence(
             f'Included in {named} unless the call runs past its minutes, so about '
@@ -637,7 +639,7 @@ def _digital(facts, shape):
         room = f'{plan.faxes} of its {terms.included_pages} included messages used this month'
         if plan.faxes + 1 <= terms.included_pages:
             return Prediction(0, 0.0, Money(0, card.currency), _sentence(
-                f'Included in {named}, so this message adds nothing to the bill', room), True)
+                f'Included in {named}: this message adds nothing to the bill', room), True)
         if terms.overage_page_micros is None:
             return Prediction(0, 0.0, None, _sentence(
                 f'This message would go past what {named} includes, and the price of extra messages is not on file',
@@ -647,7 +649,7 @@ def _digital(facts, shape):
             room), True)
     if card.flat_plan:
         return Prediction(0, 0.0, Money(0, card.currency), _sentence(
-            f'Included in {named}, so this message adds nothing to the bill'), True)
+            f'Included in {named}: this message adds nothing to the bill'), True)
     pages = shape.pages if card.per_page_micros else 0
     micros = card.per_call_micros + pages * card.per_page_micros
     if micros == 0:
