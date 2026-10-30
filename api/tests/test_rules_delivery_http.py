@@ -312,6 +312,8 @@ def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
     # A long reason: the stored sentence is cut at 500 characters, mid-word; Sent ends it at its last whole word.
     words = ' '.join(f'word{index:03d}' for index in range(80))
     long_job, _ = refuse(admin, words[:490])
+    # One word of 500 characters, the most a reason may be: what was stored, then "…", never a full stop.
+    token_job, _ = refuse(admin, 'x' * 500)
     client.cookies.clear()
 
     listed = {job['id']: job for job in client.get('/admin/fax-jobs', headers=admin).json()['jobs']}
@@ -336,6 +338,8 @@ def test_sent_says_what_happened_to_a_refused_fax_and_who_decided(ruled_cli):
     assert long_error.endswith('… Decided through an API key.') and long_error.startswith('Not sent: word000 ')
     kept = long_error[len('Not sent: '):-len('… Decided through an API key.')].split(' ')
     assert kept == words.split(' ')[:len(kept)] and len(kept) > 50   # whole words only, never one cut short
+    kept = 500 - len('Refused by Installation bootstrap: ')
+    assert listed[token_job]['error'] == f"Not sent: {'x' * kept}… Decided through an API key."
     # Refused holds read the same way; the stored sentence stays as it was written.
     refused_holds = {item['job_id']: item['reason'] for item in
                      client.get('/routing/holds', headers=admin, params={'state': 'refused'}).json()['holds']}

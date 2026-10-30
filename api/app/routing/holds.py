@@ -200,16 +200,20 @@ def shown_refusal(stored, *, name, kind):
     """``{'sentence', 'decided_by', 'decided_by_detail'}`` for the stored refusal sentence, decided by ``name`` (as
     the hold kept it) whose principal is ``kind``.
 
-    The reason is what follows the stored "Refused by <name>: ". A sentence that was cut at the stored limit ends at
-    its last whole word with an ellipsis, never mid-word. Text that does not start that way is shown as stored.
+    The reason is what follows the stored "Refused by <name>: ". A sentence that reaches the stored limit may have
+    been cut there, so it ends with an ellipsis: at its last whole word, never mid-word, or after the one long word
+    it is (as ``sanitize_error`` shortens one). A sentence that fits exactly reads the same way; Faxbot can't tell
+    the two apart. Text that does not start with "Refused by <name>: " is shown as stored.
     """
     prefix = REFUSED_BY.format(name=name or NO_NAME)
     if not stored.startswith(prefix):
         return {'sentence': stored, 'decided_by': None, 'decided_by_detail': None}
     reason = stored[len(prefix):]
-    if len(stored) >= STORED_LIMIT and ' ' in reason.strip():
-        reason = reason.rstrip()
-        reason = reason[:reason.rfind(' ')].rstrip(' ,;:') + '…'
+    if len(stored) >= STORED_LIMIT and reason.strip():
+        reason = reason.strip()
+        if ' ' in reason:
+            reason = reason[:reason.rfind(' ')].rstrip(' ,;:')
+        reason += '…'
     short, detail = decided_by(kind, name)
     return {'sentence': not_sent_sentence(reason), 'decided_by': short, 'decided_by_detail': detail}
 

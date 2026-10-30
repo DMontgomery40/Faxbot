@@ -571,6 +571,42 @@ def test_a_refusal_is_shown_as_what_happened_then_who_decided():
     assert sanitize_error('Short and whole.') == 'Short and whole.'
 
 
+def test_a_refusal_cut_where_it_was_stored_says_so_and_never_ends_mid_word():
+    """D26 review: the stored refusal is cut at 500 characters. Several words end at the last whole word with "…";
+    one long word (the review's 500-character token showed 465 characters and a full stop) keeps what was stored
+    and ends with "…"; a sentence one character short of the limit is shown whole. At exactly the limit Faxbot
+    can't tell a cut sentence from one that fit, so it marks it, never claiming it is whole."""
+    from api.app.routing.holds import STORED_LIMIT, shown_refusal
+    prefix = 'Refused by Installation bootstrap: '
+
+    def shown(reason):
+        stored = (prefix + reason)[:STORED_LIMIT]
+        return shown_refusal(stored, name='Installation bootstrap', kind='bootstrap')['sentence']
+    # One long word, as the review found it: what was stored, then the marker, no full stop.
+    token = 'x' * 500
+    kept = STORED_LIMIT - len(prefix)
+    assert shown(token) == f"Not sent: {'x' * kept}…"
+    # Many words: whole words only, then the marker.
+    words = ' '.join(f'word{index:03d}' for index in range(80))
+    said = shown(words)
+    assert said.startswith('Not sent: word000 word001 ') and said.endswith('…') and not said.endswith('.…')
+    listed = said[len('Not sent: '):-1].split(' ')
+    assert listed == words.split(' ')[:len(listed)] and len(listed) > 50
+    # A trailing comma is not left before the marker.
+    assert shown(('alpha, ' * 80)[:STORED_LIMIT - len(prefix)]).endswith('alpha…')
+    # One short of the limit: shown whole with its own full stop.
+    whole = ('a' * 9 + ' ') * 50
+    fits = whole[:STORED_LIMIT - len(prefix) - 2] + 'z'
+    assert len(prefix + fits) == STORED_LIMIT - 1
+    assert shown(fits) == f'Not sent: {fits}.'
+    # Exactly at the limit: marked as possibly cut, at a whole word.
+    at_limit = whole[:STORED_LIMIT - len(prefix) - 1] + 'z'
+    assert len(prefix + at_limit) == STORED_LIMIT
+    assert shown(at_limit) == f"Not sent: {at_limit[:at_limit.rfind(' ')]}…"
+    # A single word exactly at the limit: kept, then the marker.
+    assert shown('y' * kept) == f"Not sent: {'y' * kept}…"
+
+
 def test_a_time_window_opens_by_itself(ruled):
     later = (datetime.utcnow() + timedelta(hours=2)).replace(second=0, microsecond=0)
     window = {'from': later.strftime('%H:%M'), 'until': (later + timedelta(hours=1)).strftime('%H:%M')}
