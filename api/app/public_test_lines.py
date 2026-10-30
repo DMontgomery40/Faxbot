@@ -259,6 +259,11 @@ def _fax_state(connection, job_id):
         return 'sent', 'The test fax went through.'
     if state == 'failed':
         error = (job or {}).get('error') or ''
+        # Refused while held: what happened and who decided, never the key's name (routing/holds.py).
+        from .routing.holds import refusal_text_on
+        refused = refusal_text_on(connection, job_id, error) if error else None
+        if refused:
+            return 'failed', f'The test fax did not go through. {refused}'
         return 'failed', f'The test fax did not go through: {error}' if error else 'The test fax did not go through.'
     if state == 'reconciliation_required':
         return 'uncertain', 'Faxbot could not confirm whether the test fax arrived; see it in Sent.'

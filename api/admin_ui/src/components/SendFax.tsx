@@ -245,10 +245,11 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
   const [routes, setRoutes] = useState<RecommendedRoute[]>([]);
   // Someone who may not read routes (a fax operator) cannot see whether the number has a health record system.
   const [routesHidden, setRoutesHidden] = useState(false);
-  // Whether the number is one of your own (its first route is 'local'), and the routes it can take, per number:
-  // "send by call" and the fax engine keep their rows while the first lookup runs, and asking again for the page
-  // count never hides them.
-  const [localFor, setLocalFor] = useState<{ number: string; local: boolean; routes: string[] } | null>(null);
+  // Whether the number is one of your own (its first route is 'local'), the routes this fax would try in order
+  // (recommended) and every route you send by (available), per number: "send by call" and the fax engine keep their
+  // rows while the first lookup runs, and asking again for the page count never hides them.
+  const [localFor, setLocalFor] = useState<{ number: string; local: boolean; recommended: string[];
+    available: string[] } | null>(null);
   useEffect(() => {
     setRoutes([]);
     if (!/\d{3}/.test(toNumber)) return undefined;
@@ -261,12 +262,13 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
           setRoutes(detail.recommended_routes);
           setRoutesHidden(false);
           setLocalFor({ number: asked, local: detail.recommended_routes[0]?.route === 'local',
-            routes: [...detail.recommended_routes, ...(detail.available_routes ?? [])].map((item) => item.route) });
+            recommended: detail.recommended_routes.map((item) => item.route),
+            available: (detail.available_routes ?? []).map((item) => item.route) });
         })
         .catch((failure) => {
           if (!live) return;
           if (isForbidden(failure)) setRoutesHidden(true);
-          setLocalFor({ number: asked, local: false, routes: [] });
+          setLocalFor({ number: asked, local: false, recommended: [], available: [] });
         });
     }, 400);
     return () => { live = false; window.clearTimeout(timer); };
@@ -291,13 +293,16 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       .catch(() => { if (live) setTrunkKeys(new Set([MAIN_TRUNK])); });
     return () => { live = false; };
   }, [client]);
-  // The fax engine for this one fax, offered when a trunk is among the number's routes, so one of Faxbot's own
-  // engines may place its call; one of your own numbers places no call unless Send by call is ticked. Automatic
-  // unless the sender picks one; posted only while it is offered.
+  // The fax engine for this one fax: it matters only for a fax over your phone line (a trunk), where one of Faxbot's
+  // own engines places the call. Offered when a trunk is among the routes this fax would try, never only because a
+  // trunk is set up (D27); one of your own numbers places no call unless Send by call is ticked. The number's routes
+  // decide the row, so the late estimate never moves Send; the estimate only words it (engineLabel). Automatic unless
+  // the sender picks one; posted only while it is offered.
   const [engine, setEngine] = useState<FaxEngineRequest>('auto');
   const enginePending = numberKey !== null && (localPending || trunkKeys === null);
   const engineOffered = !enginePending && numberKey !== null && localFor?.number === numberKey
-    && localFor.routes.some((key) => trunkKeys!.has(key)) && (!ownNumber || byCall);
+    && (ownNumber ? byCall && [...localFor.recommended, ...localFor.available].some((key) => trunkKeys!.has(key))
+      : localFor.recommended.some((key) => trunkKeys!.has(key)));
   const chosenEngine: FaxEngineRequest = engineOffered ? engine : 'auto';
   // A recipient's health record system (a FHIR route) among this number's routes asks for the patient; someone
   // who may not see the routes can add the patient on request.
@@ -352,11 +357,28 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
     ? documentAnswer?.routes.find((item) => item.route === chosen.route)
     : documentAnswer?.routes.find((item) => item.route === routeKey)) ?? null;
   const shown: RoutePrediction | null = documentRoute ?? (chosen ? null : prediction);
-  const costSentence = shown ? `What would this cost? ${shown.headline}`
+  // A monthly plan carries this fax at no extra cost (the measured choice is in the plan, or the plan's estimate is
+  // nothing extra). Its estimate opens with the plan and the cost ("Included in your HumbleFax plan ($10 a month):
+  // this fax adds nothing to the bill") and then says the plan's normal-use budget, so nothing else in the panel
+  // says the cost again (D23).
+  const planCarries = Boolean(shown?.marginal) && (chosen ? chosen.in_plan && chosen.route === shown!.route
+    : shown?.cost != null && Number(shown.cost.amount) === 0);
+  const costSentence = shown ? (planCarries ? null : `What would this cost? ${shown.headline}`)
     : (route && !chosen ? routeCostSentence(route, null) : null);
-  // A route chosen because faxes are included in its plan: the plan's estimate opens with that plan already
-  // ("Included in your HumbleFax plan ($10 a month), so..."), so the plan is said once.
-  const planInBasis = route?.reason === 'included' && Boolean(shown?.marginal);
+  // A route first because faxes are included in its plan, or a plan past its normal-use budget first because no other
+  // route can take the fax: its reason only repeats the plan's estimate, which says both.
+  const planInBasis = (route?.reason === 'included' || route?.reason === 'over_budget') && planCarries;
+  // The measured choice names the account, its pages and their price. For a plan's fax on its pages as given, with no
+  // priced runner-up to compare and no hold, the route line and the estimate already say all of it.
+  const choiceRepeats = chosen !== null && planCarries && chosen.layout === 'normal'
+    && !documentAnswer?.runner_up?.cost && !documentAnswer?.held;
+  // The route the estimate says this fax goes by: the measured choice, else the number's first route. Not one of your
+  // trunks (and not a real call to one of your own numbers): the engine choice is worded as what happens if the fax
+  // goes over your phone line after all, through a trunk later in the order.
+  const firstRoute = chosen ?? route;
+  const engineFallback = engineOffered && !(ownNumber && byCall) && firstRoute !== null
+    && !trunkKeys!.has(firstRoute.route);
+  const engineLabel = engineFallback ? 'Fax engine, if it goes over your phone line' : 'Fax engine';
   // The coding comparison is for Sent's details ("Fax coding"); the Send page gives the route, cost and time.
   const configReady = !configLoading && !configError && typeof config?.fax_disabled === 'boolean'
     && Number.isSafeInteger(config.max_file_size_mb) && config.max_file_size_mb > 0;
@@ -435,7 +457,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
         { queueOnly: intent.queueOnly, idempotencyKey: intent.key, sendNow: together !== null && sendNow,
           byCall: ownNumber && byCall, urgent, coverInHeader, ...sendBody(sendOptions),
           sendBy: sendBy ? new Date(sendBy).toISOString() : undefined, patient: givenPatient, engine: postedEngine,
-          court: court ? courtJson(court) : undefined });
+          court: court ? courtJson(court) : undefined, recipientName: recipientName.trim() || undefined });
       const state = (response.delivery_state || response.status).toLowerCase();
       const to = typeof response.to === 'string' && response.to ? response.to : undefined;
       setResult({
@@ -450,6 +472,9 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
       clearPendingSend();
       setResuming(false);
       setToNumber('');
+      // The name belongs to the fax just sent, never to the next one.
+      setRecipientName('');
+      setCheckedName('');
       setFile(null);
       setPatient(NO_PATIENT);
       setPatientAsked(false);
@@ -534,7 +559,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                   onChange={(event) => setRecipientName(event.target.value)} disabled={!configReady || loading}
                   onBlur={() => setCheckedName(recipientName.trim())}
                   inputProps={{ maxLength: 200, 'data-testid': 'send-recipient-name' }}
-                  helperText="Before a first fax, Faxbot checks the number against the NPI registry (NPPES)." />
+                  helperText={'Shown with this fax wherever Faxbot lists it. Before a first fax, Faxbot checks the '
+                    + 'number against the NPI registry (NPPES).'} />
 
                 {!recordsRoute && routesHidden && !patientAsked && (
                   <Box>
@@ -618,8 +644,8 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                 {enginePending ? <Box aria-hidden data-testid="send-engine-pending" sx={{ minHeight: 63 }} />
                   : engineOffered && (
                   <FormControl size="small" fullWidth disabled={!configReady || loading} data-testid="send-engine">
-                    <InputLabel id="send-engine-label">Fax engine</InputLabel>
-                    <Select labelId="send-engine-label" label="Fax engine" value={engine}
+                    <InputLabel id="send-engine-label">{engineLabel}</InputLabel>
+                    <Select labelId="send-engine-label" label={engineLabel} value={engine}
                       renderValue={(value) => engineChoice(value).name}
                       onChange={(event) => setEngine(event.target.value as FaxEngineRequest)}>
                       {ENGINE_CHOICES.map((choice) => (
@@ -628,7 +654,12 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         </MenuItem>
                       ))}
                     </Select>
-                    <FormHelperText>{engineChoice(engine).hint}</FormHelperText>
+                    <FormHelperText data-testid="send-engine-hint">
+                      {engineFallback
+                        ? `Faxbot plans to send it through ${firstRoute!.label}. This applies only if it goes over your `
+                          + 'phone line instead.'
+                        : engineChoice(engine).hint}
+                    </FormHelperText>
                   </FormControl>
                 )}
 
@@ -665,6 +696,9 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         clearPendingSend();
                         setResuming(false);
                         setToNumber('');
+                        // The name belongs to the fax being cleared, never to the next one.
+                        setRecipientName('');
+                        setCheckedName('');
                         setFile(null);
                         setPatient(NO_PATIENT);
                         setPatientAsked(false);
@@ -699,7 +733,7 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                 {(route || chosen) && (
                   <Box data-testid="send-route">
                     <Typography variant="body2">Faxbot will send it through {chosen ? chosen.label : route!.label}.</Typography>
-                    {chosen ? (
+                    {chosen ? !choiceRepeats && (
                       <Typography variant="body2" color="text.secondary" data-testid="send-plan">
                         {documentAnswer!.sentence}
                       </Typography>

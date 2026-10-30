@@ -118,6 +118,17 @@ export function jobStatusLabel(job: FaxJob): string {
   return job.settled_cant_tell ? CANT_TELL_LABEL : statusLabel(deliveryState(job));
 }
 
+// What went wrong, as Sent shows it. A fax refused while held leads with what happened and says who decided; an API
+// key is named only in the fax's details, never in the list (the command line's problem_text).
+export function problemText(job: FaxJob, details = false): string | null {
+  if (job.settled_cant_tell) return null;
+  if (job.refusal) {
+    return [job.refusal.sentence, details ? job.refusal.decided_by_detail : job.refusal.decided_by]
+      .filter(Boolean).join(' ');
+  }
+  return job.error || null;
+}
+
 export function deliveryNotice(job: FaxJob): string | null {
   if (job.settled_cant_tell) return job.error || null;
   if (deliveryState(job) === 'held' || job.dispatch_mode === 'held') {
@@ -160,6 +171,7 @@ const eventLabels: Record<string, string> = {
   repair_failed: 'The partner did not receive the missing pages',
   engine_requested: 'Fax engine chosen for this fax',
   operator_settled: 'Result confirmed by a person',
+  recipient_named: "Recipient's name given with the fax",
 };
 
 const categoryLabels: Record<string, string> = {
@@ -651,7 +663,12 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                       onClick={() => handleJobClick(job.id)}
                     >
                       <TableCell>
-                        <Typography variant="body2" fontFamily="monospace" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>
+                        {/* The name typed when it was sent, else the saved Recipients name, above the number. */}
+                        {job.recipient && <Typography variant="body2" data-testid="job-recipient"
+                          sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}>{job.recipient}</Typography>}
+                        <Typography variant={job.recipient ? 'caption' : 'body2'} fontFamily="monospace"
+                          color={job.recipient ? 'text.secondary' : undefined}
+                          sx={{ fontSize: { xs: '0.7rem', sm: job.recipient ? '0.75rem' : '0.875rem' } }}>
                           {job.to_number}
                         </Typography>
                       </TableCell>
@@ -668,7 +685,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                         </Typography>}
                         {togetherLine(job.together) && <Typography variant="caption" display="block" sx={{ mt: 0.5 }}
                           data-testid="job-together">{togetherLine(job.together)}</Typography>}
-                        {job.error && !job.settled_cant_tell && (
+                        {problemText(job) && (
                           // The whole sentence, wrapped between words; never cut mid-word.
                           <Typography
                             variant="caption"
@@ -684,7 +701,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                               fontSize: { xs: '0.6rem', sm: '0.75rem' }
                             }}
                           >
-                            {job.error}
+                            {problemText(job)}
                           </Typography>
                         )}
                       </TableCell>
@@ -760,7 +777,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
               <ListItem>
                 <ListItemText
                   primary="To"
-                  secondary={detailJob.to_number}
+                  secondary={detailJob.recipient ? `${detailJob.recipient}, ${detailJob.to_number}` : detailJob.to_number}
                 />
               </ListItem>
               <Divider />
@@ -917,7 +934,7 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                   secondary={formatDate(detailJob.updated_at)}
                 />
               </ListItem>
-              {detailJob.error && !detailJob.settled_cant_tell && (
+              {problemText(detailJob, true) && (
                 <>
                   <Divider />
                   <ListItem>
@@ -925,8 +942,8 @@ function JobsList({ client, openJobId, onOpened, onSendFax, canApprove = false, 
                       primary="What went wrong"
                       secondary={
                         <Alert severity="error" sx={{ mt: 1 }}>
-                          <Typography variant="body2">
-                            {detailJob.error}
+                          <Typography variant="body2" data-testid="job-detail-problem">
+                            {problemText(detailJob, true)}
                           </Typography>
                         </Alert>
                       }
