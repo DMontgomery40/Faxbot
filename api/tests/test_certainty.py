@@ -388,8 +388,8 @@ def test_not_delivered_send_again_is_a_new_fax_linked_to_the_first(cw):
     assert cw.service.for_fax(dana, 'fax-1')['items'][0]['resend_fax_id'] == new_id
 
 
-@pytest.fixture
-def lane(database, tmp_path):  # noqa: F811
+@pytest.fixture(params=['phaxio', 'sip'])
+def lane(database, tmp_path, request):  # noqa: F811
     """A real delivery store on the certainty world's database: faxes to one number, one call at a time."""
     from api.app.config_store import ConfigurationStore
     from api.app.config_values import ConfigurationValues
@@ -397,9 +397,14 @@ def lane(database, tmp_path):  # noqa: F811
     from api.app.outbound_store import OutboundStore
     world = CertaintyWorld(database, tmp_path)
     configuration = ConfigurationStore(database, tmp_path / 'installation.key')
+    provider = request.param
     snapshot = configuration.initialize(
-        ConfigurationValues.from_environment({'FAX_BACKEND': 'phaxio', 'FAX_DISABLED': 'false'}), actor='test',
-        providers={'outbound': ProviderConfiguration('phaxio', credentials={'api_key': 'synthetic-key'})})
+        ConfigurationValues.from_environment({'FAX_BACKEND': provider, 'FAX_DISABLED': 'false',
+                                               'SIP_TRUNK_MAX_CALLS': '1',
+                                               'SIP_TRUNK_CALLS_PER_SECOND': '100'}), actor='test',
+        providers={'outbound': ProviderConfiguration(provider, credentials=(
+            {'api_key': 'synthetic-key'} if provider == 'phaxio' else {}))})
+    world.delivery_values = snapshot.active.values
     world.delivery = OutboundStore(configuration)
 
     def accept(job_id):
@@ -434,6 +439,14 @@ def test_settling_ends_the_fax_and_frees_its_number_at_once(lane, outcome, state
     transaction, with an event in its history, and the next fax to the number is claimable at once."""
     owner = lane.operator('owner', role='role_owner')
     item = _uncertain_then_waiting(lane)
+    from api.app.capacity import Capacity
+    capacity = Capacity(lane.engine)
+    now = utcnow()
+    with lane.engine.connect() as connection:
+        holds = connection.execute(capacity.holds(now)).mappings().all()
+        assert [hold['delivery_id'] for hold in holds] == ['fax-a']
+        if lane.delivery_values.effective_outbound == 'sip':
+            assert capacity.room(connection, lane.delivery_values, now).full
     attempt = lane.delivery.get('fax-a')['attempt_id']
     lane.service.settle(owner, item['id'], outcome=outcome, reason='Front desk checked the tray', version=1)
     record = lane.delivery.get('fax-a')
@@ -448,6 +461,11 @@ def test_settling_ends_the_fax_and_frees_its_number_at_once(lane, outcome, state
     settled = [event for event in lane.delivery.history('fax-a') if event['kind'] == 'operator_settled']
     assert len(settled) == 1 and json.loads(settled[0]['details'])['outcome'] == outcome
     assert json.loads(settled[0]['details'])['actor'] == 'principal:owner'
+    with lane.engine.connect() as connection:
+        assert connection.execute(capacity.holds(now)).all() == []
+        if lane.delivery_values.effective_outbound == 'sip':
+            assert not capacity.room(connection, lane.delivery_values, now).full
+    assert capacity.waiting_sentence('fax-b', lane.delivery_values, now) is None
     claim = lane.delivery.claim('worker')
     assert claim is not None and claim.job_id == 'fax-b'
     assert lane.job_count() == 2  # nothing was sent again

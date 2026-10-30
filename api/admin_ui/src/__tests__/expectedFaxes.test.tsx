@@ -78,7 +78,7 @@ describe('Faxes → Expected', () => {
     expect(screen.queryByRole('tab', { name: 'Import' })).toBeNull();
     const row = (await screen.findByText('PO 483')).closest('tr') as HTMLElement;
     expect(within(row).getByText('To confirm')).toBeTruthy();
-    fireEvent.click(row);
+    fireEvent.click(within(row).getByRole('link', { name: /PO 483/ }));
     expect(await screen.findByText('It came from a fax number you listed for Acme Supply, but nothing in it names PO 483.'))
       .toBeTruthy();
     expect(screen.getByText(`From ${maskNumber('+15550104444')}, received ${shortTime('2026-10-03T13:00:00')} in Purchasing.`))
@@ -93,7 +93,7 @@ describe('Faxes → Expected', () => {
     const calls: Array<[string, unknown]> = [];
     serve([expected()], calls);
     render(<ExpectedFaxes client={client()} canImport={false} canOutage={false} />);
-    fireEvent.click((await screen.findByText('PO 483')).closest('tr') as HTMLElement);
+    fireEvent.click(await screen.findByRole('link', { name: /PO 483/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel it' }));
     fireEvent.change(screen.getByLabelText('Why it is no longer expected'), { target: { value: 'Order withdrawn' } });
     const dialogs = screen.getAllByRole('dialog');

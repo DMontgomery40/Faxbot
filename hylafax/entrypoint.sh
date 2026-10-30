@@ -28,11 +28,13 @@ state=${FAXBOT_ENGINE_STATE:-/var/lib/faxbot-engine}
 root=${FAXBOT_ENGINE_ROOT:-}
 status=$out/engine.status
 check_seconds=${FAXBOT_ENGINE_CHECK_SECONDS:-5}
-# How often the running engine checks that its daemons and lines are whole. Each check asks the processes it
-# started whether they are alive (kill -0) and reads each line's state from its status file, starting no
-# process; pgrep and faxstat run only when that finds something wrong. On a busy machine the processes a
-# check starts compete with the modems and the T.38 gateway in a call (a receive failed that way, 10 October
-# 2026), so the check is cheap and not too often.
+# Every $check_seconds the running engine checks that its daemons and lines are whole. The check asks the
+# processes it started whether they are alive (kill -0) and reads each line's state from its status file,
+# starting no process; pgrep, and faxstat once to see whether a call is up, run only when that finds
+# something wrong. On a busy machine the processes a check starts compete with the modems and the T.38
+# gateway in a call (a receive failed that way, 10 October 2026), so the frequent check starts none.
+# The checks that do start processes (a registration Asterisk refused, the session logs) run every
+# $liveness_seconds.
 liveness_seconds=${FAXBOT_ENGINE_LIVENESS_SECONDS:-25}
 # How long a line may stay not ready (it may be setting its modem up), and how long the start waits for all.
 unready_seconds=${FAXBOT_ENGINE_UNREADY_SECONDS:-30}
@@ -352,8 +354,10 @@ done
 # A line's state as its faxgetty reports it ("Running and idle", "Receiving facsimile", "Waiting for modem
 # to come free" ...), and whether a state is a call.
 line_state() {
-  # faxstat ends its lines with CR LF.
-  faxstat -s 2>/dev/null | tr -d '\r' | sed -n "s/^Modem ttyIAX$1 ([^)]*): //p" | head -1
+  # faxgetty maintains the same status file that faxstat reads. Set the caller's
+  # line_status directly: command substitution would fork even for a builtin read.
+  line_status=''
+  { IFS= read -r line_status < "$spool/status/ttyIAX$1"; } 2>/dev/null || true
 }
 in_call() {
   case $1 in *[Ss]ending*|*[Rr]eceiving*|*[Aa]nswering*|*[Dd]ialing*) return 0 ;; esac
@@ -366,7 +370,7 @@ in_call() {
 # is one. A line that is not ready counts after $unready_seconds (it may be setting its modem up).
 declare -A unready_since=()
 check_lines() {
-  local number count state now
+  local number count line_status now
   now=$(date +%s)
   problem=''
   for number in $(seq 1 "$lines"); do
@@ -376,13 +380,13 @@ check_lines() {
       || { problem="line $number is not on its port $((4569 + number))"; return 0; }
     [ -e "$root/dev/ttyIAX$number" ] || { problem="line $number has no device"; return 0; }
     pgrep -x -f "faxgetty -D ttyIAX$number" >/dev/null || { problem="line $number has no faxgetty"; return 0; }
-    state=$(line_state "$number")
-    if [ "$state" = 'Running and idle' ] || in_call "$state"; then
+    line_state "$number"
+    if [ "$line_status" = 'Running and idle' ] || in_call "$line_status"; then
       unset "unready_since[$number]"
     else
       unready_since[$number]=${unready_since[$number]:-$now}
       if (( now - unready_since[$number] >= unready_seconds )); then
-        problem="line $number is not ready (${state:-no state})"
+        problem="line $number is not ready (${line_status:-no state})"
         return 0
       fi
     fi
@@ -403,10 +407,10 @@ fi
 # Asterisk sends calls to a line as soon as its modem registers, but a call is answered only once faxgetty
 # has set the modem up: the engine says it is running only when every line is ready (or already in a call).
 lines_ready() {
-  local number state
+  local number line_status
   for number in $(seq 1 "$lines"); do
-    state=$(line_state "$number")
-    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+    line_state "$number"
+    [ "$line_status" = 'Running and idle' ] || in_call "$line_status" || return 1
   done
   return 0
 }
@@ -452,15 +456,14 @@ alive() {
 # alive, each line has its device, and each line's faxgetty says (in the status file faxstat reads) that it
 # is ready for a call or in one. Fails at the first thing that looks wrong; the full checks then say what.
 looks_whole() {
-  local name number state
+  local name number line_status
   for name in "${!watched[@]}"; do
     alive "${watched[$name]}" || return 1
   done
   for ((number = 1; number <= lines; number++)); do
     [ -e "$root/dev/ttyIAX$number" ] || return 1
-    state=''
-    { read -r state < "$spool/status/ttyIAX$number"; } 2>/dev/null || true
-    [ "$state" = 'Running and idle' ] || in_call "$state" || return 1
+    line_state "$number"
+    [ "$line_status" = 'Running and idle' ] || in_call "$line_status" || return 1
   done
   return 0
 }
@@ -493,7 +496,7 @@ while sleep "$check_seconds"; do
       FAXBOT_ENGINE_STATE="$state" /usr/local/lib/faxbot-engine/handover || true
   fi
   # Received calls that left no fax get a report too (from the session logs): read when a session log was
-  # added since the last reading, and with each check of the lines (a session open then may have finished).
+  # added since the last reading, and every $liveness_seconds (a session open then may have finished).
   if [ "$spool/log" -nt "$sessions_checked" ] || (( SECONDS >= next_check )); then
     : > "$sessions_checked"
     runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
@@ -503,7 +506,7 @@ while sleep "$check_seconds"; do
     runuser -u uucp -- env FAXBOT_HYLAFAX_SPOOL="$spool" FAXBOT_ENGINE_STATE="$state" \
       /usr/local/lib/faxbot-engine/deliver || true
   fi
-  # The daemons and lines, every $liveness_seconds; while a line is down, with the full checks each time.
+  # A line whose registration Asterisk refused, every $liveness_seconds (reading its log starts processes).
   if (( SECONDS >= next_check )); then
     next_check=$((SECONDS + liveness_seconds))
     if registration_refused && idle; then
@@ -511,33 +514,35 @@ while sleep "$check_seconds"; do
       log 'a fax line was refused by Asterisk; restarting to register again'
       exit 1
     fi
-    if looks_whole && [ -z "$line_down" ]; then
-      unready_since=()
-    else
-      for daemon in faxq hfaxd iaxmodem faxgetty; do
-        if ! pgrep -x "$daemon" >/dev/null; then
-          write_status failed "Faxbot's fax engine stopped and is starting again."
-          log "$daemon stopped; restarting the engine"
-          exit 1
-        fi
-      done
-      # A line that is not whole or not ready takes no calls: say so at once, and start again once no call is
-      # up; a line that comes back by itself is running again.
-      if check_lines; then
-        write_status restarting "$LINE_DOWN"
-        line_down=yes
-        if idle; then
-          log "$problem; restarting the engine"
-          exit 1
-        fi
-      else
-        if [ -n "$line_down" ]; then
-          write_status running ''
-          line_down=''
-        fi
-        # Whole again: the processes to ask after are the ones running now.
-        remember
+  fi
+  # The daemons and lines, at every round without starting a process; when that finds something wrong, and
+  # while a line is down, with the full checks.
+  if looks_whole && [ -z "$line_down" ]; then
+    unready_since=()
+  else
+    for daemon in faxq hfaxd iaxmodem faxgetty; do
+      if ! pgrep -x "$daemon" >/dev/null; then
+        write_status failed "Faxbot's fax engine stopped and is starting again."
+        log "$daemon stopped; restarting the engine"
+        exit 1
       fi
+    done
+    # A line that is not whole or not ready takes no calls: say so at once, and start again once no call is
+    # up; a line that comes back by itself is running again.
+    if check_lines; then
+      write_status restarting "$LINE_DOWN"
+      line_down=yes
+      if idle; then
+        log "$problem; restarting the engine"
+        exit 1
+      fi
+    else
+      if [ -n "$line_down" ]; then
+        write_status running ''
+        line_down=''
+      fi
+      # Whole again: the processes to ask after are the ones running now.
+      remember
     fi
   fi
   if [ "$(request_sum)" != "$restart_seen" ] && idle; then

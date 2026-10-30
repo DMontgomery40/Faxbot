@@ -18,6 +18,7 @@ import { maskNumber, shortTime } from '../work/text';
 import { expectedApi, type ExpectedApi } from './expectedApi';
 import ExpectedImport from './ExpectedImport';
 import ExpectedOutages from './ExpectedOutages';
+import RecordLink from '../common/RecordLink';
 
 export type ExpectedTab = 'waiting' | 'report' | 'import' | 'outages';
 
@@ -348,12 +349,20 @@ function ExpectedDetail({ api, client, code, onClose, onChanged }: {
 
 // -- Waiting -----------------------------------------------------------------------------------------
 
-function WaitingTab({ api, client, onNotice, show, onShowChange }: {
+function WaitingTab({ api, client, onNotice, show, onShowChange, code, onCodeChange, recordHref,
+  search: searchInAddress, onSearchChange }: {
   api: ExpectedApi;
   client: AdminAPIClient;
   onNotice: (message: string) => void;
   show: ExpectedView;
   onShowChange?: (view: ExpectedView) => void;
+  // The expected fax named in the page address (?expected=…), by its code.
+  code?: string | null;
+  onCodeChange?: (code: string | null) => void;
+  recordHref?: (code: string) => string;
+  // The reference search kept in the page address (?q=…).
+  search?: string;
+  onSearchChange?: (search: string) => void;
 }) {
   const [view, setViewState] = useState<ExpectedView>(show);
   useEffect(() => { setViewState(show); }, [show]);
@@ -361,11 +370,22 @@ function WaitingTab({ api, client, onNotice, show, onShowChange }: {
     setViewState(next);
     onShowChange?.(next);
   };
-  const [search, setSearch] = useState('');
+  const [localSearch, setLocalSearch] = useState(searchInAddress ?? '');
+  useEffect(() => { setLocalSearch(searchInAddress ?? ''); }, [searchInAddress]);
+  const search = onSearchChange ? (searchInAddress ?? '') : localSearch;
+  const setSearch = (next: string) => {
+    setLocalSearch(next);
+    onSearchChange?.(next);
+  };
   const [items, setItems] = useState<ExpectedFax[] | null>(null);
   const [counts, setCounts] = useState<ExpectedCounts | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [open, setOpen] = useState<string | null>(null);
+  const [localOpen, setLocalOpen] = useState<string | null>(null);
+  const open = onCodeChange ? (code ?? null) : localOpen;
+  const setOpen = (next: string | null) => {
+    setLocalOpen(next);
+    onCodeChange?.(next);
+  };
   const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
@@ -403,8 +423,13 @@ function WaitingTab({ api, client, onNotice, show, onShowChange }: {
           </TableHead>
           <TableBody>
             {(items ?? []).map((item) => (
-              <TableRow key={item.id} hover sx={{ cursor: 'pointer' }} onClick={() => setOpen(item.code)}>
-                <TableCell>{item.reference}</TableCell>
+              <TableRow key={item.id} hover>
+                <TableCell>
+                  <RecordLink href={recordHref?.(item.code)} onOpen={() => setOpen(item.code)}
+                    ariaLabel={`Details for ${item.reference}`}>
+                    {item.reference}
+                  </RecordLink>
+                </TableCell>
                 <TableCell>{item.kind}</TableCell>
                 <TableCell>{item.counterparty || '-'}</TableCell>
                 <TableCell>{item.mailbox || '-'}</TableCell>
@@ -494,18 +519,26 @@ export function readExpectedView(value: string | null | undefined): ExpectedView
   return VIEW_LABELS.some(([key]) => key === value) ? value as ExpectedView : 'waiting';
 }
 
-export default function ExpectedFaxes({ client, canImport, canOutage, show = 'waiting', onShowChange }: {
+export default function ExpectedFaxes({ client, canImport, canOutage, show = 'waiting', onShowChange,
+  code, onCodeChange, recordHref, search, onSearchChange }: {
   client: AdminAPIClient;
   canImport: boolean;
   canOutage: boolean;
   // The view in the page address (?show=overdue), and a way to keep it there.
   show?: ExpectedView;
   onShowChange?: (view: ExpectedView) => void;
+  // The expected fax named in the page address (?expected=…), and a way to keep it there.
+  code?: string | null;
+  onCodeChange?: (code: string | null) => void;
+  recordHref?: (code: string) => string;
+  // The reference search kept in the page address (?q=…).
+  search?: string;
+  onSearchChange?: (search: string) => void;
 }) {
   const api = useMemo(() => expectedApi(client), [client]);
   const [tab, setTab] = useState<ExpectedTab>('waiting');
-  // An address naming a view opens the Expected tab on it.
-  useEffect(() => { setTab('waiting'); }, [show]);
+  // An address naming a view or one expected fax opens the Expected tab on it.
+  useEffect(() => { setTab('waiting'); }, [show, code]);
   const [notice, setNotice] = useState<string | null>(null);
   return (
     <Box>
@@ -518,7 +551,8 @@ export default function ExpectedFaxes({ client, canImport, canOutage, show = 'wa
         {canImport && <Tab value="import" label="Import" />}
         {canOutage && <Tab value="outages" label="Outages" />}
       </Tabs>
-      {tab === 'waiting' && <WaitingTab api={api} client={client} onNotice={setNotice} show={show} onShowChange={onShowChange} />}
+      {tab === 'waiting' && <WaitingTab api={api} client={client} onNotice={setNotice} show={show} onShowChange={onShowChange}
+        code={code} onCodeChange={onCodeChange} recordHref={recordHref} search={search} onSearchChange={onSearchChange} />}
       {tab === 'report' && <ReportTab api={api} />}
       {tab === 'import' && canImport && <ExpectedImport api={api} onNotice={setNotice} />}
       {tab === 'outages' && canOutage && <ExpectedOutages api={api} onNotice={setNotice} />}

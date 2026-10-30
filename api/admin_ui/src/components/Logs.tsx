@@ -265,7 +265,7 @@ function Logs({ client }: LogsProps) {
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Logs</Typography>
+        <Typography variant="h4" component="h1">Logs</Typography>
         <Box display="flex" gap={1}>
           <Button variant="outlined" onClick={run} disabled={loading}>{loading ? <CircularProgress size={18} /> : 'Refresh'}</Button>
         </Box>
