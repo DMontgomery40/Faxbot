@@ -24,6 +24,7 @@ import FaxMachinePanel from './FaxMachinePanel';
 import { RecipientCoverSwitch } from '../HeaderNotice';
 import { RecipientStationCheck } from '../StationCheck';
 import { RecipientAfterAnswer } from './AfterAnswer';
+import RecordLink from '../common/RecordLink';
 
 function routeSummary(destination: Destination): string {
   if (destination.routes.length === 0) return 'No faxes sent yet';
@@ -230,7 +231,8 @@ function partnerText(destination: Destination, partners: DirectPartner[] | null,
   return partner.state === 'verified' ? partner.organization : `${partner.organization} (waiting for verification)`;
 }
 
-export default function Destinations({ client, destinations, canWrite, onChanged, partners = null, suggested = null }: {
+export default function Destinations({ client, destinations, canWrite, onChanged, partners = null, suggested = null,
+  recipient, onRecipientChange, recordHref }: {
   client: AdminAPIClient;
   destinations: Destination[];
   canWrite: boolean;
@@ -239,9 +241,18 @@ export default function Destinations({ client, destinations, canWrite, onChanged
   partners?: DirectPartner[] | null;
   // Numbers whose recipient runs Faxbot and could become a partner; null when not readable.
   suggested?: string[] | null;
+  // The recipient named in the page address (?recipient=…), and a way to keep it there.
+  recipient?: string | null;
+  onRecipientChange?: (number: string | null) => void;
+  recordHref?: (number: string) => string;
 }) {
   const { isMobile } = useSmallScreens();
-  const [open, setOpen] = useState<string | null>(null);
+  const [localOpen, setLocalOpen] = useState<string | null>(null);
+  const open = onRecipientChange ? (recipient ?? null) : localOpen;
+  const setOpen = (next: string | null) => {
+    setLocalOpen(next);
+    onRecipientChange?.(next);
+  };
   const [lookup, setLookup] = useState('');
   const numberFormat = useNumberFormat(client);
 
@@ -264,7 +275,10 @@ export default function Destinations({ client, destinations, canWrite, onChanged
           {destinations.map((destination) => (
             <Card key={destination.number} variant="outlined" sx={{ borderRadius: 2 }}>
               <CardContent>
-                <Typography variant="subtitle1">{destination.display_name || destination.number}</Typography>
+                <RecordLink href={recordHref?.(destination.number)} onOpen={() => setOpen(destination.number)}
+                  ariaLabel={`Details for ${destination.display_name || destination.number}`}>
+                  <Typography component="span" variant="subtitle1">{destination.display_name || destination.number}</Typography>
+                </RecordLink>
                 {destination.display_name && <Typography variant="body2" color="text.secondary">{destination.number}</Typography>}
                 <Typography variant="body2" sx={{ mt: 1 }}>{routeSummary(destination)}</Typography>
                 <Typography variant="body2" color="text.secondary">Last 30 days: {formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</Typography>
@@ -298,8 +312,11 @@ export default function Destinations({ client, destinations, canWrite, onChanged
               {destinations.map((destination) => (
                 <TableRow key={destination.number} hover>
                   <TableCell>
-                    <Typography variant="body2">{destination.display_name || destination.number}</Typography>
-                    {destination.display_name && <Typography variant="caption" color="text.secondary">{destination.number}</Typography>}
+                    <RecordLink href={recordHref?.(destination.number)} onOpen={() => setOpen(destination.number)}
+                      ariaLabel={`Details for ${destination.display_name || destination.number}`}>
+                      <Typography component="span" variant="body2">{destination.display_name || destination.number}</Typography>
+                    </RecordLink>
+                    {destination.display_name && <Typography variant="caption" color="text.secondary" display="block">{destination.number}</Typography>}
                   </TableCell>
                   <TableCell>{routeSummary(destination)}</TableCell>
                   <TableCell>{formatMoneyList(destination.estimated_cost_30_days, 'None yet')}</TableCell>
