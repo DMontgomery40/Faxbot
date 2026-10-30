@@ -3350,6 +3350,7 @@ $ faxbot delivery mailboxes [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `list`: List mailboxes.
+* `show`: Show a mailbox, its number mappings,...
 * `add`: Add a mailbox.
 * `update`: Rename a mailbox or switch it on or off.
 * `target`: Show or change how soon received faxes...
@@ -3367,6 +3368,24 @@ $ faxbot delivery mailboxes list [OPTIONS]
 **Options**:
 
 * `--ids`: Also show internal ids.
+* `--help`: Show this message and exit.
+
+#### `faxbot delivery mailboxes show`
+
+Show a mailbox, its number mappings, sending rules and acknowledgement target.
+
+**Usage**:
+
+```console
+$ faxbot delivery mailboxes show [OPTIONS] {mailbox}
+```
+
+**Arguments**:
+
+* `mailbox`: Mailbox name or id.  [required]
+
+**Options**:
+
 * `--help`: Show this message and exit.
 
 #### `faxbot delivery mailboxes add`

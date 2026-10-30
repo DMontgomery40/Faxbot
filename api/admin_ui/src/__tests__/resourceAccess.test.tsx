@@ -106,3 +106,27 @@ describe('fax numbers follow the installation country', () => {
       'The number faxes are sent to, for example (201) 555-0123, or a number starting with + and its country code.')).toBeTruthy();
   });
 });
+
+describe('mailbox detail addresses', () => {
+  it('links each mailbox to its durable detail address', async () => {
+    const { client, me } = await signedInClient();
+    render(<ResourceAccess client={client} me={me} section="mailboxes" />);
+    expect((await screen.findByRole('link', { name: 'Main line' })).getAttribute('href'))
+      .toBe('#/delivery/mailboxes?mailbox=mbx_main');
+  });
+
+  it('shows a missing mailbox without falling back to all mailboxes', async () => {
+    const { client, me } = await signedInClient();
+    render(<ResourceAccess client={client} me={me} section="mailboxes" mailboxId="missing" />);
+    expect(await screen.findByText('Mailbox not found or no longer accessible.')).toBeTruthy();
+    expect(screen.queryByText('Main line')).toBeNull();
+  });
+
+  it('keeps only the selected mailbox and its rename control', async () => {
+    const { client, me } = await signedInClient();
+    render(<ResourceAccess client={client} me={me} section="mailboxes" mailboxId="mbx_main" />);
+    expect(await screen.findByRole('button', { name: 'Rename Main line' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add mailbox' })).toBeNull();
+    expect(screen.queryByText('Back office')).toBeNull();
+  });
+});

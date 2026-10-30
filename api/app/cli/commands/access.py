@@ -572,6 +572,63 @@ def mailboxes_list(ids: bool = IDS):
         empty='No mailboxes.'))
 
 
+@mailboxes.command('show')
+def mailboxes_show(mailbox: str = typer.Argument(..., help='Mailbox name or id.')):
+    """Show a mailbox, its number mappings, sending rules and acknowledgement target."""
+    api = state.api()
+    found = resolve.mailbox(api, mailbox)
+    numbers = [row for row in api.pages('/access/inbound-rules') if row['mailbox_id'] == found['id']]
+
+    def optional(path, **kwargs):
+        try:
+            return api.get(path, **kwargs)
+        except CliError as error:
+            return {'unavailable': str(error)}
+
+    settings = optional('/admin/settings')
+    email = optional('/intake/connectors')
+    carried = carried_numbers(settings) if 'unavailable' not in settings else []
+    for row in numbers:
+        row['connections'] = [CARRIERS[provider] for number, provider, _ in carried
+                              if comparable_number(number) == comparable_number(row['to_number'])]
+        row['email'] = (_email_text(email.get('connectors', []), row['to_number'])
+                        if 'unavailable' not in email else 'Unavailable')
+    targets = optional('/work/settings')
+    if 'unavailable' not in targets:
+        targets = {'installation_wide_hours': targets.get('acknowledge_hours'),
+                   'mailboxes': [row for row in targets.get('mailboxes', []) if row['mailbox_id'] == found['id']]}
+    sending = optional('/routing/rules', params={'scope': 'mailbox:' + found['id']})
+    detail = {'mailbox': found, 'numbers': numbers, 'targets': targets, 'sending_rules': sending,
+              'connections': settings.get('unavailable'), 'email_delivery': email.get('unavailable')}
+
+    def human(out):
+        out.line(found['label'] + (' (active)' if found['enabled'] else ' (disabled)'))
+        out.table(['Fax number', 'Connection', 'Staff email', 'Rule'],
+                  [[row['to_number'] or 'Any number', ', '.join(row['connections']) or 'Unavailable',
+                    row['email'], row['id']] for row in numbers],
+                  empty='No number mappings.')
+        if 'unavailable' in targets:
+            out.line('Acknowledgement targets unavailable: ' + targets['unavailable'])
+        else:
+            out.line('Installation-wide target (hours): ' + str(targets['installation_wide_hours']))
+            for row in targets['mailboxes']:
+                out.line('Mailbox target (hours): ' + (str(row['acknowledge_hours'])
+                         if row.get('acknowledge_hours') is not None else 'Installation-wide'))
+                out.line('Backup: ' + ((row.get('backup') or {}).get('name') or 'None'))
+        if 'unavailable' in sending:
+            out.line('Sending rules unavailable: ' + sending['unavailable'])
+        else:
+            for label, revision in [('Installation-wide sending rules', sending.get('organization')),
+                                    ('Mailbox sending rules', sending.get('active'))]:
+                out.line(label)
+                if revision:
+                    out.table(rules.RULE_COLUMNS, rules.rule_rows(revision['document'],
+                              rules.names_for(revision['document'], sending.get('choices')), {}))
+                else:
+                    out.line('No published rules.')
+    state.out().result(detail, human)
+
+
 @mailboxes.command('add')
 def mailboxes_add(label: str = typer.Argument(..., help='Mailbox name, for example "Front desk".'),
                   disabled: bool = typer.Option(False, '--disabled', help='Create the group disabled, so its roles do not apply yet.')):

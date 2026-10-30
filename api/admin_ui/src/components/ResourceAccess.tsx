@@ -240,8 +240,10 @@ function AssignmentsSection({ client, canManage }: { client: AdminAPIClient; can
   );
 }
 
-function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canManage: boolean }) {
-  const fetcher = useCallback(async () => (await client.listMailboxes()).items, [client]);
+function MailboxesSection({ client, canManage, mailboxId, onMailboxSaved }: {
+  client: AdminAPIClient; canManage: boolean; mailboxId?: string; onMailboxSaved?: () => void;
+}) {
+  const fetcher = useCallback(async () => (await client.listMailboxes()).items.filter((m) => !mailboxId || m.id === mailboxId), [client, mailboxId]);
   const { data, state, load, reload } = useSection<AccessMailbox[]>(client, fetcher);
   const [draft, setDraft] = useState<{ mailboxId: string | null; label: string; enabled: boolean } | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -265,6 +267,7 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
         setDraft(null);
       }
       await load();
+      onMailboxSaved?.();
     } catch (failure) {
       setError(failure);
     } finally {
@@ -278,7 +281,7 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
     <Box>
       <ScreenHeader title="Mailboxes" subtitle="Received faxes land in a mailbox. Give people access to the mailboxes they need."
         onRefresh={() => void reloadAll()} busy={state === 'loading'}>
-        {canManage && (
+        {canManage && !mailboxId && (
           <Button variant="contained" startIcon={<AddIcon />} disabled={state !== 'ready'}
             onClick={() => { setError(null); setDraft({ mailboxId: null, label: '', enabled: true }); }}>
             Add mailbox
@@ -287,6 +290,7 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
       </ScreenHeader>
       {!draft && <ErrorBanner error={error} onReload={() => void reloadAll()} onClose={() => setError(null)} />}
       {state !== 'ready' || !data ? <LoadStateView state={state} onRetry={() => void load()} />
+        : data.length === 0 && mailboxId ? <Alert severity="warning">Mailbox not found or no longer accessible.</Alert>
         : data.length === 0 ? <EmptyState icon={<MailIcon />} title="No mailboxes" text="Add a mailbox for each team or line that receives faxes." />
         : (
           <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
@@ -302,7 +306,7 @@ function MailboxesSection({ client, canManage }: { client: AdminAPIClient; canMa
               <TableBody>
                 {data.map((m) => (
                   <TableRow key={m.id} hover>
-                    <TableCell><Typography variant="body2" fontWeight={600}>{m.label}</Typography></TableCell>
+                    <TableCell><Typography component="a" href={`#/delivery/mailboxes?mailbox=${encodeURIComponent(m.id)}`} variant="body2" fontWeight={600}>{m.label}</Typography></TableCell>
                     <TableCell><StatusChip label={m.enabled ? 'Active' : 'Disabled'} tone={m.enabled ? 'success' : 'default'} /></TableCell>
                     <TableCell>{m.rule_count}</TableCell>
                     {canManage && (
@@ -404,7 +408,8 @@ export const NO_MAILBOX = 'No mailbox: received faxes are visible to people with
 
 interface NumberRow { number: string; rule: InboundRule | null; carriers: CarriedNumber[] }
 
-function NumbersSection({ client, canManage, canReadSettings, canWriteSettings = false, onNavigate }: {
+function NumbersSection({ client, canManage, canReadSettings, canWriteSettings = false, onNavigate, mailboxId }: {
+  mailboxId?: string;
   client: AdminAPIClient;
   canManage: boolean;
   // Carried numbers come from the settings document, read with settings:read.
@@ -414,8 +419,9 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
 }) {
   const fetcher = useCallback(async () => {
     const [rules, mailboxes] = await Promise.all([client.listInboundRules(), client.listMailboxes()]);
-    return { rules: rules.items, mailboxes: mailboxes.items };
-  }, [client]);
+    return { rules: rules.items.filter((r) => !mailboxId || r.mailbox_id === mailboxId),
+      mailboxes: mailboxes.items };
+  }, [client, mailboxId]);
   const { data, state, load, reload } = useSection<{ rules: InboundRule[]; mailboxes: AccessMailbox[] }>(client, fetcher);
   const [carried, setCarried] = useState<CarriedNumber[]>([]);
   const [connectors, setConnectors] = useState<EmailConnector[] | null>(null);
@@ -465,6 +471,7 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
     }
     for (const entry of carried) {
       let row = byNumber.get(entry.number);
+      if (mailboxId && !row) continue;
       if (!row) {
         row = { number: entry.number, rule: null, carriers: [] };
         byNumber.set(entry.number, row);
@@ -473,7 +480,7 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
       row.carriers.push(entry);
     }
     return list;
-  }, [data, carried]);
+  }, [data, carried, mailboxId]);
 
   const emailText = (number: string) => {
     if (connectors === null) return '-';
@@ -615,12 +622,12 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
             </Table>
           </TableContainer>
         )}
-      {state === 'ready' && rows.length > 0 && (
+      {state === 'ready' && rows.length > 0 && !mailboxId && (
         <Box sx={{ mt: 3 }}>
           <ReceivedTry api={rulesApiFor(client)} accounts={receivingAccounts} timeZone={timeZone} />
         </Box>
       )}
-      {state === 'ready' && canReadSettings && (
+      {state === 'ready' && canReadSettings && !mailboxId && (
         <Box sx={{ mt: 3 }}>
           <ForwardedTrustPanel client={client} canWrite={canWriteSettings}
             onChange={(trust) => setTrustsAnchors(trust.anchors.length > 0)} />
@@ -658,7 +665,9 @@ function NumbersSection({ client, canManage, canReadSettings, canWriteSettings =
   );
 }
 
-export default function ResourceAccess({ client, me, section, onNavigate }: {
+export default function ResourceAccess({ client, me, section, onNavigate, mailboxId, onMailboxSaved }: {
+  onMailboxSaved?: () => void;
+  mailboxId?: string;
   client: AdminAPIClient;
   me: AuthMe;
   section: ResourceAccessSection;
@@ -674,10 +683,10 @@ export default function ResourceAccess({ client, me, section, onNavigate }: {
   return (
     <Box>
       {section === 'assignments' && <AssignmentsSection client={client} canManage={permissions.has('grants:manage')} />}
-      {section === 'mailboxes' && <MailboxesSection client={client} canManage={permissions.has('mailboxes:manage')} />}
+      {section === 'mailboxes' && <MailboxesSection client={client} mailboxId={mailboxId} onMailboxSaved={onMailboxSaved} canManage={permissions.has('mailboxes:manage')} />}
       {section === 'numbers' && <NumbersSection client={client} canManage={permissions.has('mailboxes:manage')}
         canReadSettings={permissions.has('settings:read')} canWriteSettings={permissions.has('settings:write')}
-        onNavigate={onNavigate} />}
+        onNavigate={onNavigate} mailboxId={mailboxId} />}
     </Box>
   );
 }

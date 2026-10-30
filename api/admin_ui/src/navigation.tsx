@@ -90,6 +90,7 @@ import Users from './components/Users';
 import Groups from './components/Groups';
 import Roles from './components/Roles';
 import ResourceAccess from './components/ResourceAccess';
+import MailboxDetail from './components/MailboxDetail';
 import Sessions from './components/Sessions';
 import DeliveryRoutes from './components/DeliveryRoutes';
 import DeveloperOverview, { AssistantsOverview } from './components/DeveloperOverview';
@@ -411,7 +412,10 @@ export const NAVIGATION: NavArea[] = [
       // Acknowledgement targets are settings, so people who read settings see them here too.
       { id: 'mailboxes', label: 'Mailboxes', icon: <MoveToInboxIcon />, group: NUMBERS_AND_MAILBOXES,
         gate: { anyOf: ['mailboxes:read', 'mailboxes:manage', 'settings:read'] },
-        render: (ctx) => (
+        render: (ctx) => ctx.params.has('mailbox') ? (
+          <MailboxDetail key={ctx.params.get('mailbox') ?? ''} client={ctx.client} me={ctx.me}
+            mailboxId={ctx.params.get('mailbox') ?? ''} currency={currency(ctx)} onNavigate={ctx.navigate} />
+        ) : (
           <>
             {(ctx.permissions.has('mailboxes:read') || ctx.permissions.has('mailboxes:manage'))
               && <ResourceAccess client={ctx.client} me={ctx.me} section="mailboxes" />}

@@ -71,7 +71,7 @@ function MailboxRow({ row, canWrite, onSave }: {
   );
 }
 
-export default function WorkSettingsPanel({ client, canWrite }: { client: AdminAPIClient; canWrite: boolean }) {
+export default function WorkSettingsPanel({ client, canWrite, mailboxId }: { client: AdminAPIClient; canWrite: boolean; mailboxId?: string }) {
   const [settings, setSettings] = useState<WorkSettings | null>(null);
   const [hours, setHours] = useState('');
   const [error, setError] = useState<unknown>(null);
@@ -125,6 +125,7 @@ export default function WorkSettingsPanel({ client, canWrite }: { client: AdminA
       {notice ? <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice}</Alert> : null}
       {settings && (
         <>
+          <Typography variant="body2">Installation-wide target (applies when the mailbox uses the installation target).</Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} sx={{ mb: 3 }}>
             <FormControl>
               <TextField label="Installation target (hours)" size="small" value={hours} disabled={!canWrite}
@@ -150,7 +151,7 @@ export default function WorkSettingsPanel({ client, canWrite }: { client: AdminA
                 {settings.mailboxes.length === 0 && (
                   <TableRow><TableCell colSpan={4}>No mailboxes yet. Documents outside a mailbox use the installation target.</TableCell></TableRow>
                 )}
-                {settings.mailboxes.map((row) => (
+                {settings.mailboxes.filter((row) => !mailboxId || row.mailbox_id === mailboxId).map((row) => (
                   <MailboxRow key={`${row.mailbox_id}-${row.version}`} row={row} canWrite={canWrite} onSave={saveMailbox} />
                 ))}
               </TableBody>

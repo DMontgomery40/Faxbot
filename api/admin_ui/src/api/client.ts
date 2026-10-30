@@ -655,7 +655,14 @@ class AdminAPIClient {
   }
 
   async listMailboxes(): Promise<Page<AccessMailbox>> {
-    return this.json('/access/mailboxes?limit=200');
+    const items: AccessMailbox[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: Page<AccessMailbox> = await this.json(`/access/mailboxes${query({ limit: 200, cursor })}`);
+      items.push(...page.items);
+      cursor = page.next_cursor;
+    } while (cursor);
+    return { items, next_cursor: null };
   }
 
   async createMailbox(data: { label: string; enabled: boolean }) {
@@ -667,7 +674,14 @@ class AdminAPIClient {
   }
 
   async listInboundRules(): Promise<Page<InboundRule>> {
-    return this.json('/access/inbound-rules?limit=200');
+    const items: InboundRule[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: Page<InboundRule> = await this.json(`/access/inbound-rules${query({ limit: 200, cursor })}`);
+      items.push(...page.items);
+      cursor = page.next_cursor;
+    } while (cursor);
+    return { items, next_cursor: null };
   }
 
   async createInboundRule(data: { to_number: string; mailbox_id: string } & Partial<ReceivingOptions>) {

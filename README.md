@@ -57,6 +57,8 @@ The API serves the console at `/admin/ui/`. Its left panel has six areas, each p
 - **Recipients**: the numbers you fax and their route order, and direct-delivery partners.
 - **Administration**: under People & access, users, groups, roles, who has access, keys and phones, and sessions; under Installation, setup, security, documents and retention, AI analysis and the NPI record; under Monitoring, system health, the audit log and logs; and Developer (API and SDKs, AI assistants, terminal, scripts and checks, provider plugins).
 
+Mailboxes have a detail address (`#/delivery/mailboxes?mailbox=ID`) with rename and enable controls, mapped numbers, mailbox sending rules, and acknowledgement targets and backup people. The installation-wide target is marked explicitly. `faxbot delivery mailboxes show NAME` reads the corresponding mailbox, mappings, targets and published rules; unavailable sources remain visible. These pages are a partial foundation for the connected number and mailbox detail work: recent problems, import sources, access summaries and effective delivery diagnostics are not yet assembled there.
+
 Every address from before the six areas still opens the page that does that job now, with its query, and says once where the page moved from. An address that names no page, or a page you may not open, shows its own short message instead.
 
 Screens follow the signed-in user's permissions, use plain words outside Developer, and show settings only the owner may change disabled to everyone else. See the [console guide](docs/admin-console.md) and [Setup Wizard](docs/admin-console/setup-wizard.md).
@@ -139,6 +141,9 @@ Reference pages under `docs/generated/` are generated from code. The README/road
 ## Roadmap
 
 Checked items are implemented in the current source checkout. Unchecked items are planned or require validation; they are not claims about a release date or measured savings.
+
+- [x] Mailbox detail addresses with existing mailbox controls, mapped numbers, sending rules and acknowledgement targets; matching mailbox CLI inspection.
+- [ ] Complete connected number and mailbox detail pages, including number CLI inspection, imports, access, owners, sending identity, blocking/moves, recent activity and failing-stage diagnostics (issue #60).
 
 ### Implemented
 
