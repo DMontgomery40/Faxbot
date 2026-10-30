@@ -1238,8 +1238,9 @@ class RelayService:
             job = connection.execute(sa.select(jobs.c.pages, jobs.c.error).where(
                 jobs.c.id == fax['job_id'])).first()
             # Refused while held: what happened and who decided, never the key's name (routing/holds.py).
-            from ..routing.holds import refusal_text_on
-            refused = refusal_text_on(connection, fax['job_id'], job.error) if job is not None else None
+            from ..routing.holds import refusals_on
+            refusal = refusals_on(connection, {fax['job_id']: job.error}).get(fax['job_id']) if job is not None \
+                else None
             call = None
             if delivery['attempt_id']:
                 call = connection.execute(sa.select(costs).where(
@@ -1269,17 +1270,21 @@ class RelayService:
                         'shared': shared, 'detail': f"{relay}'s call ended partway, and part of the fax may have "
                                                     'arrived. Check with the recipient before sending it again.'}
             reason = (job.error if job is not None and isinstance(job.error, str) and job.error else None)
-            # A fax refused while held, before or after a call: "Not sent: <reason>." and who decided, after what
-            # happened to the call. Any other error is the reason the call (or its absence) gives.
-            tail = f'. {refused}' if refused else f': {reason}' if reason else '.'
             called = any(attempt['submitted_at'] for attempt in tried)
             if state == 'cancelled' and not called:
                 sentence = f'{relay} cancelled it before dialing.'
-            elif not called:
-                # Nothing was submitted, so no call was made: never "call failed".
-                sentence = f'{relay} did not place a call for it' + tail
             else:
-                sentence = f"{relay}'s call failed before any page was sent" + tail
+                # "call failed" only when a call was submitted; otherwise no call was made.
+                lead = f"{relay}'s call failed before any page was sent" if called else \
+                    f'{relay} did not place a call for it'
+                if refusal is not None:
+                    # Refused while held, before or after a call: what happened to the call, then "Not sent:
+                    # <reason>." shortened between words so who decided always fits after it.
+                    decider = f" {refusal['decided_by']}" if refusal['decided_by'] else ''
+                    room = max(DETAIL_LIMIT - len(lead) - len('. ') - len(decider), 40)
+                    sentence = f"{lead}. {outcome_detail(refusal['sentence'], room)}{decider}"
+                else:
+                    sentence = lead + (f': {reason}' if reason else '.')
             return {'status': FAILED_BEFORE_DATA, 'pages': 0, 'seconds': None, 'charge': self._charge(fax['job_id']),
                     'shared': shared, 'detail': sentence}
         if state == 'reconciliation_required':

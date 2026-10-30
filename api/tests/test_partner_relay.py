@@ -526,7 +526,7 @@ async def test_a_fax_refused_after_a_call_that_failed_before_any_page_says_both_
     """D26 review: a relayed fax whose call ended before any page, then was held and refused on the relay, told
     its sender "...call failed before any page was sent: Refused by Installation bootstrap: <reason>". The sender
     now reads what happened to the call, then "Not sent: <reason>." and who decided, never the key's name; a long
-    reason is shortened between words to the sentence's 300 characters, never mid-word."""
+    reason is shortened between words, never mid-word, so that who decided still fits in the 300 characters."""
     trio, a = relay_trio, relay_trio.a
     await asyncio.to_thread(agree, trio, a)
     short, long = queue(a), queue(a, number=OTHERS[0])
@@ -553,8 +553,9 @@ async def test_a_fax_refused_after_a_call_that_failed_before_any_page_says_both_
     (long_error,) = rows(a.engine, 'SELECT error FROM fax_jobs WHERE id = :id', id=long)
     long_error = long_error['error']
     lead = "Sydney office's call failed before any page was sent. Not sent: "
-    assert long_error.startswith(lead + 'word000 ') and long_error.endswith('…') and len(long_error) <= 300
-    kept = long_error[len(lead):-1].split(' ')
+    end = '… Decided through an API key.'
+    assert long_error.startswith(lead + 'word000 ') and long_error.endswith(end) and len(long_error) <= 300
+    kept = long_error[len(lead):-len(end)].split(' ')
     assert kept == words.split(' ')[:len(kept)] and len(kept) > 20   # whole words only
     assert details[b_job[long]] == long_error
     for text in [job['error'], long_error, *details.values()]:
