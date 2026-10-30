@@ -696,6 +696,9 @@ function SendFax({ client, config, configLoading, configError, onOpenJob, sendCh
                         clearPendingSend();
                         setResuming(false);
                         setToNumber('');
+                        // The name belongs to the fax being cleared, never to the next one.
+                        setRecipientName('');
+                        setCheckedName('');
                         setFile(null);
                         setPatient(NO_PATIENT);
                         setPatientAsked(false);

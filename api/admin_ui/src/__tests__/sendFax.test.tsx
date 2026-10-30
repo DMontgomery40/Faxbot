@@ -238,6 +238,36 @@ describe('The recipient name typed on Send', () => {
     await waitFor(() => expect(names).toHaveLength(2));
     expect(names[1]).toBeNull();
   });
+
+  it('is cleared by Clear, so the next fax and its number check go without it', async () => {
+    const names: (FormDataEntryValue | null)[] = [];
+    const checked: Array<[string | null, string | null]> = [];
+    server.use(http.post('/fax', async ({ request }) => {
+      names.push((await request.formData()).get('recipient_name'));
+      return HttpResponse.json({ id: 'b'.repeat(32), status: 'queued', delivery_state: 'ready' }, { status: 202 });
+    }), http.get('/routing/recipient-check', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      checked.push([query.get('to'), query.get('name')]);
+      return HttpResponse.json({ number: query.get('to'), first_send: true, checked: false, state: 'no_name',
+        warning: false, sentence: null, name: null, listed: [], source_url: 'https://npiregistry.cms.hhs.gov/api-page' });
+    }));
+    openSend();
+    const number = screen.getByRole('textbox', { name: /Destination Number/ });
+    const name = screen.getByTestId('send-recipient-name') as HTMLInputElement;
+    fireEvent.change(number, { target: { value: '+15551234567' } });
+    fireEvent.change(name, { target: { value: 'Abandoned recipient' } });
+    fireEvent.blur(name);
+    await waitFor(() => expect(checked).toContainEqual(['+15551234567', 'Abandoned recipient']), { timeout: 2000 });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(name.value).toBe('');
+
+    fireEvent.change(number, { target: { value: '+15551234568' } });
+    await waitFor(() => expect(checked.some(([to]) => to === '+15551234568')).toBe(true), { timeout: 2000 });
+    expect(checked.filter(([to]) => to === '+15551234568').map(([, given]) => given)).toEqual([null]);
+    await send('+15551234568', document());
+    await waitFor(() => expect(names).toHaveLength(1));
+    expect(names[0]).toBeNull();
+  });
 });
 
 describe('Send follows the installation country', () => {
